@@ -49,20 +49,41 @@ object ProfileStore {
         .build()
 
     fun restoreLocal() {
-        activeProfileId = try {
+        try {
             val f = stateFile()
             if (Files.exists(f)) {
                 val o = JSONObject(Files.readString(f))
-                o.optString("activeProfileId").ifBlank { null }
-            } else null
+                activeProfileId = o.optString("activeProfileId").ifBlank { null }
+                val arr = o.optJSONArray("profiles")
+                if (arr != null && arr.length() > 0) {
+                    val out = mutableListOf<UserProfile>()
+                    for (i in 0 until arr.length()) {
+                        val p = arr.optJSONObject(i) ?: continue
+                        val avatar = p.optJSONObject("avatar")
+                        out += UserProfile(
+                            id = p.optString("id"),
+                            name = p.optString("name", "Profile"),
+                            colorIndex = avatar?.optInt("colorIndex", 0) ?: 0,
+                            iconCodePoint = avatar?.optInt("iconCodePoint", 0xe4ff) ?: 0xe4ff,
+                            isKids = p.optBoolean("isKids", false),
+                            createdAt = p.optString("createdAt"),
+                        )
+                    }
+                    profiles = out.sortedBy { it.createdAt }
+                }
+            }
         } catch (_: Exception) {
-            null
+            // Keep defaults on a corrupt state file.
         }
     }
 
     suspend fun refresh(): List<UserProfile> = withContext(Dispatchers.IO) {
         val user = AppSession.user ?: return@withContext profiles
-        val token = AppSession.freshToken() ?: return@withContext profiles
+        val token = AppSession.freshToken()
+        if (token == null) {
+            // Offline / auth failure: show the last locally cached list.
+            return@withContext profiles
+        }
         runCatching {
             val url = "${AppConfig.FIREBASE_RTDB_URL}/users/${user.localId}/profiles.json?auth=$token"
             val request = Request.Builder().url(url).header("Accept", "application/json").build()
@@ -76,6 +97,7 @@ object ProfileStore {
     }.also { list ->
         if (list.isNotEmpty()) {
             profiles = list
+            persistAll()
             if (activeProfileId == null || list.none { it.id == activeProfileId }) {
                 setActive(list.first().id)
             }
@@ -109,6 +131,7 @@ object ProfileStore {
                 put(url, toJson(profile), token)
             }
             profiles = next
+            persistAll()
             if (activeProfileId == null) setActive(id)
             profile
         }
@@ -130,6 +153,7 @@ object ProfileStore {
                 put(url, toJson(updated), token)
             }
             profiles = profiles.map { if (it.id == id) updated else it }
+            persistAll()
             updated
         }
 
@@ -145,6 +169,7 @@ object ProfileStore {
             }
             val next = profiles.filterNot { it.id == id }
             profiles = next
+            persistAll()
             if (activeProfileId == id && next.isNotEmpty()) {
                 setActive(next.first().id)
             }
@@ -154,7 +179,7 @@ object ProfileStore {
 
     fun setActive(id: String) {
         activeProfileId = id
-        persistActive(id)
+        persistAll()
     }
 
     fun clear() {
@@ -162,6 +187,24 @@ object ProfileStore {
         activeProfileId = null
         try {
             Files.deleteIfExists(stateFile())
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Writes activeProfileId + the full profile list (mobile SharedPreferences parity). */
+    private fun persistAll() {
+        try {
+            val f = stateFile()
+            Files.createDirectories(f.parent)
+            val arr = org.json.JSONArray()
+            profiles.forEach { arr.put(toJson(it)) }
+            Files.writeString(
+                f,
+                JSONObject()
+                    .put("activeProfileId", activeProfileId ?: "")
+                    .put("profiles", arr)
+                    .toString(),
+            )
         } catch (_: Exception) {
         }
     }
@@ -202,15 +245,6 @@ object ProfileStore {
     private fun delete(url: String, token: String) {
         val request = Request.Builder().url(url).delete().build()
         http.newCall(request).execute().close()
-    }
-
-    private fun persistActive(id: String) {
-        try {
-            val f = stateFile()
-            Files.createDirectories(f.parent)
-            Files.writeString(f, JSONObject().put("activeProfileId", id).toString())
-        } catch (_: Exception) {
-        }
     }
 
     private fun stateFile() =

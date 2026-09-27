@@ -22,8 +22,10 @@ object AppConfig {
     // Stream extraction worker (same as lib/services/web_stream_service.dart)
     const val EXTRACTOR_WORKER_BASE = "https://maxstream-extractor.maxstream123.workers.dev"
 
-    // Firebase (same app as the TV app's AuthRepository/CloudSyncRepository)
-    const val FIREBASE_WEB_API_KEY = "AIzaSyAiNjTADd8kA3qi3Dgnvlyo1Vf347QnsYk"
+    // Firebase (desktop REST client — use the *web* key from firebase_options.dart).
+    // The Android key (…Vf347QnsYk) is restricted to Android apps and returns
+    // API_KEY_INVALID for identitytoolkit/securetoken calls from the desktop.
+    const val FIREBASE_WEB_API_KEY = "AIzaSyAl1ehmMvnoJ8PMeFymmq30IhGLS5_guPQ"
     const val FIREBASE_AUTH_BASE = "https://identitytoolkit.googleapis.com/v1/accounts"
     const val FIREBASE_TOKEN_BASE = "https://securetoken.googleapis.com/v1/token"
     const val FIREBASE_RTDB_URL = "https://maxstream-8effc-default-rtdb.firebaseio.com"

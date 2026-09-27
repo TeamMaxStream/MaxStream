@@ -125,7 +125,9 @@ object AppSession {
                     val body = JSONObject()
                         .put("grant_type", "refresh_token")
                         .put("refresh_token", current.refreshToken)
-                    val res = post(AppConfig.FIREBASE_TOKEN_BASE, body).use { r ->
+                    // securetoken requires ?key= (same as TV AuthRepository.refreshIdToken).
+                    val url = "${AppConfig.FIREBASE_TOKEN_BASE}?key=${AppConfig.FIREBASE_WEB_API_KEY}"
+                    val res = post(url, body).use { r ->
                         r.code to (r.body?.string().orEmpty())
                     }
                     val (code, text) = res
