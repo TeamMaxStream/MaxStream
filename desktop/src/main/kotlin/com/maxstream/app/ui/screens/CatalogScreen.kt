@@ -1,7 +1,6 @@
 package com.maxstream.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +37,10 @@ import com.maxstream.app.data.repository.MediaRepository
 import com.maxstream.app.data.repository.MovieSection
 import com.maxstream.app.data.repository.SeriesSection
 import com.maxstream.app.ui.components.EmptyState
+import com.maxstream.app.ui.components.ErrorState
+import com.maxstream.app.ui.components.appClickable
+import com.maxstream.app.ui.theme.AppSpacing
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -52,7 +55,7 @@ fun MoviesScreen(
 ) {
     SectionScreen(
         title = "Movies",
-        subtitleProvider = { "Browse the movietmdb catalog" },
+        subtitleProvider = { "Browse the TMDB catalog" },
         tabs = MovieSection.entries.map { TabSpec(it.display, it.name) },
         initialTab = initialSection.name,
         load = { tabName, page ->
@@ -90,11 +93,27 @@ fun WatchlistScreen(
     onOpen: (MediaItem) -> Unit,
     syncRevision: Int = 0,
 ) {
-    val items by produceState<List<MediaItem>>(emptyList(), repository, isSignedIn, syncRevision) {
-        value = repository.watchlist()
+    // Loading + error were invisible before: while `watchlist()` ran the UI
+    // showed the "nothing saved yet" empty state.
+    var wlLoading by remember { mutableStateOf(true) }
+    var wlError by remember { mutableStateOf(false) }
+    var wlAttempt by remember { mutableIntStateOf(0) }
+    val items by produceState<List<MediaItem>>(emptyList(), repository, isSignedIn, syncRevision, wlAttempt) {
+        wlLoading = true
+        wlError = false
+        value = try {
+            repository.watchlist().also { wlLoading = false }
+        } catch (e: CancellationException) {
+            // Leave wlLoading alone — a newer attempt owns the flag.
+            throw e
+        } catch (t: Throwable) {
+            wlError = true
+            wlLoading = false
+            emptyList()
+        }
     }
 
-    Column(Modifier.fillMaxSize().padding(20.dp)) {
+    Column(Modifier.fillMaxSize().padding(AppSpacing.gutter)) {
         Text(
             "Watchlist",
             style = MaterialTheme.typography.headlineSmall,
@@ -106,10 +125,16 @@ fun WatchlistScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(AppSpacing.lg))
 
-        if (items.isEmpty()) {
-            EmptyState(
+        when {
+            wlError -> ErrorState(
+                title = "Couldn\u2019t load watchlist",
+                message = "The sync request failed. Check your connection and try again.",
+                onRetry = { wlAttempt++ },
+            )
+            wlLoading -> MediaBrowserGrid(emptyList(), onOpen = onOpen, loading = true)
+            items.isEmpty() -> EmptyState(
                 title = if (isSignedIn) "Nothing on your watchlist yet." else "Sign in to start your watchlist",
                 message = if (isSignedIn)
                     "Titles you save here are available on the phone and TV app too."
@@ -117,8 +142,7 @@ fun WatchlistScreen(
                     "Sign in with your email, then add titles from any details page.",
                 icon = Icons.Default.Bookmark,
             )
-        } else {
-            MediaBrowserGrid(items, onOpen = onOpen)
+            else -> MediaBrowserGrid(items, onOpen = onOpen)
         }
     }
 }
@@ -139,45 +163,63 @@ private fun SectionScreen(
     var page by remember { mutableIntStateOf(1) }
     var hasMore by remember { mutableStateOf(true) }
     var loading by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf(false) }
+    var attempt by remember { mutableIntStateOf(0) }
     var activeKey by remember { mutableStateOf("") }
     var items by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
 
-    LaunchedEffect(selectedTab, tabs) {
+    LaunchedEffect(selectedTab, tabs, attempt) {
         val key = tabs.getOrNull(selectedTab)?.key ?: tabs.first().key
         page = 1
         hasMore = true
         activeKey = key
+        // Drop the previous tab's items immediately — keeping them meant the
+        // grid showed the old tab's titles under a spinner during the fetch.
+        items = emptyList()
         loading = true
-        items = load(key, 1)
-        if (items.isEmpty()) hasMore = false
-        loading = false
+        loadError = false
+        try {
+            val first = load(key, 1)
+            items = first
+            hasMore = first.isNotEmpty()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            loadError = true
+            hasMore = false
+        } finally {
+            if (activeKey == key) loading = false
+        }
     }
 
     val loadMore: (() -> Unit)? =
-        if (hasMore && !loading) {
+        if (hasMore && !loading && !loadError) {
             {
-                loading = true
-                scope.launch {
-                    val key = tabs.getOrNull(selectedTab)?.key ?: tabs.first().key
-                    if (key != activeKey) {
-                        loading = false
-                        return@launch
+                if (!loading) {
+                    loading = true
+                    scope.launch {
+                        val key = tabs.getOrNull(selectedTab)?.key ?: tabs.first().key
+                        if (key != activeKey) return@launch
+                        val nextPage = page + 1
+                        try {
+                            val next = load(key, nextPage)
+                            if (key != activeKey) return@launch
+                            page = nextPage
+                            items = (items + next).distinctBy { "${it.mediaType}:${it.id}" }
+                            if (next.isEmpty()) hasMore = false
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            if (key == activeKey) hasMore = false
+                        } finally {
+                            if (key == activeKey) loading = false
+                        }
                     }
-                    val nextPage = page + 1
-                    val next = load(key, nextPage)
-                    if (key != activeKey) {
-                        loading = false
-                        return@launch
-                    }
-                    page = nextPage
-                    items = (items + next).distinctBy { "${it.mediaType}:${it.id}" }
-                    if (next.isEmpty()) hasMore = false
-                    loading = false
                 }
             }
         } else null
 
-    Column(Modifier.fillMaxSize().padding(20.dp)) {
+    Column(Modifier.fillMaxSize().padding(AppSpacing.gutter)) {
         Text(
             title,
             style = MaterialTheme.typography.headlineSmall,
@@ -190,16 +232,17 @@ private fun SectionScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(AppSpacing.md))
 
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
             modifier = Modifier.horizontalScroll(rememberScrollState()),
         ) {
             tabs.forEachIndexed { index, tab ->
                 val selectedItem = index == selectedTab
                 Box(
                     Modifier
+                        .appClickable(cornerRadius = 20.dp) { selectedTab = index }
                         .background(
                             if (selectedItem) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.surfaceVariant,
@@ -214,19 +257,20 @@ private fun SectionScreen(
                                 else MaterialTheme.colorScheme.onSurface,
                         fontWeight = if (selectedItem) FontWeight.SemiBold else FontWeight.Normal,
                         fontSize = 13.sp,
-                        modifier = Modifier.clickableNoRipple { selectedTab = index },
                     )
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(AppSpacing.lg))
 
-        MediaBrowserGrid(items, onOpen = onOpen, onLoadMore = loadMore, loading = loading)
+        when {
+            loadError && items.isEmpty() -> ErrorState(
+                title = "Couldn\u2019t load $title",
+                message = "The catalog request failed. Check your connection and try again.",
+                onRetry = { attempt++ },
+            )
+            else -> MediaBrowserGrid(items, onOpen = onOpen, onLoadMore = loadMore, loading = loading)
+        }
     }
 }
-
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
-    this.then(
-        Modifier.clickable(indication = null, interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource()) { onClick() },
-    )

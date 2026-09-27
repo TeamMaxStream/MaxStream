@@ -28,6 +28,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.maxstream.app.resources.Res
+import com.maxstream.app.resources.maxstream_logo
+import org.jetbrains.compose.resources.painterResource
 import kotlinx.coroutines.delay
 
 /**
@@ -61,7 +64,7 @@ fun SplashScreen(onDone: () -> Unit) {
             modifier = Modifier.alpha(logoAlpha),
         ) {
             Image(
-                painter = painterResource("maxstream_logo.png"),
+                painter = painterResource(Res.drawable.maxstream_logo),
                 contentDescription = "MaxStream",
                 modifier = Modifier.height(72.dp),
             )

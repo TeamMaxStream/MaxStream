@@ -29,9 +29,18 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.ScrollState
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.staticCompositionLocalOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
+
+/**
+ * True while the TitleBar search field has focus. Scroll containers and the
+ * shell must not steal focus then — the old autoFocus unconditionally grabbed
+ * focus on every mount, so typing (which remounts grids / re-navigates) lost
+ * keystrokes after the first character.
+ */
+val LocalSearchActive = staticCompositionLocalOf { false }
 
 /**
  * Vertical-scrolling column with a right-edge scrollbar and keyboard support
@@ -49,6 +58,7 @@ fun ScrollableColumn(
     val scope = rememberCoroutineScope()
     val requester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
+    val searchActive = LocalSearchActive.current
     Box(
         modifier
             .fillMaxSize()
@@ -65,7 +75,9 @@ fun ScrollableColumn(
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
         )
     }
-    LaunchedEffect(requester) { if (autoFocus) requester.requestFocus() }
+    LaunchedEffect(requester, searchActive) {
+        if (autoFocus && !searchActive) runCatching { requester.requestFocus() }
+    }
 }
 
 /**
@@ -81,6 +93,7 @@ fun ScrollableGrid(
 ) {
     val scope = rememberCoroutineScope()
     val requester = remember { FocusRequester() }
+    val searchActive = LocalSearchActive.current
     Box(
         modifier
             .fillMaxSize()
@@ -90,11 +103,13 @@ fun ScrollableGrid(
     ) {
         content()
         VerticalScrollbar(
-            adapter = remember { GridScrollbarAdapter(state) },
+            adapter = remember(state) { GridScrollbarAdapter(state) },
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
         )
     }
-    LaunchedEffect(requester) { if (autoFocus) requester.requestFocus() }
+    LaunchedEffect(requester, searchActive) {
+        if (autoFocus && !searchActive) runCatching { requester.requestFocus() }
+    }
 }
 
 private fun scrollKeys(state: ScrollState, scope: CoroutineScope, event: KeyEvent): Boolean {

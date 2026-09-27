@@ -7,6 +7,9 @@ package com.maxstream.app.core
  * Firebase Auth + Realtime Database for cloud sync (watchlist + progress).
  */
 object AppConfig {
+    // Keep in sync with build.gradle.kts (version + nativeDistributions.packageVersion).
+    const val APP_VERSION = "1.0.1"
+
     // TMDB (same key as mobile lib/config/api_config.dart and TV core/Constants.kt)
     const val TMDB_API_KEY = "3b65c5fdee212a85a4e4ef208d31d74e"
     const val TMDB_BASE_URL = "https://api.themoviedb.org/3"

@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
@@ -55,6 +57,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.maxstream.app.data.cloud.AppSession
+import com.maxstream.app.resources.Res
+import com.maxstream.app.resources.background
+import com.maxstream.app.resources.maxstream_logo
+import org.jetbrains.compose.resources.painterResource
+import com.maxstream.app.ui.components.appFocusRing
+import com.maxstream.app.ui.theme.AppColors
 import kotlinx.coroutines.launch
 
 /**
@@ -78,7 +86,7 @@ fun AuthScreen(onSuccess: () -> Unit) {
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Image(
-            painter = painterResource("background.jpg"),
+            painter = painterResource(Res.drawable.background),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
@@ -91,11 +99,20 @@ fun AuthScreen(onSuccess: () -> Unit) {
             ),
         )
 
-        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        // Responsive + scrollable: the card was a fixed 440dp with no scroll,
+        // so short or narrow windows clipped the form.
+        Column(
+            Modifier.fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(440.dp)
+                    .fillMaxWidth()
+                    .widthIn(max = 440.dp)
                     .alpha(cardAlpha)
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color.White.copy(alpha = 0.10f))
@@ -103,7 +120,7 @@ fun AuthScreen(onSuccess: () -> Unit) {
                     .padding(28.dp),
             ) {
                 Image(
-                    painter = painterResource("maxstream_logo.png"),
+                    painter = painterResource(Res.drawable.maxstream_logo),
                     contentDescription = "MaxStream",
                     modifier = Modifier.height(56.dp),
                 )
@@ -202,11 +219,14 @@ fun AuthScreen(onSuccess: () -> Unit) {
                                     color = MaterialTheme.colorScheme.primary,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.clickable {
-                                        mode = 2
-                                        error = null
-                                        notice = null
-                                    },
+                                    modifier = Modifier
+                                        .clickable {
+                                            mode = 2
+                                            error = null
+                                            notice = null
+                                        }
+                                        .appFocusRing(cornerRadius = 4.dp)
+                                        .padding(4.dp),
                                 )
                             }
                         }
@@ -215,7 +235,7 @@ fun AuthScreen(onSuccess: () -> Unit) {
                         Spacer(Modifier.height(10.dp))
                         Text(
                             error.orEmpty(),
-                            color = Color(0xFFFF6B6B),
+                            color = AppColors.errorBright,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth(),
@@ -225,7 +245,7 @@ fun AuthScreen(onSuccess: () -> Unit) {
                         Spacer(Modifier.height(10.dp))
                         Text(
                             notice.orEmpty(),
-                            color = Color(0xFF4ADE80),
+                            color = AppColors.success,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth(),

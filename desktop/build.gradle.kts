@@ -20,6 +20,14 @@ kotlin {
     jvmToolchain(17)
 }
 
+// Generated Res accessors for src/main/composeResources (replaces the
+// deprecated painterResource("file") string API).
+compose.resources {
+    packageOfResClass = "com.maxstream.app.resources"
+    // Default `auto` skips codegen in single-target JVM projects.
+    generateResClass = always
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
@@ -33,6 +41,8 @@ dependencies {
     implementation(compose.ui)
     implementation(compose.foundation)
     implementation(compose.runtime)
+    // Runtime for the generated Res accessors (compose.resources codegen).
+    implementation("org.jetbrains.compose.components:components-resources:1.8.2")
 
     // Stream extraction (shared with the TV app): OkHttp + org.json.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

@@ -40,7 +40,10 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = Color(0xFF534341),
     outline = Color(0xFF857370),
     outlineVariant = Color(0xFFD8C2BF),
-    error = Color(0xFFCF6679),
+    // M3 light error tone — the old value was the *dark* palette's error,
+    // which reads washed-out on light surfaces.
+    error = Color(0xFFB3261E),
+    onError = Color.White,
 )
 
 private val DarkColors = darkColorScheme(
@@ -57,11 +60,14 @@ private val DarkColors = darkColorScheme(
     onBackground = Color(0xFFFFFFFF),
     surface = Color(0xFF1A1A1E),
     onSurface = Color.White,
-    surfaceVariant = Color(0xFF1E1E1E),
+    // Slightly lifted from #1E1E1E: it sat ~1.5% above `surface`, making
+    // skeletons, tracks and the nav-rail backdrop nearly invisible.
+    surfaceVariant = Color(0xFF25252C),
     onSurfaceVariant = Color(0xFFB3B3B3),
     outline = Color(0xFF74777F),
     outlineVariant = Color(0xFF444850),
     error = Color(0xFFCF6679),
+    onError = Color.Black,
 )
 
 // Streaming-app scale: tight display sizes for heroes, comfortable body text.
@@ -168,6 +174,33 @@ private val MaxStreamShapes = Shapes(
     large = RoundedCornerShape(16.dp),
     extraLarge = RoundedCornerShape(24.dp),
 )
+
+/**
+ * Spacing scale. Use these instead of magic dp literals so gutters and
+ * vertical rhythm stay consistent (the codebase had 20dp vs 24dp gutters and
+ * 6/10/14/16/18/20/22/24dp one-off spacers).
+ */
+object AppSpacing {
+    val xs = 4.dp
+    val sm = 8.dp
+    val md = 12.dp
+    val lg = 16.dp
+    val gutter = 20.dp // page/content horizontal padding
+    val xl = 24.dp
+    val xxl = 32.dp
+}
+
+/** Extra brand/data colors that don't belong in the Material color scheme. */
+object AppColors {
+    val ratingGold = Color(0xFFF5C518)
+    val seriesBadge = Color(0xFF6366F1)
+    val movieBadge = Color(0xFF2563EB)
+    val success = Color(0xFF4ADE80)
+    val warning = Color(0xFFFFB74D)
+
+    /** Legible error red for text on photo/glass surfaces (scheme.error is too dark there). */
+    val errorBright = Color(0xFFFF6B6B)
+}
 
 @Composable
 fun DesktopTheme(

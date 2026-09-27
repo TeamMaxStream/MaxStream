@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Dns
@@ -27,9 +30,7 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -39,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -85,6 +87,7 @@ import com.maxstream.app.stream.ResolvedStream
 import com.maxstream.app.stream.StreamResolver
 import com.maxstream.app.stream.parseFailedServers
 import com.maxstream.app.stream.parseStreams
+import com.maxstream.app.ui.components.appFocusRing
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -147,7 +150,11 @@ fun PlayerScreen(
     var volume by remember { mutableIntStateOf(80) }
     var muted by remember { mutableStateOf(false) }
     var lastSaved by remember { mutableLongStateOf(0L) }
-    var menuOpen by remember { mutableStateOf(false) }
+    // One menu at a time, tracked by id in the parent: independent per-menu
+    // booleans raced on close/open ordering and could leave menuOpen=false
+    // while a menu was still up (controls auto-hid underneath it).
+    var openMenu by remember { mutableStateOf<String?>(null) }
+    val menuOpen = openMenu != null
     var lastActivityAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var isFullscreen by remember {
         mutableStateOf(windowState?.placement == WindowPlacement.Fullscreen)
@@ -175,13 +182,22 @@ fun PlayerScreen(
     }
     var resumeApplied by remember { mutableStateOf(false) }
     var resumeShownUntil by remember { mutableLongStateOf(0L) }
+    // Position to restore after a quality/server switch (set by playUrl,
+    // consumed once the new rendition reports a length). -1 = fresh start.
+    var pendingSeekMs by remember { mutableLongStateOf(-1L) }
+    // Bumped by the error overlay's Retry to re-run stream resolution.
+    var errorAttempt by remember { mutableIntStateOf(0) }
 
     val playUrl: (String, ResolvedStream) -> Unit = { url, stream ->
+        // Quality/server switches keep the live position; only a fresh start
+        // (no meaningful position yet) falls through to the resume checkpoint.
+        val keepMs = if (lengthMs > 0L && positionMs > 3_000L) positionMs else -1L
         controller.play(url, stream.referer, stream.userAgent, stream.origin)
         positionMs = 0L
         lengthMs = 0L
         sliderFrac = 0f
         resumeApplied = false
+        pendingSeekMs = keepMs
         selectedAudioLabel = null
         val sub = stream.subtitles.firstOrNull { it.isDefault } ?: stream.subtitles.firstOrNull()
         sub?.let { s ->
@@ -313,16 +329,20 @@ fun PlayerScreen(
         revealControls()
     }
 
-    LaunchedEffect(request.itemId, request.season, request.episode) {
+    LaunchedEffect(request.itemId, request.season, request.episode, errorAttempt) {
         loading = true
         error = null
         controlsVisible = true
         resumeApplied = false
+        pendingSeekMs = -1L
         streams = emptyList()
         failedServers = emptyList()
         selectedIndex = -1
         selectedAudioLabel = null
         resolvingAll = true
+        // Focus now (not just after the first stream lands) so Space/F work
+        // while the "Finding streams…" overlay is up.
+        runCatching { focusRequester.requestFocus() }
 
         val id = request.itemId
         val isMovie = request.mediaType == "movie"
@@ -394,16 +414,30 @@ fun PlayerScreen(
                 if (p > 0L) positionMs = p
                 if (lengthMs > 0L) sliderFrac = (positionMs.toFloat() / lengthMs).coerceIn(0f, 1f)
             }
-            if (!resumeApplied && resume != null && resume.positionMs > 30_000L && lengthMs > 0L) {
+            // Switch-position restore first; otherwise apply the saved
+            // checkpoint on a genuinely fresh start.
+            if (pendingSeekMs >= 0L && lengthMs > 0L) {
+                val target = pendingSeekMs.coerceAtMost((lengthMs - 5_000L).coerceAtLeast(0L))
+                controller.setTime(target)
+                positionMs = target
+                if (lengthMs > 0L) sliderFrac = (target.toFloat() / lengthMs).coerceIn(0f, 1f)
+                pendingSeekMs = -1L
+                resumeApplied = true
+            } else if (!resumeApplied && resume != null && resume.positionMs > 30_000L && lengthMs > 0L) {
                 controller.setTime(resume.positionMs.coerceAtMost((lengthMs - 5_000L).coerceAtLeast(0L)))
                 resumeApplied = true
                 resumeShownUntil = System.currentTimeMillis() + 3_000L
             }
             if (playing && lengthMs > 0L && positionMs - lastSaved >= 10_000L) {
                 lastSaved = positionMs
-                runCatching {
-                    repository.saveProgress(itemFrom(request), request.season, request.episode, positionMs, lengthMs)
-                }.onFailure { e -> println("PlayerScreen: progress save failed: $e") }
+                // Disk/network off the UI thread; capture values for the IO job.
+                val pos = positionMs
+                val len = lengthMs
+                launch(Dispatchers.IO) {
+                    runCatching {
+                        repository.saveProgress(itemFrom(request), request.season, request.episode, pos, len)
+                    }.onFailure { e -> println("PlayerScreen: progress save failed: $e") }
+                }
             }
             delay(600)
         }
@@ -538,7 +572,10 @@ fun PlayerScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                     ) {
-                        IconButton(onClick = onBack) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier.appFocusRing(ringColor = Color.White),
+                        ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
                         }
                         Column(Modifier.weight(1f).padding(start = 6.dp)) {
@@ -558,7 +595,10 @@ fun PlayerScreen(
                                 )
                             }
                         }
-                        IconButton(onClick = { toggleFullscreen() }) {
+                        IconButton(
+                            onClick = { toggleFullscreen() },
+                            modifier = Modifier.appFocusRing(ringColor = Color.White),
+                        ) {
                             Icon(
                                 if (isFullscreen || windowState?.placement == WindowPlacement.Fullscreen)
                                     Icons.Default.FullscreenExit
@@ -583,7 +623,10 @@ fun PlayerScreen(
                     .padding(horizontal = 18.dp, vertical = 12.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { togglePlayPause() }) {
+                    IconButton(
+                        onClick = { togglePlayPause() },
+                        modifier = Modifier.appFocusRing(ringColor = Color.White),
+                    ) {
                         Icon(
                             if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                             "Play/Pause",
@@ -607,12 +650,15 @@ fun PlayerScreen(
 
                     Text(fmtPlayer(lengthMs), color = Color.White, fontSize = 12.sp)
 
-                    IconButton(onClick = { toggleMute() }) {
+                    IconButton(
+                        onClick = { toggleMute() },
+                        modifier = Modifier.appFocusRing(ringColor = Color.White),
+                    ) {
                         Icon(
                             when {
-                                muted || volume == 0 -> Icons.Default.VolumeOff
-                                volume < 50 -> Icons.Default.VolumeDown
-                                else -> Icons.Default.VolumeUp
+                                muted || volume == 0 -> Icons.AutoMirrored.Filled.VolumeOff
+                                volume < 50 -> Icons.AutoMirrored.Filled.VolumeDown
+                                else -> Icons.AutoMirrored.Filled.VolumeUp
                             },
                             "Mute",
                             tint = Color.White,
@@ -628,7 +674,10 @@ fun PlayerScreen(
                         },
                         modifier = Modifier.width(100.dp),
                     )
-                    IconButton(onClick = { toggleFullscreen() }) {
+                    IconButton(
+                        onClick = { toggleFullscreen() },
+                        modifier = Modifier.appFocusRing(ringColor = Color.White),
+                    ) {
                         Icon(
                             if (windowState?.placement == WindowPlacement.Fullscreen)
                                 Icons.Default.FullscreenExit
@@ -646,14 +695,24 @@ fun PlayerScreen(
                     val currentStream = streams.getOrNull(selectedIndex)
                     val qualities = currentStream?.qualityMatch().orEmpty()
                     val subs = currentStream?.subtitles.orEmpty()
+                    // Single shared open-menu id: opening another closes the
+                    // current one, and dismissal state can't race across menus.
+                    val setMenu: (String, Boolean) -> Unit = { id, value ->
+                        openMenu = when {
+                            value -> id
+                            openMenu == id -> null
+                            else -> openMenu
+                        }
+                    }
 
                     PlayerMenu(
                         icon = Icons.Default.Dns,
                         label = if (streams.size > 1) "Server (${selectedIndex + 1}/${streams.size})" else "Server",
                         enabled = streams.isNotEmpty() || failedServers.isNotEmpty(),
-                        onMenuState = { menuOpen = it },
+                        open = openMenu == "server",
+                        onOpenChange = { setMenu("server", it) },
                         onInteract = { revealControls() },
-                    ) {
+                    ) { dismiss ->
                         if (streams.isEmpty() && resolvingAll) {
                             DropdownMenuItem(
                                 text = { Text("Resolving…", color = Color.White.copy(alpha = 0.6f)) },
@@ -671,7 +730,10 @@ fun PlayerScreen(
                                         color = Color.White,
                                     )
                                 },
-                                onClick = { playStream(index) },
+                                onClick = {
+                                    dismiss()
+                                    playStream(index)
+                                },
                             )
                         }
                         if (resolvingAll && streams.isNotEmpty()) {
@@ -683,7 +745,10 @@ fun PlayerScreen(
                         failedServers.forEach { f ->
                             DropdownMenuItem(
                                 text = { Text("${f.name} — unavailable (retry)", color = Color(0xFFFFB74D)) },
-                                onClick = { retryServer(f.name) },
+                                onClick = {
+                                    dismiss()
+                                    retryServer(f.name)
+                                },
                             )
                         }
                     }
@@ -696,9 +761,10 @@ fun PlayerScreen(
                             else -> "Quality"
                         },
                         enabled = qualities.isNotEmpty() && currentStream?.separateAudio != true,
-                        onMenuState = { menuOpen = it },
+                        open = openMenu == "quality",
+                        onOpenChange = { setMenu("quality", it) },
                         onInteract = { revealControls() },
-                    ) {
+                    ) { dismiss ->
                         if (qualities.isEmpty()) {
                             DropdownMenuItem(
                                 text = { Text("Default stream", color = Color.White.copy(alpha = 0.6f)) },
@@ -708,7 +774,10 @@ fun PlayerScreen(
                         qualities.forEach { q ->
                             DropdownMenuItem(
                                 text = { Text(q.label.ifBlank { "${q.height}p" }, color = Color.White) },
-                                onClick = { selectQuality(q) },
+                                onClick = {
+                                    dismiss()
+                                    selectQuality(q)
+                                },
                             )
                         }
                     }
@@ -722,12 +791,14 @@ fun PlayerScreen(
                             else -> "Audio"
                         },
                         enabled = audioTracks.isNotEmpty(),
-                        onMenuState = { menuOpen = it },
+                        open = openMenu == "audio",
+                        onOpenChange = { setMenu("audio", it) },
                         onInteract = { revealControls() },
-                    ) {
+                    ) { dismiss ->
                         DropdownMenuItem(
                             text = { Text("Default (auto)", color = Color.White) },
                             onClick = {
+                                dismiss()
                                 selectedAudioLabel = null
                                 controller.selectAudioTrack(-1)
                                 revealControls()
@@ -736,7 +807,10 @@ fun PlayerScreen(
                         audioTracks.forEach { track ->
                             DropdownMenuItem(
                                 text = { Text(track.display(), color = Color.White) },
-                                onClick = { selectAudioTrack(track) },
+                                onClick = {
+                                    dismiss()
+                                    selectAudioTrack(track)
+                                },
                             )
                         }
                     }
@@ -745,17 +819,22 @@ fun PlayerScreen(
                         icon = Icons.Default.ClosedCaption,
                         label = if (subs.isNotEmpty()) "Subtitles (${subs.size})" else "Subtitles",
                         enabled = true,
-                        onMenuState = { menuOpen = it },
+                        open = openMenu == "subs",
+                        onOpenChange = { setMenu("subs", it) },
                         onInteract = { revealControls() },
-                    ) {
+                    ) { dismiss ->
                         DropdownMenuItem(
                             text = { Text("Off", color = Color.White) },
-                            onClick = { controller.disableSubtitles() },
+                            onClick = {
+                                dismiss()
+                                controller.disableSubtitles()
+                            },
                         )
                         subs.forEach { sub ->
                             DropdownMenuItem(
                                 text = { Text(sub.label, color = Color.White) },
                                 onClick = {
+                                    dismiss()
                                     scope.launch {
                                         val f = downloadSubtitle(sub.url)
                                         if (f != null) {
@@ -837,11 +916,27 @@ fun PlayerScreen(
                     modifier = Modifier.align(Alignment.Center),
                 ) {
                     Text(error.orEmpty(), color = Color.White, fontSize = 15.sp)
-                    Spacer(Modifier.height(16.dp))
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.Refresh, "Back", tint = Color.White)
+                    Spacer(Modifier.height(20.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(
+                            onClick = {
+                                // Re-run the resolution effect (errorAttempt is a key).
+                                error = null
+                                errorAttempt++
+                            },
+                            modifier = Modifier.appFocusRing(cornerRadius = 8.dp),
+                        ) {
+                            Icon(Icons.Default.Refresh, null, modifier = Modifier.width(16.dp).height(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Retry")
+                        }
+                        TextButton(
+                            onClick = onBack,
+                            modifier = Modifier.appFocusRing(cornerRadius = 8.dp),
+                        ) {
+                            Text("Go back", color = Color.White.copy(alpha = 0.85f))
+                        }
                     }
-                    Text("Go back", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
                 }
             }
         }
@@ -853,20 +948,21 @@ private fun PlayerMenu(
     icon: ImageVector,
     label: String,
     enabled: Boolean,
-    onMenuState: (Boolean) -> Unit = {},
+    open: Boolean,
+    onOpenChange: (Boolean) -> Unit,
     onInteract: () -> Unit = {},
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.(dismiss: () -> Unit) -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    LaunchedEffect(open) { onMenuState(open) }
     Box {
         Surface(
             color = Color.White.copy(alpha = 0.10f),
             shape = RoundedCornerShape(6.dp),
-            modifier = Modifier.clickable(enabled = enabled) {
-                open = true
-                onInteract()
-            },
+            modifier = Modifier
+                .clickable(enabled = enabled) {
+                    onOpenChange(true)
+                    onInteract()
+                }
+                .appFocusRing(cornerRadius = 6.dp, ringColor = Color.White),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -883,10 +979,11 @@ private fun PlayerMenu(
         }
         DropdownMenu(
             expanded = open,
-            onDismissRequest = { open = false },
+            onDismissRequest = { onOpenChange(false) },
             containerColor = Color(0xFF1E1E1E),
         ) {
-            content()
+            // DropdownMenuItem does not dismiss itself; items call dismiss().
+            content { onOpenChange(false) }
         }
     }
 }

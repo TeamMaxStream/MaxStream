@@ -11,17 +11,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -32,7 +34,6 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -63,8 +64,14 @@ import com.maxstream.app.data.model.MediaDetails
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.data.model.PlayRequest
 import com.maxstream.app.data.repository.MediaRepository
+import com.maxstream.app.ui.components.ErrorState
+import com.maxstream.app.ui.components.SkeletonBox
+import com.maxstream.app.ui.components.appClickable
+import com.maxstream.app.ui.components.appFocusRing
 import com.maxstream.app.ui.components.posterBrush
 import com.maxstream.app.ui.components.ScrollableColumn
+import com.maxstream.app.ui.theme.AppColors
+import com.maxstream.app.ui.theme.AppSpacing
 import java.awt.Desktop
 import java.net.URI
 import kotlinx.coroutines.launch
@@ -79,68 +86,106 @@ fun DetailsScreen(
     itemId: String,
     mediaType: String?,
     repository: MediaRepository,
-    onBack: () -> Unit,
     onPlay: (PlayRequest) -> Unit,
     onOpen: (MediaItem) -> Unit = {},
 ) {
-    val details by produceState<MediaDetails?>(null, itemId, mediaType) {
-        value = repository.details(itemId, mediaType)
+    // Details load with explicit failure handling: a thrown repository call
+    // used to escape (crash) and a null result spun the spinner forever.
+    var detailsError by remember { mutableStateOf(false) }
+    var detailsAttempt by remember { mutableIntStateOf(0) }
+    val details by produceState<MediaDetails?>(null, itemId, mediaType, detailsAttempt) {
+        value = try {
+            detailsError = false
+            repository.details(itemId, mediaType)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            detailsError = true
+            null
+        }
     }
     var watchlistVersion by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val inWatchlist by produceState(false, itemId, repository, watchlistVersion) {
-        value = repository.isInWatchlist(itemId)
+        value = try {
+            repository.isInWatchlist(itemId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            false
+        }
     }
     var seasonNumber by remember { mutableIntStateOf(1) }
     // `details` must be a key: on first render it's still null, and without
     // it in the keys the episodes block never re-ran after details loaded.
+    var episodesLoading by remember { mutableStateOf(false) }
     val episodes by produceState<List<Episode>>(emptyList(), itemId, seasonNumber, details) {
         val d = details
-        if (d != null && d.item.mediaType == "tv") value = repository.episodes(itemId, seasonNumber)
+        if (d != null && d.item.mediaType == "tv") {
+            episodesLoading = true
+            value = try {
+                repository.episodes(itemId, seasonNumber).also { episodesLoading = false }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                episodesLoading = false
+                emptyList()
+            }
+        }
     }
     val similar by produceState<List<MediaItem>>(emptyList(), itemId, mediaType) {
-        value = repository.recommendations(itemId, mediaType)
+        value = try {
+            repository.recommendations(itemId, mediaType)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            emptyList()
+        }
     }
 
     val current = details
     if (current == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+        Box(Modifier.fillMaxSize()) {
+            if (detailsError) {
+                ErrorState(
+                    title = "Couldn\u2019t load details",
+                    message = "The title request failed. Check your connection and try again.",
+                    onRetry = { detailsAttempt++ },
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            } else {
+                Column(
+                    Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    SkeletonBox(width = 480.dp, height = 270.dp)
+                    Spacer(Modifier.height(AppSpacing.lg))
+                    SkeletonBox(width = 320.dp, height = 22.dp)
+                    Spacer(Modifier.height(AppSpacing.sm))
+                    SkeletonBox(width = 240.dp, height = 16.dp)
+                }
+            }
         }
         return
     }
     val item = current.item
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(start = 12.dp, top = 8.dp)) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = MaterialTheme.colorScheme.onSurface)
-            }
-            Text(
-                item.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.align(Alignment.CenterVertically).padding(start = 4.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
         ScrollableColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
             // ── Backdrop hero ────────────────────────────────────────────────
             Box(
                 Modifier
                     .fillMaxWidth()
                     .height(340.dp)
-                    .padding(horizontal = 20.dp)
+                    .padding(horizontal = AppSpacing.gutter)
                     .clip(RoundedCornerShape(16.dp))
                     .background(posterBrush(item)),
             ) {
                 item.backdropUrl?.let { url ->
                     AsyncImage(
                         model = url,
-                        contentDescription = item.title,
+                        // Decorative — the hero column below announces the title.
+                        contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.matchParentSize(),
                     )
@@ -153,7 +198,7 @@ fun DetailsScreen(
                     ),
                 )
                 Column(
-                    Modifier.align(Alignment.BottomStart).padding(20.dp).fillMaxWidth(),
+                    Modifier.align(Alignment.BottomStart).padding(AppSpacing.gutter).fillMaxWidth(),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -183,7 +228,7 @@ fun DetailsScreen(
                     )
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Star, null, tint = Color(0xFFF5C518), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Star, null, tint = AppColors.ratingGold, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(5.dp))
                         Text(
                             "%.1f".format(item.rating),
@@ -208,14 +253,16 @@ fun DetailsScreen(
             // ── Actions ──────────────────────────────────────────────────────
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                modifier = Modifier.padding(horizontal = AppSpacing.gutter, vertical = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 val resume = WatchStateStore.resumeFor(item.id, seasonNumber, 1)
 
                 TextButton(
                     onClick = { onPlay(PlayRequest(item.id, item.mediaType, item.title, seasonNumber, 1)) },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp)),
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                        .appFocusRing(cornerRadius = 8.dp, ringColor = Color.White),
                 ) {
                     Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(5.dp))
@@ -262,24 +309,24 @@ fun DetailsScreen(
                 color = MaterialTheme.colorScheme.onSurface,
                 lineHeight = 22.sp,
                 fontSize = 15.sp,
-                modifier = Modifier.padding(horizontal = 20.dp),
+                modifier = Modifier.padding(horizontal = AppSpacing.gutter),
                 maxLines = 8,
                 overflow = TextOverflow.Ellipsis,
             )
 
             // ── Cast ─────────────────────────────────────────────────────────
             if (current.cast.isNotEmpty()) {
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(AppSpacing.xl))
                 Text(
                     "Cast",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(horizontal = 20.dp),
+                    modifier = Modifier.padding(horizontal = AppSpacing.gutter),
                 )
                 Spacer(Modifier.height(10.dp))
                 LazyRow(
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = AppSpacing.gutter),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(current.cast, key = { it.name }) { member ->
@@ -333,17 +380,17 @@ fun DetailsScreen(
 
             // ── Where to watch ───────────────────────────────────────────────
             if (current.providers.isNotEmpty()) {
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(AppSpacing.xl))
                 Text(
                     "Where to watch",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(start = 20.dp, bottom = 10.dp),
+                    modifier = Modifier.padding(start = AppSpacing.gutter, bottom = 10.dp),
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+                    modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = AppSpacing.gutter),
                 ) {
                     current.providers.forEach { provider ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(max = 90.dp)) {
@@ -377,29 +424,29 @@ fun DetailsScreen(
 
             // ── Series: seasons + episodes ──────────────────────────────────
             if (item.mediaType == "tv" && current.seasons.isNotEmpty()) {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(AppSpacing.xl))
                 Text(
                     "Seasons",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(horizontal = 20.dp),
+                    modifier = Modifier.padding(horizontal = AppSpacing.gutter),
                 )
                 Spacer(Modifier.height(10.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+                    modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = AppSpacing.gutter),
                 ) {
                     current.seasons.forEach { season ->
                         val selectedItem = season.seasonNumber == seasonNumber
                         Box(
                             Modifier
+                                .appClickable(cornerRadius = 16.dp) { seasonNumber = season.seasonNumber }
                                 .background(
                                     if (selectedItem) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.surfaceVariant,
                                     RoundedCornerShape(16.dp),
                                 )
-                                .clickable { seasonNumber = season.seasonNumber }
                                 .padding(horizontal = 14.dp, vertical = 7.dp),
                         ) {
                             Text(
@@ -412,28 +459,46 @@ fun DetailsScreen(
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(AppSpacing.md))
 
-                if (episodes.isEmpty()) {
-                    Text(
+                when {
+                    episodesLoading -> Box(
+                        Modifier.fillMaxWidth().height(140.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
+                    }
+                    episodes.isEmpty() -> Text(
                         "No episode list available.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp),
+                        modifier = Modifier.padding(horizontal = AppSpacing.gutter),
                     )
-                } else {
-                    episodes.sortedBy { it.number }.forEach { ep ->
-                        val stillUrl = AppConfig.imageUrl("w300", ep.stillPath)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 8.dp)
-                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
-                                .clickable {
-                                    onPlay(PlayRequest(item.id, item.mediaType, item.title, seasonNumber, ep.number))
-                                }
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                    else -> {
+                        // Lazy inside a bounded height: a 30-episode season used
+                        // to compose every full-size row inside the scroll column.
+                        val sortedEpisodes = remember(episodes) { episodes.sortedBy { it.number } }
+                        LazyColumn(
+                            state = rememberLazyListState(),
+                            modifier = Modifier.heightIn(max = 720.dp),
+                            verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = AppSpacing.gutter,
+                                vertical = 4.dp,
+                            ),
                         ) {
+                            items(sortedEpisodes, key = { it.number }) { ep ->
+                                val stillUrl = AppConfig.imageUrl("w300", ep.stillPath)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
+                                        .clickable {
+                                            onPlay(PlayRequest(item.id, item.mediaType, item.title, seasonNumber, ep.number))
+                                        }
+                                        .appFocusRing(cornerRadius = 14.dp)
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                ) {
                             // 16:9 still — larger card so episodes read as real content.
                             Box(
                                 Modifier
@@ -520,24 +585,26 @@ fun DetailsScreen(
                                     modifier = Modifier.size(28.dp),
                                 )
                             }
-                        }
-                    }
-                }
-            }
+                        }   // Row
+                    }       // items()
+                }           // LazyColumn
+            }               // else ->
+        }                   // when
+    }                       // seasons / tv block
 
             // ── More like this ───────────────────────────────────────────────
             if (similar.isNotEmpty()) {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(AppSpacing.xl))
                 Text(
                     "More like this",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(horizontal = 20.dp),
+                    modifier = Modifier.padding(horizontal = AppSpacing.gutter),
                 )
                 Spacer(Modifier.height(10.dp))
                 LazyRow(
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = AppSpacing.gutter),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(similar, key = { "${it.mediaType}:${it.id}" }) { rec ->

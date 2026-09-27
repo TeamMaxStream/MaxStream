@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -56,9 +58,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImage
 import com.maxstream.app.data.model.HomeSection
 import com.maxstream.app.data.model.MediaItem
+import com.maxstream.app.ui.theme.AppColors
+import com.maxstream.app.ui.theme.AppSpacing
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -104,7 +109,11 @@ fun PosterCard(
                 scaleX = scale
                 scaleY = scale
             }
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            // Lift hovered/focused cards above their LazyRow siblings so the
+            // border/shadow isn't painted under the next card.
+            .zIndex(if (hovered) 1f else 0f)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .appFocusRing(cornerRadius = 8.dp),
     ) {
         Box(
             Modifier
@@ -141,7 +150,7 @@ fun PosterCard(
                     .align(Alignment.TopEnd)
                     .padding(8.dp)
                     .background(
-                        if (item.mediaType == "tv") Color(0xFF6366F1).copy(alpha = 0.92f)
+                        if (item.mediaType == "tv") AppColors.seriesBadge.copy(alpha = 0.92f)
                         else Color.Black.copy(alpha = 0.65f),
                         RoundedCornerShape(4.dp),
                     )
@@ -162,7 +171,7 @@ fun PosterCard(
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Star, null, tint = Color(0xFFF5C518), modifier = Modifier.size(12.dp))
+                        Icon(Icons.Default.Star, null, tint = AppColors.ratingGold, modifier = Modifier.size(12.dp))
                         Spacer(Modifier.width(3.dp))
                         Text(
                             "%.1f".format(item.rating),
@@ -193,7 +202,9 @@ fun PosterCard(
                 ) {
                     Icon(
                         Icons.Default.PlayArrow,
-                        contentDescription = "Play ${item.title}",
+                        // The card's clickable already announces the title —
+                        // avoid duplicating it in the semantics tree.
+                        contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(40.dp),
                     )
@@ -221,18 +232,8 @@ fun PosterCard(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (showProgress && !landscape) {
-            Spacer(Modifier.height(6.dp))
-            Box(
-                Modifier.width(width).height(3.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(2.dp)),
-            ) {
-                Box(
-                    Modifier.fillMaxWidth(item.progress.coerceIn(0f, 1f)).height(3.dp)
-                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)),
-                )
-            }
-        }
+        // Progress renders once, in-image (the old external track duplicated it
+        // and the showProgress flag didn't control the in-image bar).
     }
 }
 
@@ -254,13 +255,27 @@ fun SectionRail(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var hovered by remember { mutableStateOf(false) }
+    // Arrows stay mounted (dimmed at rest, full on hover) — the old
+    // conditional mount both reflowed the header row and made the buttons
+    // unclickable (they unmounted the instant the pointer left them toward
+    // the arrow). Page = 3 cards worth of pitch.
+    val arrowAlpha by animateFloatAsState(
+        targetValue = if (hovered) 1f else 0.35f,
+        animationSpec = tween(160),
+        label = "railArrowAlpha",
+    )
+    val pageDelta = if (showProgress) (220f + 12f) * 3f else (132f + 12f) * 3f
 
-    Column {
+    Column(
+        Modifier
+            .onPointerEvent(PointerEventType.Enter) { hovered = true }
+            .onPointerEvent(PointerEventType.Exit) { hovered = false },
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 8.dp),
+                .padding(start = AppSpacing.gutter, end = 8.dp),
         ) {
             Text(
                 title,
@@ -269,31 +284,28 @@ fun SectionRail(
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
             )
-            if (hovered) {
-                IconButton(
-                    onClick = {
-                        scope.launch { listState.animateScrollBy(-360f) }
-                    },
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = "Scroll left",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        scope.launch { listState.animateScrollBy(360f) }
-                    },
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "Scroll right",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+            // Disabled at the list edges instead of vanishing.
+            IconButton(
+                onClick = { scope.launch { listState.animateScrollBy(-pageDelta) } },
+                enabled = listState.canScrollBackward,
+                modifier = Modifier.size(32.dp).alpha(arrowAlpha),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = "Scroll left",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = { scope.launch { listState.animateScrollBy(pageDelta) } },
+                enabled = listState.canScrollForward,
+                modifier = Modifier.size(32.dp).alpha(arrowAlpha),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Scroll right",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             if (onSeeAll != null) {
                 TextButton(onClick = onSeeAll) {
@@ -301,16 +313,11 @@ fun SectionRail(
                 }
             }
         }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .onPointerEvent(PointerEventType.Enter) { hovered = true }
-                .onPointerEvent(PointerEventType.Exit) { hovered = false },
-        ) {
+        Box(Modifier.fillMaxWidth()) {
             LazyRow(
                 state = listState,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = AppSpacing.gutter),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.md),
             ) {
                 items(
                     items = items.indices.toList(),
@@ -323,14 +330,39 @@ fun SectionRail(
                     PosterCard(
                         item = item,
                         width = if (showProgress) 220.dp else 132.dp,
-                        showProgress = false,
                         landscape = showProgress,
                         onClick = { onOpen(item) },
                     )
                 }
             }
+            // Edge fade so the rail reads as scrollable (both sides react to
+            // scroll position rather than a permanent start fade).
+            if (listState.canScrollBackward) {
+                Box(
+                    Modifier.align(Alignment.CenterStart)
+                        .fillMaxHeight()
+                        .width(AppSpacing.lg)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(MaterialTheme.colorScheme.background, Color.Transparent),
+                            ),
+                        ),
+                )
+            }
+            if (listState.canScrollForward) {
+                Box(
+                    Modifier.align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .width(AppSpacing.lg)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color.Transparent, MaterialTheme.colorScheme.background),
+                            ),
+                        ),
+                )
+            }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(AppSpacing.md))
     }
 }
 
@@ -355,7 +387,7 @@ fun HeroCard(
         Modifier
             .fillMaxWidth()
             .height(260.dp)
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = AppSpacing.gutter)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -367,6 +399,7 @@ fun HeroCard(
                 .shadow(if (hovered) 14.dp else 4.dp, shape, clip = false)
                 .clip(shape)
                 .clickable(interactionSource = interaction, indication = null, onClick = onOpen)
+                .appFocusRing(cornerRadius = 16.dp)
                 .background(posterBrush(item)),
         ) {
             item.backdropUrl?.let { url ->

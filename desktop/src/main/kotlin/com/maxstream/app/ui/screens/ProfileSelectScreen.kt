@@ -16,11 +16,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Movie
@@ -46,10 +49,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +71,13 @@ import com.maxstream.app.data.cloud.CloudSync
 import com.maxstream.app.data.cloud.ProfileStore
 import com.maxstream.app.data.cloud.UserProfile
 import com.maxstream.app.data.repository.TmdbRepository
+import com.maxstream.app.resources.Res
+import com.maxstream.app.resources.maxstream_logo
+import org.jetbrains.compose.resources.painterResource
+import com.maxstream.app.ui.components.appClickable
+import com.maxstream.app.ui.components.appFocusRing
+import com.maxstream.app.ui.theme.AppColors
+import com.maxstream.app.ui.theme.AppSpacing
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -92,6 +108,7 @@ private data class HeroSlide(
  * Long-press-free edit: hover a tile to reveal a pencil; the add tile opens a
  * create dialog (name, kids, color) like mobile's profile_create_screen.
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun ProfileSelectScreen(onSelected: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
@@ -101,9 +118,10 @@ fun ProfileSelectScreen(onSelected: () -> Unit) {
     var editing by remember { mutableStateOf<UserProfile?>(null) }
     var creating by remember { mutableStateOf(false) }
     var manageError by remember { mutableStateOf<String?>(null) }
+    var heroHovered by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        ProfileStore.refresh()
+        runCatching { ProfileStore.refresh() }
         loading = false
     }
 
@@ -127,11 +145,11 @@ fun ProfileSelectScreen(onSelected: () -> Unit) {
         }.getOrDefault(emptyList())
     }
 
-    LaunchedEffect(heroes.size) {
+    LaunchedEffect(heroes.size, heroHovered) {
         if (heroes.size < 2) return@LaunchedEffect
-        while (isActive) {
+        while (isActive && !heroHovered) {
             delay(HeroCycleMs)
-            heroIndex = (heroIndex + 1) % heroes.size
+            if (!heroHovered) heroIndex = (heroIndex + 1) % heroes.size
         }
     }
 
@@ -140,7 +158,9 @@ fun ProfileSelectScreen(onSelected: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .onPointerEvent(PointerEventType.Enter) { heroHovered = true }
+            .onPointerEvent(PointerEventType.Exit) { heroHovered = false },
     ) {
         if (currentHero != null) {
             Crossfade(
@@ -174,7 +194,7 @@ fun ProfileSelectScreen(onSelected: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Image(
-                painter = painterResource("maxstream_logo.png"),
+                painter = painterResource(Res.drawable.maxstream_logo),
                 contentDescription = "MaxStream",
                 modifier = Modifier.height(64.dp),
             )
@@ -279,13 +299,21 @@ fun ProfileSelectScreen(onSelected: () -> Unit) {
                 onError = { manageError = it },
                 onSave = { name, kids, colorIndex ->
                     scope.launch {
-                        ProfileStore.create(
-                            name = name,
-                            colorIndex = colorIndex,
-                            iconCodePoint = 0xe4ff,
-                            isKids = kids,
-                        )
-                        creating = false
+                        // A thrown create used to kill the coroutine silently
+                        // while the dialog closed — the profile never appeared.
+                        try {
+                            ProfileStore.create(
+                                name = name,
+                                colorIndex = colorIndex,
+                                iconCodePoint = 0xe4ff,
+                                isKids = kids,
+                            )
+                            creating = false
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            manageError = t.message ?: "Could not create the profile."
+                        }
                     }
                 },
             )
@@ -298,23 +326,35 @@ fun ProfileSelectScreen(onSelected: () -> Unit) {
                 onError = { manageError = it },
                 onSave = { name, kids, colorIndex ->
                     scope.launch {
-                        ProfileStore.update(
-                            id = target.id,
-                            name = name,
-                            colorIndex = colorIndex,
-                            iconCodePoint = target.iconCodePoint,
-                            isKids = kids,
-                        )
-                        editing = null
+                        try {
+                            ProfileStore.update(
+                                id = target.id,
+                                name = name,
+                                colorIndex = colorIndex,
+                                iconCodePoint = target.iconCodePoint,
+                                isKids = kids,
+                            )
+                            editing = null
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            manageError = t.message ?: "Could not update the profile."
+                        }
                     }
                 },
                 onDelete = {
                     scope.launch {
-                        if (ProfileStore.profiles.size <= 1) {
-                            manageError = "You need at least one profile."
-                        } else {
-                            ProfileStore.delete(target.id)
-                            editing = null
+                        try {
+                            if (ProfileStore.profiles.size <= 1) {
+                                manageError = "You need at least one profile."
+                            } else {
+                                ProfileStore.delete(target.id)
+                                editing = null
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            manageError = t.message ?: "Could not delete the profile."
                         }
                     }
                 },
@@ -327,8 +367,9 @@ fun ProfileSelectScreen(onSelected: () -> Unit) {
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 24.dp)
                     .background(Color(0xCC1A1A1E), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                    .clickable { manageError = null },
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+                    .appClickable(cornerRadius = 8.dp) { manageError = null }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Text(msg, color = Color.White, fontSize = 13.sp)
             }
@@ -345,6 +386,7 @@ private sealed interface Tile {
 private fun ProfileTile(profile: UserProfile, onClick: () -> Unit, onEdit: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    var focused by remember { mutableStateOf(false) }
     val color = AvatarPalette[profile.colorIndex.mod(AvatarPalette.size)]
     val icon = AvatarIcons[0]
 
@@ -353,7 +395,11 @@ private fun ProfileTile(profile: UserProfile, onClick: () -> Unit, onEdit: () ->
         modifier = Modifier
             .width(130.dp)
             .scale(if (hovered) 1.05f else 1f)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            // Pencil edit affordance is hover-only by default — keyboard users
+            // could never reach it; show it on focus too, and ring the tile.
+            .onFocusChanged { focused = it.isFocused }
+            .appFocusRing(cornerRadius = 12.dp, ringColor = Color.White),
     ) {
         Box(
             Modifier
@@ -362,13 +408,13 @@ private fun ProfileTile(profile: UserProfile, onClick: () -> Unit, onEdit: () ->
                 .background(color)
                 .border(
                     3.dp,
-                    if (hovered) Color.White else color.copy(alpha = 0.9f),
+                    if (hovered || focused) Color.White else color.copy(alpha = 0.9f),
                     CircleShape,
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(icon, contentDescription = profile.name, tint = Color.White, modifier = Modifier.size(42.dp))
-            if (hovered) {
+            if (hovered || focused) {
                 Box(
                     Modifier
                         .align(Alignment.BottomEnd)
@@ -416,7 +462,8 @@ private fun AddProfileTile(onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .width(130.dp)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .appFocusRing(cornerRadius = 12.dp, ringColor = Color.White),
     ) {
         Box(
             Modifier
@@ -463,6 +510,8 @@ private fun ProfileEditDialog(
         Column(
             Modifier
                 .width(380.dp)
+                .heightIn(max = 640.dp)
+                .verticalScroll(rememberScrollState())
                 .clip(RoundedCornerShape(16.dp))
                 .background(Color(0xFF1A1A1E))
                 .padding(24.dp),
@@ -522,20 +571,27 @@ private fun ProfileEditDialog(
 
             Text("Avatar color", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AvatarPalette.forEachIndexed { index, color ->
-                    Box(
-                        Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(color)
-                            .border(
-                                if (index == colorIndex) 3.dp else 1.dp,
-                                if (index == colorIndex) Color.White else Color.White.copy(alpha = 0.25f),
-                                CircleShape,
-                            )
-                            .clickable { colorIndex = index },
-                    )
+            // 12 swatches in one row overflowed the 380dp dialog — wrap them.
+            AvatarPalette.chunked(6).forEachIndexed { rowIndex, rowColors ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                    modifier = Modifier.padding(bottom = AppSpacing.sm),
+                ) {
+                    rowColors.forEachIndexed { colOffset, color ->
+                        val index = rowIndex * 6 + colOffset
+                        Box(
+                            Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                                .border(
+                                    if (index == colorIndex) 3.dp else 1.dp,
+                                    if (index == colorIndex) Color.White else Color.White.copy(alpha = 0.25f),
+                                    CircleShape,
+                                )
+                                .appClickable(cornerRadius = 14.dp) { colorIndex = index },
+                        )
+                    }
                 }
             }
 
@@ -546,7 +602,7 @@ private fun ProfileEditDialog(
             ) {
                 if (onDelete != null && profile != null) {
                     TextButton(onClick = onDelete) {
-                        Text("Delete", color = Color(0xFFFF6B6B))
+                        Text("Delete", color = AppColors.errorBright)
                     }
                 }
                 TextButton(onClick = onDismiss) {

@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -41,6 +42,7 @@ import com.maxstream.app.data.repository.MediaRepository
 import com.maxstream.app.data.repository.MovieSection
 import com.maxstream.app.data.repository.SeriesSection
 import com.maxstream.app.ui.components.EmptyState
+import com.maxstream.app.ui.components.ErrorState
 import com.maxstream.app.ui.components.HeroCard
 import com.maxstream.app.ui.components.PosterCard
 import com.maxstream.app.ui.components.RotatingHero
@@ -49,6 +51,8 @@ import com.maxstream.app.ui.components.ScrollableGrid
 import com.maxstream.app.ui.components.SectionRail
 import com.maxstream.app.ui.components.SkeletonBox
 import com.maxstream.app.ui.components.SkeletonRail
+import com.maxstream.app.ui.theme.AppSpacing
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -67,88 +71,158 @@ fun HomeScreen(
     onSeeAllSeries: (SeriesSection) -> Unit,
     syncRevision: Int = 0,
 ) {
-    val sections by produceState<List<com.maxstream.app.data.model.HomeSection>>(emptyList(), repository) {
-        value = repository.homeSections()
+    // Home load with explicit error state + retry — the old produceState let a
+    // thrown repository call escape (white screen) or spun forever on failure.
+    var homeError by remember { mutableStateOf(false) }
+    var homeAttempt by remember { mutableIntStateOf(0) }
+    val sections by produceState<List<com.maxstream.app.data.model.HomeSection>>(emptyList(), repository, homeAttempt) {
+        value = try {
+            homeError = false
+            repository.homeSections()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            homeError = true
+            emptyList()
+        }
     }
+    var continueError by remember { mutableStateOf(false) }
+    var continueAttempt by remember { mutableIntStateOf(0) }
     val continueWatching by produceState<List<com.maxstream.app.data.model.ContinueWatch>>(
         emptyList(),
         repository,
         syncRevision,
+        continueAttempt,
     ) {
-        value = repository.continueWatching()
+        value = try {
+            continueError = false
+            repository.continueWatching()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            continueError = true
+            emptyList()
+        }
     }
     val scope = rememberCoroutineScope()
     var searchPage by remember { mutableIntStateOf(1) }
     var searchHasMore by remember { mutableStateOf(false) }
     var searchLoading by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf(false) }
     var searchActiveQuery by remember { mutableStateOf("") }
+    var searchAttempt by remember { mutableIntStateOf(0) }
     var searchResults by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    LaunchedEffect(query, sections) {
-        searchPage = 1
-        searchHasMore = false
+    // Debounced, cancellation-guarded search: LaunchedEffect restarts on every
+    // keystroke (delay is interrupted), so only the final query hits the
+    // repository; loading flags are keyed to the owning query so a cancelled
+    // pass can't clobber the active one's state.
+    LaunchedEffect(query, searchAttempt) {
+        if (query.isBlank()) {
+            searchActiveQuery = ""
+            searchPage = 1
+            searchHasMore = false
+            searchError = false
+            searchResults = emptyList()
+            searchLoading = false
+            return@LaunchedEffect
+        }
+        delay(300)
+        searchLoading = true
         searchActiveQuery = query
-        searchLoading = query.isNotBlank()
-        searchResults = if (query.isBlank()) emptyList() else repository.search(query, 1)
-        searchHasMore = searchResults.isNotEmpty()
-        searchLoading = false
+        searchPage = 1
+        searchError = false
+        searchResults = emptyList()
+        try {
+            val results = repository.search(query, 1)
+            searchResults = results
+            searchHasMore = results.isNotEmpty()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            searchError = true
+            searchHasMore = false
+        } finally {
+            if (searchActiveQuery == query) searchLoading = false
+        }
     }
     val searchQuery = query
     val searchLoadMore: (() -> Unit)? =
-        if (searchHasMore && !searchLoading && searchQuery.isNotBlank()) {
+        if (searchHasMore && !searchLoading && searchQuery.isNotBlank() && !searchError) {
             {
-                searchLoading = true
-                scope.launch {
-                    if (searchQuery != searchActiveQuery) {
-                        searchLoading = false
-                        return@launch
+                if (!searchLoading) {
+                    searchLoading = true
+                    scope.launch {
+                        val nextPage = searchPage + 1
+                        try {
+                            val next = repository.search(searchQuery, nextPage)
+                            if (searchQuery != searchActiveQuery) return@launch
+                            searchPage = nextPage
+                            searchResults = (searchResults + next).distinctBy { "${it.mediaType}:${it.id}" }
+                            if (next.isEmpty()) searchHasMore = false
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            if (searchQuery == searchActiveQuery) searchHasMore = false
+                        } finally {
+                            if (searchQuery == searchActiveQuery) searchLoading = false
+                        }
                     }
-                    val nextPage = searchPage + 1
-                    val next = repository.search(searchQuery, nextPage)
-                    if (searchQuery != searchActiveQuery) {
-                        searchLoading = false
-                        return@launch
-                    }
-                    searchPage = nextPage
-                    searchResults = (searchResults + next).distinctBy { "${it.mediaType}:${it.id}" }
-                    if (next.isEmpty()) searchHasMore = false
-                    searchLoading = false
                 }
             }
         } else null
 
     if (query.isNotBlank()) {
-        Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Column(Modifier.fillMaxSize().padding(AppSpacing.gutter)) {
             Text(
-                if (searchResults.isEmpty() && !searchLoading) "No results for \"$query\""
-                else "Results for \"$query\" (${searchResults.size})",
+                when {
+                    searchError -> "Search failed"
+                    searchLoading && searchResults.isEmpty() -> "Searching \u201C$query\u201D\u2026"
+                    searchResults.isEmpty() -> "No results for \u201C$query\u201D"
+                    else -> "Results for \u201C$query\u201D (${searchResults.size})"
+                },
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(bottom = 12.dp),
             )
-            if (searchResults.isEmpty() && !searchLoading) {
-                EmptyState(
+            when {
+                searchError -> ErrorState(
+                    title = "Couldn\u2019t search",
+                    message = "The catalog request failed. Check your connection and try again.",
+                    onRetry = { searchAttempt++ },
+                )
+                searchResults.isEmpty() && !searchLoading -> EmptyState(
                     title = "No matches",
                     message = "Try a different title, genre, or year.",
                     icon = Icons.Default.Search,
                 )
-            } else {
-                MediaBrowserGrid(searchResults, onOpen = onOpen, onLoadMore = searchLoadMore, loading = searchLoading)
+                else -> MediaBrowserGrid(searchResults, onOpen = onOpen, onLoadMore = searchLoadMore, loading = searchLoading)
             }
         }
         return
     }
 
-    val loadingHome = sections.isEmpty()
+    val loadingHome = sections.isEmpty() && !homeError
     val hero = sections.firstOrNull()?.items?.firstOrNull()
 
     ScrollableColumn {
+        if (homeError && sections.isEmpty()) {
+            Spacer(Modifier.height(AppSpacing.xl))
+            ErrorState(
+                title = "Couldn\u2019t load home",
+                message = "The catalog request failed. Check your connection and try again.",
+                onRetry = { homeAttempt++ },
+            )
+            return@ScrollableColumn
+        }
         if (loadingHome) {
-            Spacer(Modifier.height(20.dp))
-            SkeletonBox(width = 400.dp, height = 220.dp, modifier = Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(24.dp))
-            SkeletonRail(modifier = Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(20.dp))
-            SkeletonRail(modifier = Modifier.padding(horizontal = 20.dp))
+            Spacer(Modifier.height(AppSpacing.gutter))
+            // Skeleton mirrors the real RotatingHero (340dp) so content
+            // doesn't jump when it lands.
+            SkeletonBox(width = 400.dp, height = 340.dp, modifier = Modifier.padding(horizontal = AppSpacing.gutter))
+            Spacer(Modifier.height(AppSpacing.xl))
+            SkeletonRail(modifier = Modifier.padding(horizontal = AppSpacing.gutter))
+            Spacer(Modifier.height(AppSpacing.gutter))
+            SkeletonRail(modifier = Modifier.padding(horizontal = AppSpacing.gutter))
             return@ScrollableColumn
         }
 
@@ -235,13 +309,19 @@ fun MediaBrowserGrid(
     if (items.isEmpty() && !loading) return
     val gridState = rememberLazyGridState()
     if (onLoadMore != null) {
-        LaunchedEffect(gridState, items) {
+        // Gate on `loading` + the *current* onLoadMore (rememberUpdatedState):
+        // the old version keyed only on (gridState, items) and called
+        // onLoadMore on every layout emission near the bottom, re-firing while
+        // a request was already in flight and spinning the loop forever.
+        val latestOnLoadMore by rememberUpdatedState(onLoadMore)
+        LaunchedEffect(gridState, items, loading) {
+            if (loading) return@LaunchedEffect
             snapshotFlow {
                 val layout = gridState.layoutInfo
                 val last = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
                 last to layout.totalItemsCount
             }.collect { (last, total) ->
-                if (total > 0 && last >= total - 6) onLoadMore()
+                if (!loading && total > 0 && last >= total - 6) latestOnLoadMore()
             }
         }
     }

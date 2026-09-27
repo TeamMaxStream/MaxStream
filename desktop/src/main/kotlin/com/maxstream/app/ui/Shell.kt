@@ -12,7 +12,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,8 +30,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
@@ -48,16 +47,19 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -67,7 +69,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
-import androidx.compose.ui.res.painterResource
+import org.jetbrains.compose.resources.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -82,6 +84,10 @@ import com.maxstream.app.data.cloud.CloudSync
 import com.maxstream.app.data.cloud.ProfileStore
 import com.maxstream.app.data.model.PlayRequest
 import com.maxstream.app.data.repository.TmdbRepository
+import com.maxstream.app.resources.Res
+import com.maxstream.app.resources.app_icon
+import com.maxstream.app.ui.components.LocalSearchActive
+import com.maxstream.app.ui.components.appClickable
 import com.maxstream.app.ui.navigation.AppRoute
 import com.maxstream.app.ui.screens.AuthScreen
 import com.maxstream.app.ui.screens.DetailsScreen
@@ -128,6 +134,9 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
     var backStack by remember { mutableStateOf(listOf<AppRoute>(AppRoute.Home)) }
     val route = backStack.last()
     var query by remember { mutableStateOf("") }
+    // True while the title-bar search field holds keyboard focus; guards the
+    // route-change focus grab (typing jumps routes and must not steal focus).
+    var searchFocused by remember { mutableStateOf(false) }
     // Dark is the MaxStream default; Settings/sidebar can force light (persisted).
     var darkOverride by remember { mutableStateOf(AppPrefs.darkTheme) }
     // Bumped when cloud watch history / profile changes so Home reloads CW.
@@ -149,11 +158,6 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
         if (backStack.size > 1) backStack = backStack.dropLast(1)
     }
 
-    fun replaceTop(next: AppRoute) {
-        if (backStack.size > 1) backStack = backStack.dropLast(1) + next
-        else backStack = listOf(next)
-    }
-
     // Pull cloud watch history whenever the signed-in state changes.
     LaunchedEffect(AppSession.isSignedIn) {
         if (AppSession.isSignedIn) {
@@ -171,8 +175,11 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
         }
     }
 
-    LaunchedEffect(CloudSync.dataRevision) {
-        syncRevision = CloudSync.dataRevision
+    // Observe revision bumps without reading snapshot state in this
+    // composition — a keyed read here recomposed the whole Shell (window
+    // placement, phases, theme) on every watch-history push.
+    LaunchedEffect(Unit) {
+        snapshotFlow { CloudSync.dataRevision }.collect { syncRevision = it }
     }
 
     // Maximize while the player is open; restore prior placement on exit.
@@ -191,9 +198,16 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
         }
     }
 
-    // Returning from the player restores keyboard focus to the shell content.
-    LaunchedEffect(route) {
-        if (route !is AppRoute.Player && phase == AppPhase.Main) {
+    // Returning from the player restores keyboard focus to the shell content,
+    // but never while the user is typing in search (route changes under them).
+    // The field unmounts on Player/Detail without dispatching a focus-lost
+    // callback, so clear any stale flag there or focus would never restore.
+    LaunchedEffect(route, searchFocused) {
+        if (searchFocused && (route is AppRoute.Player || route is AppRoute.Detail)) {
+            searchFocused = false
+            return@LaunchedEffect
+        }
+        if (route !is AppRoute.Player && phase == AppPhase.Main && !searchFocused) {
             runCatching { contentFocus.requestFocus() }
         }
     }
@@ -211,48 +225,51 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
             AppPhase.Profile -> ProfileSelectScreen(
                 onSelected = { phase = AppPhase.Main },
             )
-            AppPhase.Main -> MainShell(
-                route = route,
-                backStack = backStack,
-                query = query,
-                darkOverride = darkOverride,
-                syncRevision = syncRevision,
-                contentFocus = contentFocus,
-                windowState = windowState,
-                onPush = ::push,
-                onReplaceRoot = ::replaceRoot,
-                onReplaceTop = ::replaceTop,
-                onBack = ::back,
-                onQueryChange = { query = it },
-                onThemeChange = {
-                    darkOverride = it
-                    AppPrefs.setDarkTheme(it)
-                },
-                onSignOut = {
-                    // Back to the auth gate; clear local CW/watch states so the
-                    // next signed-in user doesn't inherit the previous profile's
-                    // progress (cloud pull only replaces our data when signed in).
-                    WatchStateStore.clearAll()
-                    phase = AppPhase.Auth
-                    replaceRoot(AppRoute.Home)
-                    query = ""
-                    syncRevision = CloudSync.dataRevision
-                },
-                onManageProfiles = {
-                    phase = AppPhase.Profile
-                    priorPlacement.value = WindowPlacement.Floating
-                    if (windowState.placement != WindowPlacement.Fullscreen) {
-                        windowState.placement = WindowPlacement.Floating
-                    }
-                },
-                onSwitchProfile = {
-                    phase = AppPhase.Profile
-                    priorPlacement.value = WindowPlacement.Floating
-                    if (windowState.placement != WindowPlacement.Fullscreen) {
-                        windowState.placement = WindowPlacement.Floating
-                    }
-                },
-            )
+            AppPhase.Main -> CompositionLocalProvider(LocalSearchActive provides searchFocused) {
+                MainShell(
+                    route = route,
+                    backStack = backStack,
+                    query = query,
+                    darkOverride = darkOverride,
+                    syncRevision = syncRevision,
+                    searchFocused = searchFocused,
+                    onSearchFocusChange = { searchFocused = it },
+                    contentFocus = contentFocus,
+                    windowState = windowState,
+                    onPush = ::push,
+                    onReplaceRoot = ::replaceRoot,
+                    onBack = ::back,
+                    onQueryChange = { query = it },
+                    onThemeChange = {
+                        darkOverride = it
+                        AppPrefs.setDarkTheme(it)
+                    },
+                    onSignOut = {
+                        // Back to the auth gate; clear local CW/watch states so the
+                        // next signed-in user doesn't inherit the previous profile's
+                        // progress (cloud pull only replaces our data when signed in).
+                        WatchStateStore.clearAll()
+                        phase = AppPhase.Auth
+                        replaceRoot(AppRoute.Home)
+                        query = ""
+                        syncRevision = CloudSync.dataRevision
+                    },
+                    onManageProfiles = {
+                        phase = AppPhase.Profile
+                        priorPlacement.value = WindowPlacement.Floating
+                        if (windowState.placement != WindowPlacement.Fullscreen) {
+                            windowState.placement = WindowPlacement.Floating
+                        }
+                    },
+                    onSwitchProfile = {
+                        phase = AppPhase.Profile
+                        priorPlacement.value = WindowPlacement.Floating
+                        if (windowState.placement != WindowPlacement.Fullscreen) {
+                            windowState.placement = WindowPlacement.Floating
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -264,11 +281,12 @@ private fun MainShell(
     query: String,
     darkOverride: Boolean,
     syncRevision: Int,
+    searchFocused: Boolean,
+    onSearchFocusChange: (Boolean) -> Unit,
     contentFocus: FocusRequester,
     windowState: WindowState,
     onPush: (AppRoute) -> Unit,
     onReplaceRoot: (AppRoute) -> Unit,
-    onReplaceTop: (AppRoute) -> Unit,
     onBack: () -> Unit,
     onQueryChange: (String) -> Unit,
     onThemeChange: (Boolean) -> Unit,
@@ -303,7 +321,19 @@ private fun MainShell(
                 if (route is AppRoute.Player) return@onKeyEvent false
                 when (event.key) {
                     Key.Escape -> {
-                        if (backStack.size > 1) { back(); true } else false
+                        when {
+                            // Esc clears an active search first; a second Esc
+                            // then performs the usual back navigation.
+                            searchFocused && query.isNotBlank() -> {
+                                onQueryChange("")
+                                true
+                            }
+                            backStack.size > 1 -> {
+                                back()
+                                true
+                            }
+                            else -> false
+                        }
                     }
                     else -> false
                 }
@@ -322,7 +352,11 @@ private fun MainShell(
         Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
             NavRail(
                 current = route,
-                onSelectRoot = { replaceRoot(it) },
+                onSelectRoot = {
+                    replaceRoot(it)
+                    // A rail tap is an explicit nav; drop stale search text.
+                    onQueryChange("")
+                },
                 useDarkTheme = darkOverride,
                 onToggleTheme = onThemeChange,
                 onSwitchProfile = onSwitchProfile,
@@ -333,6 +367,7 @@ private fun MainShell(
                     canGoBack = backStack.size > 1,
                     onBack = { back() },
                     query = query,
+                    onFocusChange = onSearchFocusChange,
                 onQueryChange = {
                     onQueryChange(it)
                     // Typing from another top-level route jumps to Home results.
@@ -346,11 +381,14 @@ private fun MainShell(
                     targetState = route,
                     transitionSpec = {
                         // Push (deeper route) enters from right; pop enters from left.
-                        val forward = targetState.depth() > route.depth()
+                        // Key off initialState/targetState — a captured route from
+                        // the composition scope is stale by the time this runs, so
+                        // the direction check never fired (transition was dead).
+                        val forward = targetState.depth() > initialState.depth()
                         if (forward) {
                             slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { it / 4 } + fadeIn(tween(200)) togetherWith
                                 slideOutHorizontally(tween(240, easing = FastOutSlowInEasing)) { -it / 6 } + fadeOut(tween(160))
-                        } else if (targetState.depth() < route.depth()) {
+                        } else if (targetState.depth() < initialState.depth()) {
                             slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { -it / 6 } + fadeIn(tween(200)) togetherWith
                                 slideOutHorizontally(tween(240, easing = FastOutSlowInEasing)) { it / 4 } + fadeOut(tween(160))
                         } else {
@@ -398,13 +436,13 @@ private fun MainShell(
                             itemId = target.itemId,
                             mediaType = target.mediaType,
                             repository = repository,
-                            onBack = { back() },
                             onPlay = { req: PlayRequest ->
                                 push(AppRoute.Player(req))
                             },
                             onOpen = { m ->
-                                // Replace current detail so Back returns to the previous screen.
-                                onReplaceTop(AppRoute.Detail(m.id, m.mediaType, m.id))
+                                // Push (not replace) so Back steps through a chain
+                                // of similar titles instead of losing history.
+                                push(AppRoute.Detail(m.id, m.mediaType, m.id))
                             },
                         )
                         is AppRoute.Player -> Unit
@@ -456,10 +494,10 @@ private fun NavRail(
         is AppRoute.Detail -> AppRoute.Home
         else -> current
     }
-val profile = ProfileStore.activeProfile
-        val user = AppSession.user
+    val profile = ProfileStore.activeProfile
+    val user = AppSession.user
 
-        Column(
+    Column(
         Modifier
             .width(railWidth)
             .fillMaxHeight()
@@ -478,11 +516,11 @@ val profile = ProfileStore.activeProfile
         ) {
             // app_icon = installed-app mark (M only); maxstream_logo = wordmark splash.
             Image(
-                painter = painterResource("app_icon.png"),
+                painter = painterResource(Res.drawable.app_icon),
                 contentDescription = "MaxStream",
                 modifier = Modifier
                     .size(40.dp)
-                    .clickable { pinnedExpanded = !pinnedExpanded },
+                    .appClickable { pinnedExpanded = !pinnedExpanded },
             )
             if (expanded) {
                 Spacer(Modifier.width(10.dp))
@@ -523,7 +561,7 @@ val profile = ProfileStore.activeProfile
                         else Color.Transparent,
                         RoundedCornerShape(8.dp),
                     )
-                    .clickable { onSelectRoot(item.route) }
+                    .appClickable { onSelectRoot(item.route) }
                     .then(
                         if (expanded) Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                         else Modifier.padding(vertical = 12.dp),
@@ -568,7 +606,7 @@ val profile = ProfileStore.activeProfile
             horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onToggleTheme(!useDarkTheme) }
+                .appClickable { onToggleTheme(!useDarkTheme) }
                 .padding(horizontal = if (expanded) 22.dp else 0.dp, vertical = 10.dp),
         ) {
             Icon(
@@ -593,7 +631,7 @@ val profile = ProfileStore.activeProfile
             horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onSwitchProfile() }
+                .appClickable { onSwitchProfile() }
                 .padding(horizontal = if (expanded) 12.dp else 0.dp, vertical = 8.dp),
         ) {
             val avatarColor = profileColor(profile?.colorIndex ?: 0)
@@ -645,6 +683,7 @@ private fun TitleBar(
     canGoBack: Boolean,
     onBack: () -> Unit,
     query: String,
+    onFocusChange: (Boolean) -> Unit,
     onQueryChange: (String) -> Unit,
 ) {
     val title = when (route) {
@@ -685,6 +724,17 @@ private fun TitleBar(
                 onValueChange = { onQueryChange(it) },
                 placeholder = { Text("Search titles, genres…", color = MaterialTheme.colorScheme.outline) },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { onQueryChange("") }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(8.dp),
                 textStyle = MaterialTheme.typography.bodyMedium,
@@ -692,7 +742,10 @@ private fun TitleBar(
                     focusedContainerColor = MaterialTheme.colorScheme.surface,
                     unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                 ),
-                modifier = Modifier.width(300.dp).height(38.dp),
+                modifier = Modifier
+                    .width(300.dp)
+                    .height(38.dp)
+                    .onFocusChanged { onFocusChange(it.isFocused) },
             )
         }
     }

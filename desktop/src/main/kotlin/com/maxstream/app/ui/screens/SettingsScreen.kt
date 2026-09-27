@@ -39,7 +39,10 @@ import androidx.compose.ui.unit.sp
 import com.maxstream.app.data.AppPrefs
 import com.maxstream.app.data.cloud.AppSession
 import com.maxstream.app.data.cloud.ProfileStore
+import com.maxstream.app.core.AppConfig
 import com.maxstream.app.ui.components.ScrollableColumn
+import com.maxstream.app.ui.components.appFocusRing
+import com.maxstream.app.ui.theme.AppSpacing
 import kotlinx.coroutines.launch
 
 /**
@@ -59,14 +62,14 @@ fun SettingsScreen(
     var confirmSignOut by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    ScrollableColumn(contentPadding = PaddingValues(24.dp)) {
+    ScrollableColumn(contentPadding = PaddingValues(AppSpacing.xl)) {
         Text(
             "Settings",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(AppSpacing.gutter))
 
         SettingRow("Account") {
             AccountSection(onSignOut = { confirmSignOut = true })
@@ -102,7 +105,7 @@ fun SettingsScreen(
                     modifier = Modifier.width(200.dp),
                 )
                 Spacer(Modifier.height(6.dp))
-                OutlinedButton(onClick = { menuOpen = true }) {
+                OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.appFocusRing(cornerRadius = 8.dp)) {
                     Text(quality, color = MaterialTheme.colorScheme.onSurface)
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -143,7 +146,7 @@ fun SettingsScreen(
                     fontSize = 12.sp,
                 )
                 Spacer(Modifier.height(10.dp))
-                OutlinedButton(onClick = onManageProfiles) {
+                OutlinedButton(onClick = onManageProfiles, modifier = Modifier.appFocusRing(cornerRadius = 8.dp)) {
                     Text("Manage profiles", color = MaterialTheme.colorScheme.onSurface)
                 }
             }
@@ -168,7 +171,7 @@ fun SettingsScreen(
                         fontSize = 14.sp,
                     )
                     Text(
-                        "Version 1.0.1  •  Stream movies & series free",
+                        "Version ${AppConfig.APP_VERSION}  •  Stream movies & series free",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                     )
@@ -198,8 +201,8 @@ fun SettingsScreen(
                     onClick = {
                         confirmSignOut = false
                         scope.launch {
-                            AppSession.signOut()
-                            ProfileStore.clear()
+                            runCatching { AppSession.signOut() }
+                            runCatching { ProfileStore.clear() }
                             onSignOut()
                         }
                     },
@@ -248,7 +251,7 @@ private fun AccountSection(onSignOut: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(onClick = onSignOut) {
+            OutlinedButton(onClick = onSignOut, modifier = Modifier.appFocusRing(cornerRadius = 8.dp)) {
                 Icon(
                     Icons.AutoMirrored.Filled.Logout,
                     contentDescription = null,
