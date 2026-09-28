@@ -10,7 +10,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.OverscrollEffect
-import androidx.compose.foundation.overscroll.modifier.overscrollEffect
+import androidx.compose.foundation.overscroll.modifier.overscroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -704,7 +704,7 @@ private fun ContentRow(
             contentPadding = PaddingValues(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = (if (showProgress) Modifier.height(260.dp) else Modifier)
-                .overscrollEffect(OverscrollEffect.None),
+                .overscroll(null),
         ) {
             items(
                 count = items.size,

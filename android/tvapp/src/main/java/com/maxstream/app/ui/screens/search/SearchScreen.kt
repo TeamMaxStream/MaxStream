@@ -1,7 +1,7 @@
 package com.maxstream.app.ui.screens.search
 
 import androidx.compose.foundation.OverscrollEffect
-import androidx.compose.foundation.overscroll.modifier.overscrollEffect
+import androidx.compose.foundation.overscroll.modifier.overscroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -276,7 +276,7 @@ fun SearchScreen(
                 .weight(1f)
                 .fillMaxHeight()
                 .padding(end = 34.dp, top = 24.dp, bottom = 24.dp)
-                .overscrollEffect(OverscrollEffect.None),
+                .overscroll(null),
             contentPadding = PaddingValues(bottom = 56.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
