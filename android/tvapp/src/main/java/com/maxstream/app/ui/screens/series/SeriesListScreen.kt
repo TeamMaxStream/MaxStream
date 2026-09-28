@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.OverscrollEffect
+import androidx.compose.foundation.overscroll.modifier.overscrollEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -509,8 +511,7 @@ private fun SeriesContentRow(
             state = rowListState,
             contentPadding = PaddingValues(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier,
-            overscrollEffect = null,
+            modifier = Modifier.overscrollEffect(OverscrollEffect.None),
         ) {
             items(
                 count = items.size,

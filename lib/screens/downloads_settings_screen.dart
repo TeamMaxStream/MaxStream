@@ -31,6 +31,12 @@ class _DownloadsSettingsScreenState extends State<DownloadsSettingsScreen> {
     _loadStorageInfo();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _loadStorageInfo();
+  }
+
   Future<void> _loadSettings() async {
     final quality = await DownloadsSettingsService.getQuality();
     final wifiOnly = await DownloadsSettingsService.getWifiOnly();
@@ -53,8 +59,11 @@ class _DownloadsSettingsScreenState extends State<DownloadsSettingsScreen> {
   }
 
   Future<void> _loadStorageInfo() async {
-    final downloads = await DBHelper.getMediaDownloads();
-    final totalBytes = await DBHelper.getDownloadStorageUsage();
+    final profileId = ProfileScope.currentProfileId;
+    final downloads = await DBHelper.getMediaDownloads(profileId: profileId);
+    final totalBytes = await DBHelper.getDownloadStorageUsage(
+      profileId: profileId,
+    );
     if (mounted) {
       setState(() {
         _storageUsage = totalBytes;

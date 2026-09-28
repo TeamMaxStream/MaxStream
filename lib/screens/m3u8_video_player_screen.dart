@@ -1484,7 +1484,8 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     return preferred;
   }
 
-  List<_StreamQuality> _parseQualities(dynamic value) {    if (value is! List) return const [];
+  List<_StreamQuality> _parseQualities(dynamic value) {
+    if (value is! List) return const [];
     return value
         .whereType<Map>()
         .map((quality) {
@@ -1838,6 +1839,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       artist: widget.isMovie
           ? 'Movie'
           : 'S${_currentSeason.toString().padLeft(2, '0')}E${_currentEpisode.toString().padLeft(2, '0')}',
+      duration: value.duration,
       artUri: _posterUrl.isNotEmpty ? _posterUrl : null,
     );
     MediaSessionHandler.instance.updatePlaybackState(
@@ -2280,7 +2282,8 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       if (mounted) {
         setState(() => _selectedServerKey = _serverIdentity(stream));
       }
-    } catch (error) {      if (!mounted) return;
+    } catch (error) {
+      if (!mounted) return;
       setState(() {
         _subtitleTracks = oldTracks;
         _selectedSubtitle.value = oldSelectedSubtitle;
@@ -2460,8 +2463,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
                         StreamAudioHelper.displayName(track),
                         style: const TextStyle(color: Colors.white),
                       ),
-                      subtitle:
-                          (track['language']?.toString() ?? '').isNotEmpty
+                      subtitle: (track['language']?.toString() ?? '').isNotEmpty
                           ? Text(
                               track['language'].toString(),
                               style: const TextStyle(
@@ -2529,9 +2531,9 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not switch audio: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not switch audio: $error')));
     } finally {
       _isSwitchingAudio = false;
       if (mounted) setState(() {});
@@ -3557,8 +3559,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
             showSubtitles: _subtitleTracks.isNotEmpty,
             onAudio: _showAudioPicker,
             audioLabel: _audioLabel,
-            showAudio:
-                _audioTracks.length > 1 && _masterStreamUrl != null,
+            showAudio: _audioTracks.length > 1 && _masterStreamUrl != null,
             onAspectRatio: _cycleAspectRatio,
             aspectRatioLabel: _aspectRatioLabel,
             onDownload: _downloadCurrentStream,

@@ -325,9 +325,9 @@ class DBHelper {
     );
   }
 
-  static Future<int> getDownloadStorageUsage() async {
+  static Future<int> getDownloadStorageUsage({String? profileId}) async {
     if (kIsWeb) return 0;
-    final downloads = await getMediaDownloads();
+    final downloads = await getMediaDownloads(profileId: profileId);
     int totalBytes = 0;
     for (final download in downloads) {
       final path = download['localPath']?.toString() ?? '';
