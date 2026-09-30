@@ -1,7 +1,7 @@
 package com.maxstream.app.ui.screens.search
 
 import androidx.compose.foundation.OverscrollEffect
-import androidx.compose.foundation.overscroll.modifier.overscroll
+import androidx.compose.foundation.overscroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box

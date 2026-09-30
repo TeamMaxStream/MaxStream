@@ -65,6 +65,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
+import com.maxstream.app.HlsAudioHelper
+import com.maxstream.app.OpenSubtitleResult
+import com.maxstream.app.OpenSubtitlesClient
 import com.maxstream.app.R
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -81,6 +84,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.navigation.NavController
 import com.maxstream.app.data.local.WatchProgressRepository
+import com.maxstream.app.data.model.AudioTrack
 import com.maxstream.app.data.model.Quality
 import com.maxstream.app.data.model.Source
 import com.maxstream.app.data.model.Subtitle
@@ -97,8 +101,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-/** Server/quality/subtitle/season selection panel currently open (null = closed). */
-private enum class PlayerMenu { Servers, Quality, Subtitles, Episodes }
+/** Server/quality/subtitle/audio/season selection panel currently open (null = closed). */
+private enum class PlayerMenu { Servers, Quality, Subtitles, Audio, Episodes }
 
 /** Window (ms) in which a repeated confirm key is treated as ONE OK press.
  * TV remotes/gamepads often emit two events (DPAD_CENTER + ENTER, or a
@@ -138,6 +142,9 @@ private data class SubtitleOption(
     val headers: Map<String, String>,
     /** Extractor tag from the source (e.g. "HLS" for VixSrc subtitle renditions). */
     val source: String = "",
+    /** Caption text already in memory (downloaded online subtitle) —
+     * used instead of fetching [url]. */
+    val content: String? = null,
 )
 
 /** Max retries for transient ExoPlayer errors (403, network glitch, decoder hiccup). */
@@ -268,9 +275,10 @@ fun PlayerScreen(
     // Position to restore when a menu is closed (mirrors Dart's _closeMenus
     // refocus on the opener button).
     var savedMenuButtonPosition by remember { mutableIntStateOf(0) }
-    // One requester per possible top-right button (series + 3 menus). Episodes
-    // is index 0 and only used for series.
-    val menuButtonRequesters = remember { List(4) { FocusRequester() } }
+    // One requester per possible top-right button (series + 4 menus). Episodes
+    // is index 0 and only used for series; Subtitles/Quality/Servers are 1/3/2
+    // and Audio is 4.
+    val menuButtonRequesters = remember { List(5) { FocusRequester() } }
     // Focus index into the bottom playback controls (0=rewind, 1=play/pause,
     // 2=forward, 3=slider). -1 = focus is on the menus/surface. These controls
     // are custom Compose widgets (like Dart's control grid) because ExoPlayer's
@@ -299,6 +307,11 @@ fun PlayerScreen(
     var menuIndex by remember { mutableStateOf(0) }
     var selectedQualityLabel by remember { mutableStateOf("Auto") }
     var selectedSubtitleLabel by remember { mutableStateOf("Off") }
+    // Audio track picked from the Audio menu. "Auto" = leave the master alone;
+    // a non-null language pins playback to that rendition (mirrors Dart's
+    // _preferredAudioLanguage + HlsAudioHelper rewrite).
+    var selectedAudioLabel by remember { mutableStateOf("Auto") }
+    var selectedAudioLanguage by remember { mutableStateOf<String?>(null) }
     var resumePositionMs by remember { mutableStateOf(0L) }
     // True after a memory-pressure release so the recovery effect rebuilds the
     // player (distinct from the initial load, which must not double-resolve).
@@ -340,6 +353,7 @@ fun PlayerScreen(
 
     // Current subtitle options across every server (grouped + own headers).
     var subtitleOptions by remember { mutableStateOf<List<SubtitleOption>>(emptyList()) }
+    var onlineSubtitleSearching by remember { mutableStateOf(false) }
     // The active subtitle config attached to the playing item (null = off).
     var activeSubtitle by remember { mutableStateOf<SubtitleOption?>(null) }
     // Parsed timed cues for the active subtitle (mirrors Dart's _activeSubtitles).
@@ -626,7 +640,12 @@ fun PlayerScreen(
                                 try { player.release() } catch (_: Exception) {}
                                 try {
                                     val pos = player.currentPosition
-                                    val newPlayer = buildPlayer(next.url, next.headers, next.isHls, pos)
+                                    val newPlayer = buildPlayer(
+                                        HlsAudioHelper.resolvePlaybackUrl(next.url, next.headers, selectedAudioLanguage, context.cacheDir),
+                                        next.headers,
+                                        next.isHls,
+                                        pos,
+                                    )
                                     // Switch to working server without full subtitle re-fetch
                                     exoPlayer = newPlayer
                                     source = next
@@ -658,8 +677,9 @@ fun PlayerScreen(
                             try {
                                 val pos = player.currentPosition
                                 player.release()
+                                val playbackUrl = HlsAudioHelper.resolvePlaybackUrl(capturedUrl, capturedHeaders, selectedAudioLanguage, context.cacheDir)
                                 val p = buildPlayer(
-                                    url = capturedUrl,
+                                    url = playbackUrl,
                                     headers = capturedHeaders,
                                     isHls = capturedIsHls,
                                     startMs = pos,
@@ -869,6 +889,10 @@ fun PlayerScreen(
             // and nothing renders (mirrors Dart's _selectSubtitle/_fetchSubtitles).
             val cueSet = if (newSubtitle == null) {
                 emptyList()
+            } else if (newSubtitle.content != null) {
+                // Online subtitles arrive as already-downloaded caption text;
+                // there is no URL to fetch (mirrors Dart's local-file branch).
+                parseSubtitleCues(newSubtitle.content)
             } else {
                 val resolvedUrl = resolveSubtitleUrl(newSubtitle.url, newUrl.takeIf { it.startsWith("http") })
                 fetchSubtitleContent(resolvedUrl, newSubtitle.headers, newHeaders)
@@ -876,7 +900,8 @@ fun PlayerScreen(
                     .orEmpty()
             }
             if (gen != rebuildGeneration.value) return@launch
-            val player = buildPlayer(newUrl, newHeaders, newIsHls, positionMs)
+            val playbackUrl = HlsAudioHelper.resolvePlaybackUrl(newUrl, newHeaders, selectedAudioLanguage, context.cacheDir)
+            val player = buildPlayer(playbackUrl, newHeaders, newIsHls, positionMs)
             if (gen != rebuildGeneration.value) {
                 releasePlayer(player)
                 return@launch
@@ -1037,7 +1062,7 @@ fun PlayerScreen(
             for (candidate in candidates) {
                 try {
                     val p = buildPlayer(
-                        url = candidate.url,
+                        url = HlsAudioHelper.resolvePlaybackUrl(candidate.url, candidate.headers, selectedAudioLanguage, context.cacheDir),
                         headers = candidate.headers,
                         isHls = candidate.isHls,
                         startMs = resumePositionMs,
@@ -1068,7 +1093,7 @@ fun PlayerScreen(
                     if (srv.url.isBlank() || srv.url == primary.url) continue
                     try {
                         val p = buildPlayer(
-                            url = srv.url,
+                            url = HlsAudioHelper.resolvePlaybackUrl(srv.url, srv.headers, selectedAudioLanguage, context.cacheDir),
                             headers = srv.headers,
                             isHls = srv.isHls,
                             startMs = resumePositionMs,
@@ -1354,6 +1379,43 @@ fun PlayerScreen(
         // and plays the new episode.
     }
 
+    /** Fetches online subtitle results for the current title and appends them
+     * to the Subtitles menu (tagged source="Online"; downloaded to caption
+     * text only when picked). Re-runs after a server switch rebuilds
+     * [subtitleOptions] without them. */
+    fun searchOnlineSubtitles() {
+        val query = seriesTitle.ifBlank { title }
+        if (query.isBlank() || onlineSubtitleSearching) return
+        onlineSubtitleSearching = true
+        coroutineScope.launch {
+            try {
+                val results = OpenSubtitlesClient.search(
+                    query = query,
+                    season = if (isMovie) null else currentSeason,
+                    episode = if (isMovie) null else currentEpisode,
+                )
+                val existing = subtitleOptions
+                subtitleOptions = existing +
+                    results
+                        .filter { r -> existing.none { it.label == r.label } }
+                        .map { r ->
+                            SubtitleOption(
+                                label = r.label,
+                                url = r.downloadUrl,
+                                mimeType = "application/x-subrip",
+                                owner = "Online",
+                                headers = emptyMap(),
+                                source = "Online",
+                            )
+                        }
+            } catch (error: Throwable) {
+                Log.w("TVPlayer", "Online subtitle search failed: ${error.message}")
+            } finally {
+                onlineSubtitleSearching = false
+            }
+        }
+    }
+
     // Visible top-right menu buttons, in display order. Index 0 is the
     // Episodes button for series; 1..3 are Subtitles/Quality/Servers.
     val topMenuButtons = buildList<TopMenuButton> {
@@ -1385,6 +1447,10 @@ fun PlayerScreen(
                         activeMenu = PlayerMenu.Subtitles
                         menuIndex = 0
                         focusedMenuButton = -1
+                        // First open of this session: fetch online results too.
+                        if (subtitleOptions.none { it.source == "Online" }) {
+                            searchOnlineSubtitles()
+                        }
                     },
             ),
         )
@@ -1402,6 +1468,24 @@ fun PlayerScreen(
                     },
             ),
         )
+        // The Audio menu only makes sense with multiple #EXT-X-MEDIA audio
+        // renditions; a lone track plays identically to Auto.
+        if (source?.audioTracks.orEmpty().size >= 2) {
+            add(
+                TopMenuButton(
+                    index = 4,
+                    label = "Audio",
+                    subLabel = selectedAudioLabel,
+                    onClick = {
+                        savedMenuButtonPosition = focusedMenuButton
+                        menuOpen = true
+                        activeMenu = PlayerMenu.Audio
+                        menuIndex = 0
+                        focusedMenuButton = -1
+                    },
+                ),
+            )
+        }
         add(
             TopMenuButton(
                 index = 3,
@@ -1509,6 +1593,25 @@ fun PlayerScreen(
                 selectedQualityLabel = q.label
                 switchMedia(q.url, s.headers, s.isHls, activeSubtitle)
             }
+            PlayerMenu.Audio -> {
+                // Index 0 = Auto (leave the master playlist alone).
+                if (menuIndex == 0) {
+                    selectedAudioLabel = "Auto"
+                    selectedAudioLanguage = null
+                    menuOpen = false
+                    activeMenu = null
+                    s?.let { switchMedia(it.url, it.headers, it.isHls, activeSubtitle) }
+                    return
+                }
+                val opts = s?.audioTracks.orEmpty()
+                if (opts.isEmpty() || menuIndex - 1 >= opts.size) return
+                val track = opts[menuIndex - 1]
+                selectedAudioLabel = track.label
+                selectedAudioLanguage = track.language.ifBlank { track.label }
+                menuOpen = false
+                activeMenu = null
+                s?.let { switchMedia(it.url, it.headers, it.isHls, activeSubtitle) }
+            }
             PlayerMenu.Subtitles -> {
                 // Index 0 = Off.
                 if (menuIndex == 0) {
@@ -1525,6 +1628,28 @@ fun PlayerScreen(
                 val target = opts[menuIndex - 1]
                 menuOpen = false
                 activeMenu = null
+                if (target.source == "Online") {
+                    // Download first: the picker stores only the download URL,
+                    // and the player renders cues from fetched text.
+                    coroutineScope.launch {
+                        status = "Downloading subtitle..."
+                        val content = try {
+                            OpenSubtitlesClient.downloadAsText(target.url)
+                        } catch (error: Throwable) {
+                            Log.w("TVPlayer", "Subtitle download failed: ${error.message}")
+                            null
+                        }
+                        status = ""
+                        if (content == null) {
+                            status = "Subtitle download failed"
+                            return@launch
+                        }
+                        s?.let {
+                            switchMedia(it.url, it.headers, it.isHls, target.copy(content = content))
+                        }
+                    }
+                    return
+                }
                 s?.let { switchMedia(it.url, it.headers, it.isHls, target) }
             }
             PlayerMenu.Episodes -> {
@@ -1644,6 +1769,7 @@ fun PlayerScreen(
                         PlayerMenu.Servers -> allServers.size
                         PlayerMenu.Quality -> qualityOptions(source).size
                         PlayerMenu.Subtitles -> subtitleOptions.size + 1
+                        PlayerMenu.Audio -> (source?.audioTracks.orEmpty().size) + 1
                         PlayerMenu.Episodes -> (menuEpisodesCache[menuSeason] ?: emptyList()).size
                         null -> 0
                     }
@@ -2087,6 +2213,8 @@ fun PlayerScreen(
                     currentQualityLabel = selectedQualityLabel,
                     subtitles = subtitleOptions,
                     currentSubtitleLabel = selectedSubtitleLabel,
+                    audios = source?.audioTracks.orEmpty(),
+                    currentAudioLabel = selectedAudioLabel,
                     onSelect = { menuOpen = false; activeMenu = null },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -2276,6 +2404,8 @@ private fun MenuPanel(
     currentQualityLabel: String,
     subtitles: List<SubtitleOption>,
     currentSubtitleLabel: String,
+    audios: List<AudioTrack>,
+    currentAudioLabel: String,
     onSelect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2285,6 +2415,9 @@ private fun MenuPanel(
         PlayerMenu.Subtitles ->
             listOf("Off" to (currentSubtitleLabel == "Off")) +
                 subtitles.map { it.label to (it.label == currentSubtitleLabel) }
+        PlayerMenu.Audio ->
+            listOf("Auto" to (currentAudioLabel == "Auto")) +
+                audios.map { it.label to (it.label == currentAudioLabel) }
         PlayerMenu.Episodes -> emptyList()
         null -> emptyList()
     }
@@ -2293,6 +2426,7 @@ private fun MenuPanel(
         PlayerMenu.Servers -> "Server"
         PlayerMenu.Quality -> "Quality"
         PlayerMenu.Subtitles -> "Subtitles"
+        PlayerMenu.Audio -> "Audio"
         PlayerMenu.Episodes -> "Episodes"
         null -> ""
     }

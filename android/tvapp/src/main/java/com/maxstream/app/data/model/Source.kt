@@ -9,6 +9,7 @@ data class Source(
     val headers: Map<String, String> = emptyMap(),
     val qualities: List<Quality> = emptyList(),
     val subtitles: List<Subtitle> = emptyList(),
+    val audioTracks: List<AudioTrack> = emptyList(),
     val separateAudio: Boolean = false,
     /** Extractor name (e.g. "VidLink") - the host that produced this stream. */
     val extractor: String = "",
@@ -35,6 +36,8 @@ data class Source(
                 .map { Quality.fromBundle(it) }
             val subtitles = b.getParcelableArrayList<Bundle>("subtitles").orEmpty()
                 .map { Subtitle.fromBundle(it) }
+            val audioTracks = b.getParcelableArrayList<Bundle>("audioTracks").orEmpty()
+                .map { AudioTrack.fromBundle(it) }
             return Source(
                 url = b.getString("url").orEmpty(),
                 server = b.getString("server").orEmpty(),
@@ -42,6 +45,7 @@ data class Source(
                 headers = headers,
                 qualities = qualities,
                 subtitles = subtitles,
+                audioTracks = audioTracks,
                 separateAudio = b.getBoolean("separateAudio", false),
                 extractor = b.getString("extractor").orEmpty(),
                 method = b.getString("method").orEmpty(),
@@ -96,6 +100,38 @@ data class Subtitle(
     }
 }
 
+data class AudioTrack(
+    val label: String,
+    val language: String,
+    val url: String = "",
+    val groupId: String = "",
+    val isDefault: Boolean = false,
+    val channels: String = "",
+    val source: String = "HLS",
+) {
+    fun toBundle() = Bundle().apply {
+        putString("label", label)
+        putString("language", language)
+        putString("url", url)
+        putString("groupId", groupId)
+        putBoolean("isDefault", isDefault)
+        putString("channels", channels)
+        putString("source", source)
+    }
+
+    companion object {
+        fun fromBundle(b: Bundle) = AudioTrack(
+            label = b.getString("label").orEmpty(),
+            language = b.getString("language").orEmpty(),
+            url = b.getString("url").orEmpty(),
+            groupId = b.getString("groupId").orEmpty(),
+            isDefault = b.getBoolean("isDefault", false),
+            channels = b.getString("channels").orEmpty(),
+            source = b.getString("source").orEmpty(),
+        )
+    }
+}
+
 fun Source.toBundle(): Bundle = Bundle().apply {
     putString("url", url)
     putString("server", server)
@@ -108,6 +144,10 @@ fun Source.toBundle(): Bundle = Bundle().apply {
     putParcelableArrayList(
         "subtitles",
         ArrayList(subtitles.map { it.toBundle() }),
+    )
+    putParcelableArrayList(
+        "audioTracks",
+        ArrayList(audioTracks.map { it.toBundle() }),
     )
     putBoolean("separateAudio", separateAudio)
     putString("extractor", extractor)

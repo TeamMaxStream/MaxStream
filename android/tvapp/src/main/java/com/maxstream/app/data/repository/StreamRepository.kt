@@ -1,6 +1,7 @@
 package com.maxstream.app.data.repository
 
 import android.content.Context
+import com.maxstream.app.data.model.AudioTrack
 import com.maxstream.app.data.model.Quality
 import com.maxstream.app.data.model.Source
 import com.maxstream.app.data.model.Subtitle
@@ -76,6 +77,20 @@ class StreamRepository(private val context: Context) {
             }
         }.orEmpty()
 
+        val audioTracks = (map["audioTracks"] as? List<*>)?.mapNotNull { item ->
+            (item as? Map<*, *>)?.let {
+                AudioTrack(
+                    label = it["label"]?.toString().orEmpty(),
+                    language = it["language"]?.toString().orEmpty(),
+                    url = it["url"]?.toString().orEmpty(),
+                    groupId = it["groupId"]?.toString().orEmpty(),
+                    isDefault = it["default"] as? Boolean ?: false,
+                    channels = it["channels"]?.toString().orEmpty(),
+                    source = it["source"]?.toString() ?: "HLS",
+                )
+            }
+        }.orEmpty()
+
         val server = (map["server"] as? String).orEmpty()
         val extractor = (map["source"] as? String).orEmpty()
         return Source(
@@ -85,6 +100,7 @@ class StreamRepository(private val context: Context) {
             headers = headers,
             qualities = qualities,
             subtitles = subtitles,
+            audioTracks = audioTracks,
             separateAudio = map["separateAudio"] as? Boolean ?: false,
             extractor = extractor,
             method = (map["method"] as? String).orEmpty(),

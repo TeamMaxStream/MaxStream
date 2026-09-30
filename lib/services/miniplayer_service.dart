@@ -78,6 +78,10 @@ class MiniplayerService extends ChangeNotifier {
     required List<MiniSubtitleCue> activeSubtitleCues,
     required List<Map<String, dynamic>> qualitiesRaw,
   }) {
+    // A previous miniplayer session must never outlive its replacement:
+    // overwriting the field without disposing the old controller leaves it
+    // playing with no UI anywhere — the "audio only, no bar" zombie.
+    final previous = _controller;
     _controller = controller;
     _title = title;
     _tmdbId = tmdbId;
@@ -97,6 +101,16 @@ class MiniplayerService extends ChangeNotifier {
     _minimizing = true;
     notifyListeners();
     _minimizing = false;
+    if (previous != null && !identical(previous, controller)) {
+      // Pause immediately so audio stops, but dispose only after the current
+      // frame: the miniplayer bar is still showing `previous` until this
+      // notifyListeners rebuild lands, and a controller disposed mid-frame
+      // throws in the widget that renders it.
+      previous.pause();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        previous.dispose();
+      });
+    }
   }
 
   VideoPlayerController? restore() {
@@ -141,5 +155,15 @@ class MiniplayerService extends ChangeNotifier {
     _selectedSubtitleUrl = '';
     _activeSubtitleCues = const [];
     notifyListeners();
+  }
+
+  /// Pauses the miniplayer when the app goes to the background. Keeps the
+  /// controller (and its position) alive so playback can resume on return,
+  /// but stops audio from playing unseen. No-op when nothing is minimized.
+  void pauseIfPlaying() {
+    final controller = _controller;
+    if (controller != null && controller.value.isPlaying) {
+      controller.pause();
+    }
   }
 }

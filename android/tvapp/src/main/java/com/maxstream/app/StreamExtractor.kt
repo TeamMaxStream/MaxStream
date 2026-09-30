@@ -109,6 +109,7 @@ class StreamExtractor(private val context: Context) {
         val headers: Map<String, String> = emptyMap(),
         val qualities: List<QualityOption> = emptyList(),
         val subtitles: List<SubtitleOption> = emptyList(),
+        val audioTracks: List<AudioOption> = emptyList(),
         val server: String = source,
         val separateAudio: Boolean = false,
         val method: String = "",
@@ -122,6 +123,7 @@ class StreamExtractor(private val context: Context) {
             "referer" to (headers["Referer"] ?: ""),
             "qualities" to qualities.map(QualityOption::toMap),
             "subtitles" to subtitles.map(SubtitleOption::toMap),
+            "audioTracks" to audioTracks.map(AudioOption::toMap),
             "separateAudio" to separateAudio,
             "method" to method,
         )
@@ -137,6 +139,27 @@ class StreamExtractor(private val context: Context) {
             "label" to label,
             "url" to url,
             "default" to isDefault,
+            "source" to source,
+        )
+    }
+
+    /** One `#EXT-X-MEDIA:TYPE=AUDIO` rendition from an HLS master playlist. */
+    data class AudioOption(
+        val label: String,
+        val language: String,
+        val url: String,
+        val groupId: String = "",
+        val isDefault: Boolean = false,
+        val channels: String = "",
+        val source: String = "HLS",
+    ) {
+        fun toMap(): Map<String, Any> = mapOf(
+            "label" to label,
+            "language" to language,
+            "url" to url,
+            "groupId" to groupId,
+            "default" to isDefault,
+            "channels" to channels,
             "source" to source,
         )
     }
@@ -355,7 +378,12 @@ class StreamExtractor(private val context: Context) {
                     val timeout = if (webView) WEBVIEW_SERVER_TIMEOUT_MS else HTTP_SERVER_TIMEOUT_MS
                     withTimeoutOrNull(timeout) {
                         try {
-                            extractServer(server)?.let(collected::add)
+                            // Enrich fills HLS audio renditions for extractors
+                            // that early-return without validateHls (list path
+                            // only — the playback race never pays for it).
+                            extractServer(server)
+                                ?.let { enrichHlsAudioTracks(it) }
+                                ?.let(collected::add)
                         } catch (error: Throwable) {
                             if (error is CancellationException) throw error
                             Log.w(tag, "Alternative server ${server.name} failed: ${error.message}")
@@ -4447,6 +4475,8 @@ class StreamExtractor(private val context: Context) {
             url = validation.playbackUrl,
             qualities = validation.qualities,
             subtitles = (sanitizedStream.subtitles + validation.subtitles).distinctBy { it.url },
+            audioTracks = (sanitizedStream.audioTracks + validation.audioTracks)
+                .distinctBy { it.url.ifBlank { it.label } },
             separateAudio = validation.separateAudio,
         )
     }
@@ -4455,6 +4485,7 @@ class StreamExtractor(private val context: Context) {
         val playbackUrl: String,
         val qualities: List<QualityOption>,
         val subtitles: List<SubtitleOption>,
+        val audioTracks: List<AudioOption> = emptyList(),
         val separateAudio: Boolean = false,
     )
 
@@ -4468,9 +4499,10 @@ class StreamExtractor(private val context: Context) {
 
         val variants = parseHlsVariants(master.url, master.body)
         val subtitles = parseHlsSubtitles(master.url, master.body)
+        val audioTracks = parseHlsAudio(master.url, master.body)
         if (variants.isEmpty()) {
             validateMediaPlaylist(master.url, master.body, headers)
-            return HlsValidation(master.url, emptyList(), subtitles)
+            return HlsValidation(master.url, emptyList(), subtitles, audioTracks)
         }
 
         // A playlist can remain reachable after its signed media segments expire.
@@ -4520,7 +4552,13 @@ class StreamExtractor(private val context: Context) {
             allPlayable -> master.url
             else -> playableVariants.minByOrNull { it.height }?.url ?: master.url
         }
-        return HlsValidation(pinnedUrl, qualities, subtitles, separateAudio = separateAudio)
+        return HlsValidation(
+            pinnedUrl,
+            qualities,
+            subtitles,
+            audioTracks,
+            separateAudio = separateAudio,
+        )
     }
 
     private fun validateMediaPlaylist(
@@ -4597,6 +4635,63 @@ class StreamExtractor(private val context: Context) {
                 source = "HLS",
             )
         }.distinctBy { it.url }.toList()
+    }
+
+    /** Fills HLS audio renditions for streams whose extractor skipped validateHls. */
+    private suspend fun enrichHlsAudioTracks(stream: StreamResult): StreamResult {
+        if (stream.audioTracks.isNotEmpty()) return stream
+        if (stream.type != "direct_m3u8" && !stream.url.contains(".m3u8", true)) {
+            return stream
+        }
+        return try {
+            val master = getValidationResponse(stream.url, safeHeaders(stream.headers))
+            if (!master.body.startsWith("#EXTM3U")) return stream
+            stream.copy(
+                audioTracks = parseHlsAudio(master.url, master.body),
+                subtitles = if (stream.subtitles.isEmpty()) {
+                    parseHlsSubtitles(master.url, master.body)
+                } else {
+                    stream.subtitles
+                },
+            )
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            stream
+        }
+    }
+
+    /**
+     * Parses `#EXT-X-MEDIA:TYPE=AUDIO` renditions (multi-language audio) from
+     * an HLS master playlist. Dialects vary: some hosts set LANGUAGE only,
+     * some NAME only, some neither (single default track).
+     */
+    private fun parseHlsAudio(masterUrl: String, body: String): List<AudioOption> {
+        fun attribute(line: String, name: String): String? {
+            val match = Regex("""(?:^|,)$name=(?:"([^"]*)"|([^,]*))""", RegexOption.IGNORE_CASE)
+                .find(line) ?: return null
+            return match.groupValues[1].ifBlank { match.groupValues[2] }.ifBlank { null }
+        }
+
+        return body.lineSequence().mapNotNull { line ->
+            if (!line.startsWith("#EXT-X-MEDIA", true) ||
+                !line.contains("TYPE=AUDIO", true)) return@mapNotNull null
+            val language = attribute(line, "LANGUAGE")
+                ?: attribute(line, "NAME")
+                ?: "und"
+            val label = attribute(line, "NAME")
+                ?: attribute(line, "LANGUAGE")
+                ?: "Audio"
+            val uri = attribute(line, "URI")
+            AudioOption(
+                label,
+                language,
+                uri?.let { resolveUrl(masterUrl, it) } ?: "",
+                attribute(line, "GROUP-ID") ?: "",
+                attribute(line, "DEFAULT").equals("YES", true),
+                attribute(line, "CHANNELS") ?: "",
+                source = "HLS",
+            )
+        }.distinctBy { it.url.ifBlank { it.label + it.language } }.toList()
     }
 
     /**

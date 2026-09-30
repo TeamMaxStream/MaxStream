@@ -8,6 +8,7 @@ import '../database/db_helper.dart';
 import '../models/movie.dart';
 import '../models/subtitle_settings.dart';
 import 'media_download_manager.dart';
+import 'miniplayer_service.dart';
 import 'profile_scope.dart';
 import 'profile_service.dart';
 import 'watch_history_service.dart';
@@ -104,6 +105,9 @@ class CloudSyncService {
     ProfileScope.onProfileChanged = () {
       restartListeners();
       MediaDownloadManager.instance.onProfileChanged();
+      // Stop and dispose any minimized playback: it belongs to the profile
+      // that was active before the switch.
+      MiniplayerService.instance.close();
     };
     // Backfill any pre-existing local watchlist entries to the cloud as soon
     // as we're signed in, so other devices can pull them.

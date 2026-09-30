@@ -28,7 +28,8 @@ class MaxStreamMainScreen extends StatefulWidget {
   State<MaxStreamMainScreen> createState() => _MaxStreamMainScreenState();
 }
 
-class _MaxStreamMainScreenState extends State<MaxStreamMainScreen> {
+class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
+    with WidgetsBindingObserver {
   int _currentIndex = 0;
   Timer? _updateTimer;
   Timer? _contentCheckTimer;
@@ -55,13 +56,25 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen> {
     super.initState();
     _miniplayerActive = MiniplayerService.instance.isActive;
     MiniplayerService.instance.addListener(_miniplayerListener);
+    WidgetsBinding.instance.addObserver(this);
     if (!kIsWeb) {
       _initializeServices();
     }
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Never let the miniplayer keep audio playing while the app is unseen —
+    // the bar is only visible in-foreground, so background playback reads as
+    // a phantom "audio with no UI". Full-screen playback is unaffected.
+    if (state == AppLifecycleState.paused) {
+      MiniplayerService.instance.pauseIfPlaying();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     MiniplayerService.instance.removeListener(_miniplayerListener);
     _updateTimer?.cancel();
     _contentCheckTimer?.cancel();

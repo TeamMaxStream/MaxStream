@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import '../database/db_helper.dart';
 import '../services/cast_service.dart';
@@ -20,6 +21,7 @@ import '../models/subtitle_settings.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/watch_history_service.dart';
 import '../services/miniplayer_service.dart';
+import '../services/open_subtitles_service.dart';
 import '../widgets/app_network_image.dart';
 
 class M3U8VideoPlayerScreen extends StatefulWidget {
@@ -683,6 +685,13 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   List<_StreamQuality> _qualities = const [];
   bool _separateAudio = false;
   List<_SubtitleTrack> _subtitleTracks = const [];
+  // Subtitles downloaded from online search this session. Kept separate from
+  // _subtitleTracks because that list is rebuilt from server metadata on every
+  // server/quality switch; _unionSubtitleTracks re-appends these.
+  final List<_SubtitleTrack> _onlineSubtitleTracks = [];
+  List<OpenSubtitleResult> _onlineSearchResults = const [];
+  bool _onlineSearchLoading = false;
+  String? _onlineSearchError;
   final ValueNotifier<List<Subtitle>> _activeSubtitles =
       ValueNotifier<List<Subtitle>>(const []);
   final ValueNotifier<String> _selectedSubtitle = ValueNotifier<String>('Off');
@@ -1548,6 +1557,11 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
           ),
         );
       }
+    }
+    // Online-search downloads survive server/quality re-unions.
+    for (final track in _onlineSubtitleTracks) {
+      if (!seen.add(track.url)) continue;
+      result.add(track);
     }
     return result;
   }
@@ -2664,12 +2678,151 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
                 ),
               ],
               const Divider(color: Colors.white24),
+              // Online subtitle search (fetched on demand, cached for the
+              // session in _onlineSubtitleTracks).
+              ListTile(
+                leading: _onlineSearchLoading
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.red,
+                        ),
+                      )
+                    : const Icon(Icons.cloud_download, color: Colors.white),
+                title: Text(
+                  _onlineSearchLoading ? 'Searching…' : 'Search online subtitles',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: _onlineSearchError != null
+                    ? Text(
+                        _onlineSearchError!,
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 12,
+                        ),
+                      )
+                    : null,
+                onTap: _onlineSearchLoading
+                    ? null
+                    : () {
+                        final sheetCtx = context;
+                        unawaited(
+                          _runOnlineSubtitleSearch(() {
+                            if (sheetCtx.mounted) setSheetState(() {});
+                          }),
+                        );
+                      },
+              ),
+              ..._onlineSearchResults
+                  .where(
+                    (r) => !_onlineSubtitleTracks.any((t) => t.label == r.label),
+                  )
+                  .map(
+                    (result) => ListTile(
+                      leading: const Icon(
+                        Icons.download_for_offline_outlined,
+                        color: Colors.white70,
+                      ),
+                      title: Text(
+                        result.label,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      subtitle: result.downloads > 0
+                          ? Text(
+                              '${result.downloads} downloads',
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            )
+                          : null,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        unawaited(_applyOnlineSubtitle(result));
+                      },
+                    ),
+                  ),
+              if (_onlineSearchResults.isNotEmpty ||
+                  _onlineSearchLoading ||
+                  _onlineSearchError != null)
+                const Divider(color: Colors.white24),
               ..._buildGroupedSubtitleTiles(),
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// Runs an online subtitle search for the current title and refreshes the
+  /// open picker sheet through [refreshSheet].
+  Future<void> _runOnlineSubtitleSearch(VoidCallback refreshSheet) async {
+    if (_onlineSearchLoading) return;
+    setState(() {
+      _onlineSearchLoading = true;
+      _onlineSearchError = null;
+    });
+    refreshSheet();
+    try {
+      final results = await OpenSubtitlesService.search(
+        query: _resolverTitle,
+        season: widget.isMovie ? null : _currentSeason,
+        episode: widget.isMovie ? null : _currentEpisode,
+      );
+      if (!mounted) return;
+      setState(() {
+        _onlineSearchResults = results;
+        _onlineSearchLoading = false;
+        if (results.isEmpty) {
+          _onlineSearchError = 'No online subtitles found';
+        }
+      });
+      refreshSheet();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _onlineSearchLoading = false;
+        _onlineSearchError = 'Search failed';
+        _onlineSearchResults = const [];
+      });
+      refreshSheet();
+    }
+  }
+
+  /// Downloads an online subtitle to a temp file, registers it as a track and
+  /// selects it through the normal local-file subtitle path.
+  Future<void> _applyOnlineSubtitle(OpenSubtitleResult result) async {
+    try {
+      final text = await OpenSubtitlesService.downloadAsText(result);
+      final dir = await getTemporaryDirectory();
+      final file = File(p.join(dir.path, 'online_sub_${result.id}.srt'));
+      await file.writeAsString(text, flush: true);
+      if (!mounted) return;
+      final track = _SubtitleTrack(
+        label: result.label,
+        url: file.path,
+        isDefault: false,
+        source: 'OpenSubtitles',
+        group: 'OpenSubtitles',
+        headers: const {},
+      );
+      setState(() {
+        _onlineSubtitleTracks.removeWhere((t) => t.label == track.label);
+        _onlineSubtitleTracks.add(track);
+        _subtitleTracks = _unionSubtitleTracks();
+      });
+      await _selectSubtitle(track);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not download subtitle: $error'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   List<Widget> _buildGroupedSubtitleTiles() {
@@ -3390,7 +3543,14 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     _videoPlayerController = null;
     if (controller != null) {
       controller.removeListener(_handlePlaybackChanged);
-      if (!_isMinimizing) {
+      // Only skip teardown when the miniplayer actually took THIS controller
+      // over. If minimize() never ran (uninitialized controller) or the
+      // service swapped in a different one, the controller is ours and must be
+      // stopped here — otherwise it keeps playing with no UI attached.
+      final handedOff =
+          _isMinimizing &&
+          identical(MiniplayerService.instance.controller, controller);
+      if (!handedOff) {
         controller.pause();
         controller.dispose();
       }
