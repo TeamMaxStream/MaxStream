@@ -44,7 +44,16 @@ class CloudSyncService {
   /// Bumped whenever profiles change (cross-device sync).
   static final ValueNotifier<int> profilesRevision = ValueNotifier<int>(0);
 
-  static String? get _uid => FirebaseAuth.instance.currentUser?.uid;
+  /// Null when signed out OR when Firebase is unavailable (no app initialised,
+  /// as in unit tests). Every caller treats null as "no cloud", so a throw here
+  /// would surface as an unhandled async error instead.
+  static String? get _uid {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static DatabaseReference _watchHistoryRef(String uid, String profileId) =>
       _rtdb.ref('users/$uid/profiles/$profileId/watch_history');
@@ -262,6 +271,10 @@ class CloudSyncService {
     final uid = _uid;
     final tmdbId = (item['tmdbId'] ?? '').toString();
     if (uid == null || tmdbId.isEmpty || tmdbId == '0') return;
+    // RTDB paths are profile-scoped, so an unresolved profile would push to
+    // users/<uid>/profiles/<uid>/watch_history — a node the other device never
+    // reads, silently breaking cross-device sync.
+    await ProfileScope.ensureInitialized();
     final profileId = ProfileScope.currentProfileId;
     final key = watchHistoryKey(
       tmdbId,
@@ -290,6 +303,7 @@ class CloudSyncService {
   ) async {
     final uid = _uid;
     if (uid == null || tmdbId.isEmpty) return;
+    await ProfileScope.ensureInitialized();
     final profileId = ProfileScope.currentProfileId;
     try {
       await _watchHistoryRef(
@@ -407,6 +421,9 @@ class CloudSyncService {
     if (uid == null || _pullInProgress) return;
     _pullInProgress = true;
     try {
+      // Reading before the profile resolves pulls from the wrong RTDB node and
+      // then writes the result into the fallback-scoped local keys.
+      await ProfileScope.ensureInitialized();
       final profileId = ProfileScope.currentProfileId;
       final historySnap = await _watchHistoryRef(uid, profileId).get();
       // Guard: if profile changed during the async fetch, abort.

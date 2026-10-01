@@ -59,7 +59,11 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
   }
 
   Future<void> _loadProfiles() async {
-    await ProfileScope.initialize();
+    // ensureInitialized (not initialize): this screen and CloudSyncBootstrap
+    // both need the profile resolved, and concurrent callers must await the
+    // same in-flight future rather than a second initialize() call returning
+    // early on a half-resolved scope.
+    await ProfileScope.ensureInitialized();
     final profiles = ProfileScope.profiles.value;
     if (!mounted) return;
 

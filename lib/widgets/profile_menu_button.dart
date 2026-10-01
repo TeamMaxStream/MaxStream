@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../models/profile.dart';
 import '../services/profile_scope.dart';
@@ -15,7 +17,10 @@ class _ProfileMenuButtonState extends State<ProfileMenuButton> {
   @override
   void initState() {
     super.initState();
-    ProfileScope.initialize();
+    // ensureInitialized (not initialize): concurrent callers must share the one
+    // in-flight future. A second initialize() call returned early while the
+    // profile was still unresolved, leaving this scope half-initialized.
+    unawaited(ProfileScope.ensureInitialized());
   }
 
   void _openSettings() {
