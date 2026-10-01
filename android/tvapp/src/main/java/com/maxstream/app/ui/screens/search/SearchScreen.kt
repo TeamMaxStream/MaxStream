@@ -47,6 +47,7 @@ import com.maxstream.app.di.Modules
 import com.maxstream.app.util.isKidFriendly
 import com.maxstream.app.util.isKidsProfile
 import com.maxstream.app.ui.components.ContentCard
+import com.maxstream.app.ui.components.ContentCardRowHeight
 import com.maxstream.app.ui.components.TvKeyboard
 import com.maxstream.app.ui.navigation.Screen
 import com.maxstream.app.ui.tv.GridDesc
@@ -322,7 +323,13 @@ fun SearchScreen(
                             )
 
                             is PanelRow -> Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                // Fixed height: this row wrapped its content, so
+                                // a focus change that resized a card re-flowed the
+                                // whole right panel and made it jump on
+                                // LEFT/RIGHT. Headroom covers the focus pop.
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(ContentCardRowHeight),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 entry.items.forEachIndexed { col, item ->

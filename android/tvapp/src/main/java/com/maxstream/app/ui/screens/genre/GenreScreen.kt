@@ -62,6 +62,7 @@ import coil.compose.AsyncImage
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.di.Modules
 import com.maxstream.app.ui.components.ContentCard
+import com.maxstream.app.ui.components.ContentCardRowHeight
 import com.maxstream.app.ui.navigation.Screen
 import com.maxstream.app.ui.theme.Primary
 import kotlinx.coroutines.Job
@@ -599,23 +600,28 @@ fun GenreScreen(
                                 key = { index -> cardKey(items[index]) },
                             ) { index ->
                                 val item = items[index]
-                                ContentCard(
-                                    posterUrl = item.posterUrl,
-                                    title = item.title,
-                                    rating = item.voteAverage.takeIf { it > 0 },
-                                    year = item.releaseDate.take(4).toIntOrNull(),
-                                    contentTypeLabel = if (item.mediaType == "tv") "TV Series" else "Movie",
-                                    isFocused = focusedCard == index,
-                                    focusRequester = cardFocusRequesters.getOrPut(cardKey(item)) { FocusRequester() },
-                                    onFocusChanged = { focused ->
-                                        if (focused) {
-                                            focusedCard = index
-                                            if (index >= items.size - COLUMNS * 2) loadMore()
-                                        }
-                                    },
-                                    onKeyEvent = { onCardKey(index, it) },
-                                    onClick = { open(index) },
-                                )
+                                // Fixed-height cell — see ContentCardRowHeight.
+                                // Every cell is identical, so the grid no longer
+                                // re-flows as focus moves between cards.
+                                Box(Modifier.height(ContentCardRowHeight)) {
+                                    ContentCard(
+                                        posterUrl = item.posterUrl,
+                                        title = item.title,
+                                        rating = item.voteAverage.takeIf { it > 0 },
+                                        year = item.releaseDate.take(4).toIntOrNull(),
+                                        contentTypeLabel = if (item.mediaType == "tv") "TV Series" else "Movie",
+                                        isFocused = focusedCard == index,
+                                        focusRequester = cardFocusRequesters.getOrPut(cardKey(item)) { FocusRequester() },
+                                        onFocusChanged = { focused ->
+                                            if (focused) {
+                                                focusedCard = index
+                                                if (index >= items.size - COLUMNS * 2) loadMore()
+                                            }
+                                        },
+                                        onKeyEvent = { onCardKey(index, it) },
+                                        onClick = { open(index) },
+                                    )
+                                }
                             }
                         }
                         if (loadingMore) {

@@ -65,6 +65,7 @@ import coil.compose.AsyncImage
 import com.maxstream.app.R
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
+import com.maxstream.app.ui.components.ContentCardRowHeight
 import com.maxstream.app.ui.navigation.Screen
 import com.maxstream.app.ui.theme.Background
 import com.maxstream.app.ui.tv.RowDesc
@@ -511,7 +512,11 @@ private fun SeriesContentRow(
             state = rowListState,
             contentPadding = PaddingValues(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.overscroll(null),
+            // Fixed height: wrapping content let a focus change resize the row
+            // and shove the neighbouring cards sideways on every LEFT/RIGHT.
+            modifier = Modifier
+                .height(ContentCardRowHeight)
+                .overscroll(null),
         ) {
             items(
                 count = items.size,

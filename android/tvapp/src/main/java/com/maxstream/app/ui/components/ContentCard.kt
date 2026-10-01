@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -22,12 +23,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.layout.ContentScale
@@ -35,6 +36,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -43,6 +45,40 @@ import coil.compose.AsyncImage
 private val CardWidth = 130.dp
 private val CardHeight = 190.dp
 private val CardCornerRadius = 10.dp
+
+// Horizontal breathing room between cards (matches the Dart TvContentCard).
+private val CardHorizontalPadding = 7.dp
+// Gap between the poster and the title block.
+private val CardTitleTopPadding = 6.dp
+// Fixed title block height so a 1- vs 2-line title never resizes the card.
+private val CardTitleHeight = 42.dp
+
+/**
+ * Total laid-out height of a [ContentCard]: poster + title block.
+ *
+ * Exported so rows and grids can reserve an exact, focus-independent height.
+ * A card sized to its content reflows its parent on every focus change, which
+ * is what made rows jump when moving LEFT/RIGHT.
+ */
+val ContentCardTotalHeight: Dp = CardHeight + CardTitleTopPadding + CardTitleHeight
+
+/**
+ * Focus-pop headroom: a focused card is drawn 2% larger, so a container with a
+ * fixed height needs a little slack or the growth gets clipped.
+ */
+val ContentCardFocusHeadroom: Dp = 8.dp
+
+/**
+ * Height a row/grid cell must reserve for a [ContentCard]: the fixed card
+ * footprint plus focus-pop headroom.
+ *
+ * Rows and grids MUST give their container this height. A card that sizes
+ * itself to its content reflows its whole parent the moment focus changes the
+ * border width or the scale animation runs, which is what made rows visibly
+ * jump on LEFT/RIGHT. ContentCard now pins its own size, so this constant is
+ * only needed to stop a *fixed-height* container from clipping the focus pop.
+ */
+val ContentCardRowHeight: Dp = ContentCardTotalHeight + ContentCardFocusHeadroom
 
 /**
  * TV content card (poster + title + optional overlays).
@@ -53,6 +89,12 @@ private val CardCornerRadius = 10.dp
  * - No double LaunchedEffect(isFocused) calling onFocusChanged — that was
  *   causing duplicate callbacks on every recomposition.
  * - focusable() + clickable() in the right order so D-pad Enter triggers onClick.
+ * - Focus feedback is drawn ONLY: the scale runs through `graphicsLayer` and
+ *   the focus ring is drawn inside the existing bounds instead of by growing a
+ *   border from 0.dp to 2.dp. Both used to change the card's measured size, so
+ *   every focus move re-measured the row and shoved neighbouring cards around.
+ *   `requiredHeight` pins the card's height so no parent can infer a different
+ *   size from the focus state.
  */
 @Composable
 fun ContentCard(
@@ -79,8 +121,14 @@ fun ContentCard(
 
     Box(
         modifier = modifier
-            .padding(horizontal = 7.dp)
-            .scale(scale)
+            .padding(horizontal = CardHorizontalPadding)
+            // graphicsLayer (not Modifier.scale) so the focus pop is a draw-time
+            // transform: the card keeps the exact same measured bounds focused
+            // or not, so nothing beside it can move.
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             // D-pad navigation: arrow keys handled here so parents can wire
             // cross-row / sidebar moves (mirrors Dart's card onKeyEvent).
             .onKeyEvent(onKeyEvent)
@@ -91,7 +139,15 @@ fun ContentCard(
             // fires the click callback correctly.
             .onFocusChanged { state -> onFocusChanged(state.hasFocus) }
             .focusable()
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            // Pin the height AFTER the clickable/focus modifiers so neither the
+            // focus ring nor the scale can influence the measured size. Width
+            // is deliberately NOT pinned: the search grid supplies its own
+            // weight(1f) column width, and overriding it would break that
+            // layout. The inner column's fixed 130.dp poster/title already
+            // makes the width deterministic inside a LazyRow.
+            .requiredHeight(ContentCardTotalHeight),
+        contentAlignment = Alignment.TopCenter,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             // ── Poster ──────────────────────────────────────────────────────
@@ -99,13 +155,22 @@ fun ContentCard(
                 modifier = Modifier
                     .width(CardWidth)
                     .height(CardHeight)
-                    .clip(RoundedCornerShape(CardCornerRadius))
-                    .border(
-                        width = if (isFocused) 2.dp else 0.dp,
-                        color = if (isFocused) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(CardCornerRadius),
-                    ),
+                    .clip(RoundedCornerShape(CardCornerRadius)),
             ) {
+                // Focus ring drawn INSIDE the poster bounds. A border whose width
+                // flips between 0.dp and 2.dp is a layout change, not a visual
+                // one — that alone made every focused card push its neighbours.
+                if (isFocused) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .border(
+                                width = 2.dp,
+                                color = Color.White,
+                                shape = RoundedCornerShape(CardCornerRadius),
+                            ),
+                    )
+                }
                 AsyncImage(
                     model = posterUrl,
                     contentDescription = title,
@@ -176,11 +241,14 @@ fun ContentCard(
             }
 
             // ── Title ────────────────────────────────────────────────────────
+            // Fixed width + height: a 1-line and a 2-line title must occupy the
+            // same slot, otherwise gaining/losing focus on a long title resizes
+            // the whole row.
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp)
-                    .height(42.dp),
+                    .width(CardWidth)
+                    .padding(top = CardTitleTopPadding)
+                    .height(CardTitleHeight),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {

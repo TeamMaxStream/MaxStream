@@ -48,12 +48,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -75,6 +75,7 @@ import com.maxstream.app.data.local.WatchEntryCompat
 import com.maxstream.app.data.local.ProfileScope
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
+import com.maxstream.app.ui.components.ContentCardRowHeight
 import com.maxstream.app.ui.navigation.Screen
 import com.maxstream.app.ui.theme.Background
 import com.maxstream.app.ui.tv.RowDesc
@@ -703,7 +704,12 @@ private fun ContentRow(
             state = rowListState,
             contentPadding = PaddingValues(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = (if (showProgress) Modifier.height(260.dp) else Modifier)
+            // Fixed height for BOTH card types. Previously only the
+            // continue-watching row had one; the poster rows wrapped their
+            // content, so any change to a card's measured height (the focus
+            // scale, the 0->2.dp border, a 1- vs 2-line title) re-flowed the
+            // row and made everything around it jump on LEFT/RIGHT.
+            modifier = (if (showProgress) Modifier.height(260.dp) else Modifier.height(ContentCardRowHeight))
                 .overscroll(null),
         ) {
             items(
@@ -829,7 +835,14 @@ private fun ContinueWatchingCard(
     Box(
         modifier = Modifier
             .padding(horizontal = 7.dp)
-            .scale(scale)
+            // graphicsLayer, not Modifier.scale: this row looked stable only
+            // because it has a hard-coded height. A layout-affecting scale
+            // still resized the card and shifted its neighbours, it just had
+            // nowhere to shift to vertically.
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .onKeyEvent(onKeyEvent)
             .focusRequester(focusRequester)
             .onFocusChanged { state -> onFocusChanged(state.hasFocus) }
@@ -842,13 +855,22 @@ private fun ContinueWatchingCard(
                 modifier = Modifier
                     .width(220.dp)
                     .height(160.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .border(
-                        width = if (isFocused) 2.dp else 0.dp,
-                        color = if (isFocused) Color.White else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp),
-                    ),
+                    .clip(RoundedCornerShape(8.dp)),
             ) {
+                // Focus ring drawn inside the existing bounds; a border that
+                // flips 0.dp -> 2.dp changes the measured size and re-flows the
+                // row (same class of bug as ContentCard).
+                if (isFocused) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .border(
+                                width = 2.dp,
+                                color = Color.White,
+                                shape = RoundedCornerShape(8.dp),
+                            ),
+                    )
+                }
                 val posterUrl = item.posterUrl
                 if (posterUrl.isNotEmpty()) {
                     AsyncImage(

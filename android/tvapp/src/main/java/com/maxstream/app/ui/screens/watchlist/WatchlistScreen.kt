@@ -51,6 +51,7 @@ import androidx.navigation.NavController
 import com.maxstream.app.data.local.WatchlistRepository
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
+import com.maxstream.app.ui.components.ContentCardRowHeight
 import com.maxstream.app.ui.navigation.Screen
 import com.maxstream.app.ui.theme.Background
 import com.maxstream.app.ui.theme.Primary
@@ -316,23 +317,29 @@ fun WatchlistScreen(
                             key = { index -> "${filtered[index].mediaType}:${filtered[index].id}" },
                         ) { index ->
                             val item = filtered[index]
-                            ContentCard(
-                                posterUrl = item.posterUrl,
-                                title = item.title,
-                                rating = item.voteAverage.takeIf { it > 0 },
-                                year = item.releaseDate.take(4).toIntOrNull(),
-                                contentTypeLabel = if (item.mediaType == "tv") "TV Series" else "Movie",
-                                isFocused = focusedIndex == index,
-                                focusRequester = gridNav.requester(GRID_ID, index),
-                                onFocusChanged = { focused ->
-                                    if (focused) focusedIndex = index
-                                    else if (focusedIndex == index) focusedIndex = -1
-                                },
-                                onKeyEvent = { onCardKey(index, it) },
-                                onClick = {
-                                    navController.navigate(Screen.Details.createRoute(item.id.toString(), item.mediaType))
-                                },
-                            )
+                            // Fixed-height cell. ContentCard pins its own height
+                            // now, so every cell is identical and the grid stops
+                            // re-flowing when focus moves between cards. The
+                            // extra headroom keeps the focus pop from clipping.
+                            Box(Modifier.height(ContentCardRowHeight)) {
+                                    ContentCard(
+                                        posterUrl = item.posterUrl,
+                                        title = item.title,
+                                        rating = item.voteAverage.takeIf { it > 0 },
+                                        year = item.releaseDate.take(4).toIntOrNull(),
+                                        contentTypeLabel = if (item.mediaType == "tv") "TV Series" else "Movie",
+                                        isFocused = focusedIndex == index,
+                                        focusRequester = gridNav.requester(GRID_ID, index),
+                                        onFocusChanged = { focused ->
+                                            if (focused) focusedIndex = index
+                                            else if (focusedIndex == index) focusedIndex = -1
+                                        },
+                                        onKeyEvent = { onCardKey(index, it) },
+                                        onClick = {
+                                            navController.navigate(Screen.Details.createRoute(item.id.toString(), item.mediaType))
+                                        },
+                                    )
+                                }
                         }
                     }
                 }
