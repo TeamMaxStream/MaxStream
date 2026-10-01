@@ -13,10 +13,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** True when the lazy item at [index] is completely within the viewport along
- *  the list's scroll axis. Used to decide whether a move actually needs a
- *  scroll — scrolling on every key press (even for fully-visible cards) made
- *  rows snap back and forth on LEFT/RIGHT (the "bounce"). */
+/**
+ * True when the lazy item at [index] is completely within the viewport along
+ * the list's scroll axis.
+ *
+ * Only correct as a post-scroll confirmation. As a *gate* on whether to scroll
+ * it is wrong: see [isItemPartiallyVisible].
+ */
 internal fun LazyListState.isItemFullyVisible(index: Int): Boolean {
     val info = layoutInfo
     val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return false
@@ -25,6 +28,27 @@ internal fun LazyListState.isItemFullyVisible(index: Int): Boolean {
         else -> item.offset >= 0 && item.offset + item.size <= info.viewportSize.height
     }
 }
+
+/**
+ * True when the item is at least PARTIALLY inside the viewport. This is the
+ * check that must gate scrolling.
+ *
+ * [isItemFullyVisible] demands the whole card fit, which no card at a row's
+ * trailing edge does — the last few are always clipped by a fraction of a pixel.
+ * A strict full-visibility gate therefore reported "off-screen" on every press
+ * near the end of a row and re-scrolled to the offset the row was already at.
+ * Re-issuing a scroll to the position you are already in is the bounce.
+ */
+internal fun LazyListState.isItemPartiallyVisible(index: Int): Boolean {
+    val info = layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return false
+    return when (info.orientation) {
+        Orientation.Horizontal -> item.offset + item.size > 0 && item.offset < info.viewportSize.width
+        else -> item.offset + item.size > 0 && item.offset < info.viewportSize.height
+    }
+}
+
+
 
 /**
  * A single horizontal content row on a tab screen (matches Dart's stable row ids).
@@ -99,13 +123,18 @@ class RowNavState {
 
     /**
      * Moves focus to card [requestedIndex] of [rowId]. Reveals the outer
-     * column and the row ONLY when the target is actually off-screen, then
+     * column and the row ONLY when the target is entirely off-screen, then
      * requests focus — the card only becomes focusable after it is composed.
      *
-     * Only-scroll-when-needed is what stops the "bounce": snapping via
-     * scrollToItem on EVERY move — even between cards already in view — jumped
-     * the whole row back and forth on LEFT/RIGHT. Dart's _revealCard also only
-     * reveals when necessary.
+     * Two things stop the "bounce" on LEFT/RIGHT:
+     *  - The visibility test is PARTIAL, not full. Cards clipped by a pixel at
+     *    the trailing edge still count as visible, so a press that does not
+     *    require scrolling performs no scrolling at all.
+     *  - When a scroll IS needed it is instant (scrollToItem), never
+     *    animated. An animation in flight while focus keeps moving reads as
+     *    the row bouncing under the cursor.
+     *
+     * Dart's _revealCard follows the same only-reveal-when-needed rule.
      */
     suspend fun focusCard(rowId: String, requestedIndex: Int, outerListState: LazyListState) {
         val length = count(rowId)
@@ -120,11 +149,18 @@ class RowNavState {
         val requester = requester(rowId, index)
         val rowState = rowStates[rowId]
 
-        if (!outerListState.isItemFullyVisible(rowIndex)) {
-            runCatching { outerListState.animateScrollToItem(rowIndex) }
+        // Only scroll when the target is genuinely off-screen. The test is
+        // PARTIAL visibility, not full visibility: at a row's trailing edge the
+        // last card is clipped by a hair, a strict full-visibility check said
+        // "not visible", and we re-scrolled to the same offset on every single
+        // press — the bounce the user reported. Only when the card is entirely
+        // out of the viewport do we actually move, and then we use instant
+        // scrollToItem so the row never animates while focus is moving.
+        if (!outerListState.isItemPartiallyVisible(rowIndex)) {
+            runCatching { outerListState.scrollToItem(rowIndex) }
         }
-        if (rowState != null && !rowState.isItemFullyVisible(index)) {
-            runCatching { rowState.animateScrollToItem(index) }
+        if (rowState != null && !rowState.isItemPartiallyVisible(index)) {
+            runCatching { rowState.scrollToItem(index) }
         }
 
         // requestFocus() is a silent no-op (returns Unit) while the node is not

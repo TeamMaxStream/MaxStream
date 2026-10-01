@@ -76,6 +76,7 @@ import com.maxstream.app.data.local.ProfileScope
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
 import com.maxstream.app.ui.components.ContentCardRowHeight
+import com.maxstream.app.ui.components.focusRing
 import com.maxstream.app.ui.navigation.Screen
 import com.maxstream.app.ui.theme.Background
 import com.maxstream.app.ui.tv.RowDesc
@@ -855,22 +856,12 @@ private fun ContinueWatchingCard(
                 modifier = Modifier
                     .width(220.dp)
                     .height(160.dp)
-                    .clip(RoundedCornerShape(8.dp)),
+                    .clip(RoundedCornerShape(8.dp))
+                    // Constant-width ring drawn last, on top of the badges and
+                    // progress bar. See Modifier.focusRing for why this is not a
+                    // border whose width flips 0.dp -> 2.dp.
+                    .focusRing(visible = isFocused, cornerRadius = 8.dp),
             ) {
-                // Focus ring drawn inside the existing bounds; a border that
-                // flips 0.dp -> 2.dp changes the measured size and re-flows the
-                // row (same class of bug as ContentCard).
-                if (isFocused) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .border(
-                                width = 2.dp,
-                                color = Color.White,
-                                shape = RoundedCornerShape(8.dp),
-                            ),
-                    )
-                }
                 val posterUrl = item.posterUrl
                 if (posterUrl.isNotEmpty()) {
                     AsyncImage(

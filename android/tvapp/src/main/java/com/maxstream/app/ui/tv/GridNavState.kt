@@ -29,8 +29,7 @@ data class GridDesc(
     val sectionIndex: Int = 0,
 )
 
-/** True when the grid card at [index] is completely within the viewport —
- *  used to avoid scrolling on every key press (the "bounce"). */
+/** True when the grid card at [index] is completely within the viewport. */
 internal fun LazyGridState.isItemFullyVisible(index: Int): Boolean {
     val info = layoutInfo
     val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return false
@@ -38,6 +37,24 @@ internal fun LazyGridState.isItemFullyVisible(index: Int): Boolean {
         item.offset.x + item.size.width <= info.viewportSize.width &&
         item.offset.y >= 0 &&
         item.offset.y + item.size.height <= info.viewportSize.height
+}
+
+/**
+ * True when the grid card at [index] is at least PARTIALLY inside the viewport.
+ *
+ * This is the check that must gate scrolling. Demanding FULL visibility meant a
+ * card clipped by a pixel at a column or row edge was treated as off-screen, so
+ * every key press re-issued a scroll to the offset we were already at — the
+ * "bounce". Full visibility is only useful as the post-scroll confirmation that
+ * the card has landed.
+ */
+internal fun LazyGridState.isItemPartiallyVisible(index: Int): Boolean {
+    val info = layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return false
+    return item.offset.x + item.size.width > 0 &&
+        item.offset.x < info.viewportSize.width &&
+        item.offset.y + item.size.height > 0 &&
+        item.offset.y < info.viewportSize.height
 }
 
 /**
@@ -110,26 +127,35 @@ class GridNavState(private val columns: Int) {
         activeGridId = gridId
 
         val requester = requester(gridId, index)
-
-        // Most targets are already composed and fully visible — land focus on
-        // the first attempt INSTEAD of blocking on a scroll animation first
-        // (the old animateScrollToItem suspended until the animation finished,
-        // which made rapid D-pad presses feel unresponsive and let stale moves
-        // steal focus back). requestFocus() is a silent no-op (returns Unit)
-        // while the node is unattached, so a single call lands once it exists.
-        runCatching { requester.requestFocus() }
         val gridState = gridStates[gridId]
-        if (gridState?.isItemFullyVisible(index) == true) return
+        val outerRow = desc.sectionIndex + index / columns
 
-        // Off-screen target: jump it into view (instant, no animation), then
-        // retry until the lazy item is composed and focus lands.
-        runCatching { outerListState?.scrollToItem(desc.sectionIndex + index / columns) }
+        // Fast path: the card is already on screen. Land focus and do NOTHING
+        // else — no scroll, no retry loop.
+        //
+        // The gate is PARTIAL visibility, not full visibility. A card clipped by
+        // a single pixel at a column or row edge is still perfectly usable, but
+        // a full-visibility test reported "off-screen" for it, so every LEFT/RIGHT
+        // press re-issued scrollToItem to the offset the grid was already at.
+        // Re-scrolling to a position you are already at each frame is the bounce.
+        val onScreen = gridState?.isItemPartiallyVisible(index) == true ||
+            (gridState == null && outerListState?.isItemPartiallyVisible(outerRow) == true)
+        if (onScreen) {
+            runCatching { requester.requestFocus() }
+            return
+        }
+
+        // Genuinely off-screen: jump it into view instantly (never animate — an
+        // animation in flight while focus keeps moving looks like a bounce),
+        // then retry until the lazy item is composed and focus lands.
+        runCatching { outerListState?.scrollToItem(outerRow) }
         runCatching { gridState?.scrollToItem(index) }
 
         var attempt = 0
         while (attempt < 6) {
             if (attempt > 0) delay(50L * attempt)
             runCatching { requester.requestFocus() }
+            // Full visibility here is correct: it confirms the scroll landed.
             if (gridState?.isItemFullyVisible(index) == true) return
             attempt++
         }

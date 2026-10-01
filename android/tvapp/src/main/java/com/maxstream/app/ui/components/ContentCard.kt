@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -79,6 +80,51 @@ val ContentCardFocusHeadroom: Dp = 8.dp
  * only needed to stop a *fixed-height* container from clipping the focus pop.
  */
 val ContentCardRowHeight: Dp = ContentCardTotalHeight + ContentCardFocusHeadroom
+
+/**
+ * The white rounded focus ring, drawn as a Modifier.
+ *
+ * Why this exists instead of `.border(width = if (isFocused) 2.dp else 0.dp)`:
+ *
+ *  - `border` width participates in LAYOUT. Flipping it between 0.dp and 2.dp
+ *    resized the card on every focus change, re-flowing the whole row. This
+ *    draws at a constant 2.dp.
+ *  - `border` strokes CENTRED on the shape outline, so half its width lands
+ *    outside the parent's clip and gets cut off — the ring looked chipped and,
+ *    on cards already clipped, invisible. Insetting by half the stroke keeps
+ *    the whole ring inside the clip.
+ *  - As a Modifier it applies AFTER `.clip(...)` but does not consume the
+ *    clip, so it renders on top of the poster, scrim, progress bar and badges.
+ */
+fun Modifier.focusRing(
+    visible: Boolean,
+    cornerRadius: Dp,
+    width: Dp = 2.dp,
+    color: Color = Color.White,
+): Modifier = if (!visible) {
+    this
+} else {
+    drawWithContent {
+        drawContent()
+        val stroke = width.toPx()
+        val inset = stroke / 2f
+        drawRoundRect(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+            size = androidx.compose.ui.geometry.Size(
+                width = size.width - stroke,
+                height = size.height - stroke,
+            ),
+            // x/y default to the same value, so a single radius keeps the
+            // corners circular (CornerRadius requires BOTH components).
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                x = (cornerRadius.toPx() - inset).coerceAtLeast(0f),
+                y = (cornerRadius.toPx() - inset).coerceAtLeast(0f),
+            ),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
+        )
+    }
+}
 
 /**
  * TV content card (poster + title + optional overlays).
@@ -155,22 +201,12 @@ fun ContentCard(
                 modifier = Modifier
                     .width(CardWidth)
                     .height(CardHeight)
-                    .clip(RoundedCornerShape(CardCornerRadius)),
+                    .clip(RoundedCornerShape(CardCornerRadius))
+                    // Focus ring: drawn last (via drawWithContent) so it sits
+                    // on top of the poster, scrim, progress bar and badges, and
+                    // at a constant width so it never affects the layout.
+                    .focusRing(visible = isFocused, cornerRadius = CardCornerRadius),
             ) {
-                // Focus ring drawn INSIDE the poster bounds. A border whose width
-                // flips between 0.dp and 2.dp is a layout change, not a visual
-                // one — that alone made every focused card push its neighbours.
-                if (isFocused) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .border(
-                                width = 2.dp,
-                                color = Color.White,
-                                shape = RoundedCornerShape(CardCornerRadius),
-                            ),
-                    )
-                }
                 AsyncImage(
                     model = posterUrl,
                     contentDescription = title,
