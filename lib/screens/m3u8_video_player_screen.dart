@@ -107,6 +107,7 @@ class _StablePlayerControls extends StatefulWidget {
     required this.controller,
     required this.onBack,
     required this.onMinimize,
+    required this.onPlayIntent,
     required this.mediaTitle,
     required this.onQuality,
     required this.qualityLabel,
@@ -132,6 +133,7 @@ class _StablePlayerControls extends StatefulWidget {
   final dynamic controller;
   final VoidCallback onBack;
   final VoidCallback onMinimize;
+  final void Function(bool wantsPlayback) onPlayIntent;
   final String mediaTitle;
   final VoidCallback onQuality;
   final String qualityLabel;
@@ -194,12 +196,10 @@ class _StablePlayerControlsState extends State<_StablePlayerControls> {
   }
 
   void _togglePlayback() {
-    final controller = widget.controller;
-    if (controller.value.isPlaying) {
-      controller.pause();
-    } else {
-      controller.play();
-    }
+    // Report intent first: the screen uses it to decide whether the rebuilt
+    // controller after a quality/server/audio switch should autoplay.
+    final nextWantsPlayback = !widget.controller.value.isPlaying;
+    widget.onPlayIntent(nextWantsPlayback);
     setState(() => _visible = true);
     _restartHideTimer();
   }
@@ -730,6 +730,31 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   Duration _lastStablePosition = Duration.zero;
   bool _recoveringPlayback = false;
 
+  /// Whether the user currently wants audio/video to be playing.
+  ///
+  /// Playback intent cannot be derived from `controller.value.isPlaying`: that
+  /// flag lags a tick behind `pause()` and is also true while a paused player
+  /// is stalled buffering. Every source swap (quality / server / audio track /
+  /// error recovery / next episode) tears the controller down and rebuilds it,
+  /// so reading it there made a paused video resume on its own. This flag is
+  /// only mutated by explicit user intent (play/pause button, media session,
+  /// auto-advance) and is the sole input to `shouldPlay`.
+  bool _userWantsPlayback = true;
+
+  /// Records the user's play/pause intent and mirrors it onto the live
+  /// controller. Always route play/pause through here so intent and the
+  /// controller cannot drift apart.
+  void _setPlayIntent(bool wantsPlayback) {
+    _userWantsPlayback = wantsPlayback;
+    final controller = _videoPlayerController;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (wantsPlayback) {
+      controller.play();
+    } else {
+      controller.pause();
+    }
+  }
+
   Duration get _currentPosition =>
       _videoPlayerController?.value.position ?? Duration.zero;
   Duration get _currentDuration =>
@@ -783,6 +808,9 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       if (restoredController != null) {
         _videoPlayerController = restoredController;
         _videoPlayerController!.addListener(_handlePlaybackChanged);
+        // The handed-over controller keeps its own play state; adopt it so a
+        // switch right after restore doesn't autoplay a paused video.
+        _userWantsPlayback = restoredController.value.isPlaying;
         _useNativePlayer = true;
         _videoInitialized = true;
         // Restore controls state so buttons show immediately
@@ -815,17 +843,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         // Re-discover servers in background for fresh URLs
         _loadMediaMetadata();
         _discoverAvailableServers(++_serverDiscoveryGeneration);
-        MediaSessionHandler.instance.init().then((_) {
-          final handler = MediaSessionHandler.instance.handler;
-          if (handler != null && mounted) {
-            handler.onPlay = () => _videoPlayerController?.play();
-            handler.onPause = () => _videoPlayerController?.pause();
-            handler.onSeek = (pos) => _videoPlayerController?.seekTo(pos);
-            handler.onStop = () {
-              if (mounted) _exitPlayer();
-            };
-          }
-        });
+        _registerMediaSessionCallbacks();
         return;
       }
     }
@@ -836,16 +854,26 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _loadStream();
+    _registerMediaSessionCallbacks();
+  }
+
+  /// Binds the notification / lock-screen transport controls to this screen.
+  ///
+  /// Play and pause go through [_setPlayIntent] so the intent flag stays in
+  /// sync; a notification "play" must not be undone by the next source switch.
+  /// [_isLeaving] is checked because `init()` is async and can resolve after
+  /// the user already backed out, which would otherwise leave live callbacks
+  /// on the singleton handler (they only get cleared in `dispose`).
+  void _registerMediaSessionCallbacks() {
     MediaSessionHandler.instance.init().then((_) {
       final handler = MediaSessionHandler.instance.handler;
-      if (handler != null && mounted) {
-        handler.onPlay = () => _videoPlayerController?.play();
-        handler.onPause = () => _videoPlayerController?.pause();
-        handler.onSeek = (pos) => _videoPlayerController?.seekTo(pos);
-        handler.onStop = () {
-          if (mounted) _exitPlayer();
-        };
-      }
+      if (handler == null || !mounted || _isLeaving) return;
+      handler.onPlay = () => _setPlayIntent(true);
+      handler.onPause = () => _setPlayIntent(false);
+      handler.onSeek = (pos) => _videoPlayerController?.seekTo(pos);
+      handler.onStop = () {
+        if (mounted) _exitPlayer();
+      };
     });
   }
 
@@ -876,7 +904,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   }
 
   Future<void> _loadStream({bool resume = true}) async {
-    if (!mounted) return;
+    if (!mounted || _isLeaving) return;
     final offlinePath = _offlinePath;
     if (offlinePath != null && offlinePath.isNotEmpty) {
       await _loadOfflineStream(offlinePath, resume: resume);
@@ -912,7 +940,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         );
       }
 
-      if (!mounted) return;
+      if (!mounted || _isLeaving) return;
 
       if (result != null && result['url'] != null) {
         final url = result['url'] as String;
@@ -980,7 +1008,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
                 _currentEpisode,
               )
             : Duration.zero;
-        if (!mounted) return;
+        if (!mounted || _isLeaving) return;
         _subtitleTracks = _unionSubtitleTracks();
         _activeSubtitles.value = initialSubtitles;
         _selectedSubtitle.value = initialSubtitle != null
@@ -1082,9 +1110,11 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     Map<String, dynamic> server, {
     required Duration position,
     required String primaryUrl,
+    bool? shouldPlay,
   }) async {
     final fallbackUrl = server['url']?.toString() ?? '';
     if (fallbackUrl.isEmpty || fallbackUrl == primaryUrl) return false;
+    if (_isLeaving) return false;
     final fallbackSource = server['source']?.toString() ?? 'Server';
     final fallbackQualities = _parseQualities(server['qualities']);
     _subtitleTracks = _unionSubtitleTracks();
@@ -1101,6 +1131,9 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       isHls:
           server['type'] == 'direct_m3u8' ||
           fallbackUrl.toLowerCase().contains('.m3u8'),
+      // Falling through the server list is a recovery, not a user request to
+      // start watching: keep whatever the user had before.
+      shouldPlay: shouldPlay ?? _userWantsPlayback,
     );
     if (ok) {
       _selectedServerKey = _serverIdentity(server);
@@ -1109,6 +1142,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   }
 
   Future<void> _loadOfflineStream(String path, {required bool resume}) async {
+    if (_isLeaving) return;
     final previousVideo = _videoPlayerController;
     setState(() {
       _error = null;
@@ -1118,7 +1152,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     });
     final file = File(path);
     final exists = await file.exists();
-    if (!mounted) return;
+    if (!mounted || _isLeaving) return;
     if (!exists) {
       setState(() => _error = 'This downloaded video file no longer exists.');
       return;
@@ -1144,8 +1178,11 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       if (position > Duration.zero && position < controller.value.duration) {
         await controller.seekTo(position);
       }
-      await controller.play();
-      if (!mounted) {
+      // Autoplay only when the user still wants to be watching. _loadStream
+      // also runs for auto-advance and for the error-view retry, which must
+      // not resurrect a video the user paused or backed out of.
+      if (_userWantsPlayback) await controller.play();
+      if (!mounted || _isLeaving) {
         await controller.dispose();
         return;
       }
@@ -1401,10 +1438,13 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     String selectedQuality = 'Auto',
     Duration position = Duration.zero,
     bool isHls = true,
+    bool shouldPlay = true,
   }) async {
+    if (_isLeaving) return false;
     try {
       _showStatus('Initializing video player...');
       final resolved = await _resolveAudioUrl(m3u8Url, headers, isHls);
+      if (!mounted || _isLeaving) return false;
       await _replacePlayer(
         resolved.url,
         headers: headers,
@@ -1413,7 +1453,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         selectedQuality: resolved.isLocalFile ? 'Auto' : selectedQuality,
         isHls: isHls,
         position: position,
-        shouldPlay: true,
+        shouldPlay: shouldPlay,
         isLocalFile: resolved.isLocalFile,
         remoteUrl: m3u8Url,
       );
@@ -1724,6 +1764,13 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     bool isLocalFile = false,
     String? remoteUrl,
   }) async {
+    // Never build a player for a screen the user already left. Any in-flight
+    // load/switch runs for up to 30s, and `mounted` stays true until dispose()
+    // fires after the pop transition — so without this the switch would finish,
+    // call play() and hand a live controller to a screen with no UI attached,
+    // leaving audio playing in the background from position 0.
+    if (_isLeaving) return;
+
     // Dispose old player before creating new one to free decoder/surface.
     // Await with short timeout and swallow fvp Bad state race where native
     // still sends events after StreamController closed during rapid switches.
@@ -1739,7 +1786,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         // Ignore Bad state: Cannot add event after closing and timeout
       }
     }
-    if (!mounted) return;
+    if (!mounted || _isLeaving) return;
 
     // A preferred audio language plays through a rewritten local master that
     // pins the language as DEFAULT. Segments stay remote and keep the stream
@@ -1764,10 +1811,23 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       // 15s was causing working servers to be marked as failed with
       // TimeoutException after 0:00:15.000000
       await controller.initialize().timeout(const Duration(seconds: 30));
+      // Re-check before touching playback: the user may have hit back during
+      // initialize(), in which case this controller must die here rather than
+      // start playing on its own.
+      if (!mounted || _isLeaving) {
+        await controller.dispose();
+        return;
+      }
       if (position > Duration.zero) await controller.seekTo(position);
+      // Re-check again: seekTo is async too, and play() is the one call that
+      // must never happen on a screen the user has left.
+      if (!mounted || _isLeaving) {
+        await controller.dispose();
+        return;
+      }
       if (shouldPlay) await controller.play();
 
-      if (!mounted) {
+      if (!mounted || _isLeaving) {
         await controller.dispose();
         return;
       }
@@ -1843,6 +1903,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         shouldRebuild = true;
       }
       if (remaining <= const Duration(milliseconds: 500) &&
+          value.isPlaying &&
           !_loadingNextEpisode) {
         unawaited(_playNextEpisode());
       }
@@ -1886,7 +1947,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
 
   Future<void> _recoverPlayback() async {
     final url = _currentStreamUrl;
-    if (url == null || _recoveringPlayback) return;
+    if (url == null || _recoveringPlayback || _isLeaving) return;
     _recoveringPlayback = true;
     _playbackRetryCount++;
     if (mounted) {
@@ -1901,7 +1962,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       // VixSrc tokens) expire quickly, so prefer freshly extracted servers
       // over stale entries that ExoPlayer rejects with a source error.
       await _discoverAvailableServers(_serverDiscoveryGeneration);
-      if (!mounted) return;
+      if (!mounted || _isLeaving) return;
       // After the first failure, switch to another server immediately
       // instead of retrying a dead stream.
       final shouldSwitch = _playbackRetryCount >= 1;
@@ -1926,8 +1987,13 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
             server,
             position: _lastStablePosition,
             primaryUrl: url,
+            // Recovering from a stall is not a request to start playing: if the
+            // user paused (or the screen is going away) the replacement must
+            // come up paused, otherwise it looks like the app un-paused itself.
+            shouldPlay: _userWantsPlayback,
           );
           if (switched) break;
+          if (_isLeaving) return;
         }
         if (!switched) {
           _showStatus(
@@ -1943,13 +2009,13 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
           selectedQuality: _selectedQuality,
           isHls: _currentStreamIsHls,
           position: _lastStablePosition,
-          shouldPlay: true,
+          shouldPlay: _userWantsPlayback,
         );
       }
       _playbackRetryCount = 0;
     } catch (error) {
       debugPrint('M3U8Player: Playback recovery failed: $error');
-      if (mounted && _playbackRetryCount >= 1) {
+      if (mounted && !_isLeaving && _playbackRetryCount >= 1) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -1965,7 +2031,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
 
   Future<void> _playNextEpisode() async {
     final next = _nextEpisode;
-    if (next == null || _loadingNextEpisode) return;
+    if (next == null || _loadingNextEpisode || _isLeaving) return;
     _loadingNextEpisode = true;
     // Clear next-episode state immediately so the old controller's
     // _handlePlaybackChanged doesn't re-show the popup for the next-next episode.
@@ -1979,6 +2045,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       });
     }
     await _saveProgress();
+    if (_isLeaving) return;
     _currentSeason = (next['season'] as num).toInt();
     _currentEpisode = (next['episode'] as num).toInt();
     _currentTitle =
@@ -2013,10 +2080,12 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   void _startProgressSaving() {
     _progressTimer?.cancel();
     _progressTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_isLeaving) return;
       _saveProgress();
       final c = _videoPlayerController;
       if (c != null && c.value.isInitialized) {
         MediaSessionHandler.instance.updateProgress(
+          isPlaying: c.value.isPlaying,
           position: c.value.position,
           duration: c.value.duration,
         );
@@ -2027,8 +2096,10 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   Future<void> _saveProgress() async {
     final c = _videoPlayerController;
     if (c == null || !c.value.isInitialized) return;
-    final position = c.value.position;
-    final duration = c.value.duration;
+    await _writeProgress(c.value.position, c.value.duration);
+  }
+
+  Future<void> _writeProgress(Duration position, Duration duration) async {
     if (position <= Duration.zero || duration <= Duration.zero) return;
     await WatchHistoryService.saveWatchProgress(
       tmdbId: widget.tmdbId,
@@ -2047,22 +2118,31 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   Future<void> _exitPlayer() async {
     if (_isLeaving) return;
     _isLeaving = true;
-    await _saveProgress();
+    // Silence and free the decoder FIRST, then persist. _saveProgress is a
+    // Firestore write that can take seconds; awaiting it before pausing left
+    // audio running after the user pressed back. Snapshot the values while the
+    // controller is still alive so the write still has them.
     final controller = _videoPlayerController;
     _videoPlayerController = null;
+    final position = controller?.value.position ?? Duration.zero;
+    final duration = controller?.value.duration ?? Duration.zero;
     if (controller != null) {
       controller.removeListener(_handlePlaybackChanged);
       controller.pause();
       await controller.dispose();
     }
+    await _writeProgress(position, duration);
     if (mounted) Navigator.of(context).pop(true);
   }
 
   void _minimizePlayer() async {
     if (_isLeaving) return;
     _isLeaving = true;
-    await _saveProgress();
     final controller = _videoPlayerController;
+    // Snapshot before the handoff, then persist after the pop: the Firestore
+    // write takes seconds and must not delay the PiP bar appearing.
+    final position = controller?.value.position ?? Duration.zero;
+    final duration = controller?.value.duration ?? Duration.zero;
     if (controller != null && controller.value.isInitialized) {
       _isMinimizing = true;
       // Find the current server to get its qualities data
@@ -2100,6 +2180,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       );
     }
     if (mounted) Navigator.of(context).pop(true);
+    await _writeProgress(position, duration);
   }
 
   void _cycleAspectRatio() {
@@ -2246,6 +2327,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
               stream['type'] == 'direct_m3u8' ||
               url.toLowerCase().contains('.m3u8'),
           position: position,
+          shouldPlay: _userWantsPlayback,
         );
         if (ok && mounted)
           setState(() => _selectedServerKey = _serverIdentity(stream));
@@ -2269,7 +2351,10 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     final position = current.value.position > Duration.zero
         ? current.value.position
         : _lastStablePosition;
-    final shouldPlay = current.value.isPlaying || current.value.isBuffering;
+    // Deliberately the intent flag, not `current.value.isPlaying`: the live
+    // flag is still true for a tick or two after pause() and is true while a
+    // paused player stalls buffering, either of which used to restart playback.
+    final shouldPlay = _userWantsPlayback;
     setState(() {
       _isSwitchingServer = true;
       _subtitleTracks = _unionSubtitleTracks();
@@ -2281,6 +2366,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
           stream['type'] == 'direct_m3u8' ||
           url.toLowerCase().contains('.m3u8');
       final resolved = await _resolveAudioUrl(url, headers, isHls);
+      if (!mounted || _isLeaving) return;
       await _replacePlayer(
         resolved.url,
         headers: headers,
@@ -2369,6 +2455,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
           isHls:
               resolved['type'] == 'direct_m3u8' ||
               resolvedUrl.toLowerCase().contains('.m3u8'),
+          shouldPlay: _userWantsPlayback,
         );
         if (mounted) {
           setState(() => _selectedServerKey = _serverIdentity(resolved));
@@ -2517,8 +2604,8 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     }
     _isSwitchingAudio = true;
     final position = controller.value.position;
-    final shouldPlay =
-        controller.value.isPlaying || controller.value.isBuffering;
+    // See _switchServer: intent flag, not the lagging live isPlaying.
+    final shouldPlay = _userWantsPlayback;
     final master = _masterStreamUrl!;
     setState(() => _preferredAudioLanguage = language);
     try {
@@ -2530,7 +2617,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         _streamHeaders,
         _currentStreamIsHls,
       );
-      if (!mounted) return;
+      if (!mounted || _isLeaving) return;
       await _replacePlayer(
         resolved.url,
         headers: _streamHeaders,
@@ -2692,7 +2779,9 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
                       )
                     : const Icon(Icons.cloud_download, color: Colors.white),
                 title: Text(
-                  _onlineSearchLoading ? 'Searching…' : 'Search online subtitles',
+                  _onlineSearchLoading
+                      ? 'Searching…'
+                      : 'Search online subtitles',
                   style: const TextStyle(color: Colors.white),
                 ),
                 subtitle: _onlineSearchError != null
@@ -2717,7 +2806,8 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
               ),
               ..._onlineSearchResults
                   .where(
-                    (r) => !_onlineSubtitleTracks.any((t) => t.label == r.label),
+                    (r) =>
+                        !_onlineSubtitleTracks.any((t) => t.label == r.label),
                   )
                   .map(
                     (result) => ListTile(
@@ -3495,7 +3585,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         : quality.url;
 
     final position = _videoPlayerController?.value.position ?? Duration.zero;
-    final shouldPlay = _videoPlayerController?.value.isPlaying ?? false;
+    final shouldPlay = _userWantsPlayback;
     setState(() {
       _isSwitchingQuality = true;
       _videoInitialized = false;
@@ -3508,6 +3598,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
         _streamHeaders,
         _currentStreamIsHls,
       );
+      if (!mounted || _isLeaving) return;
       await _replacePlayer(
         resolved.url,
         headers: _streamHeaders,
@@ -3531,6 +3622,10 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
 
   @override
   void dispose() {
+    // Set first: any load/switch still in flight awaits between statements and
+    // must see the screen as gone before it can reach play().
+    _isLeaving = true;
+    _userWantsPlayback = false;
     MediaDownloadManager.instance.removeListener(_handleDownloadChanged);
     CloudSyncService.subtitlePrefsRevision.removeListener(
       _onSubtitlePrefsChanged,
@@ -3706,6 +3801,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
             controller: controller,
             onBack: _exitPlayer,
             onMinimize: _minimizePlayer,
+            onPlayIntent: _setPlayIntent,
             mediaTitle: _currentTitle,
             onQuality: _showQualityPicker,
             qualityLabel: _selectedQuality,

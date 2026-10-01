@@ -95,6 +95,7 @@ import com.maxstream.app.di.Modules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -554,6 +555,7 @@ fun PlayerScreen(
         headers: Map<String, String>,
         isHls: Boolean,
         startMs: Long,
+        playWhenReady: Boolean = true,
     ): ExoPlayer {
         val httpClient = OkHttpClient.Builder()
             .connectTimeout(12, TimeUnit.SECONDS)
@@ -601,7 +603,11 @@ fun PlayerScreen(
             .build()
         player.setMediaItem(itemBuilder.build(), startMs)
         player.prepare()
-        player.playWhenReady = true
+        // Every source swap goes through here (quality, server, subtitles,
+        // error recovery, memory resume). Callers pass the state they want to
+        // carry over; defaulting to true unconditionally made a rebuild resume
+        // a video the user had paused.
+        player.playWhenReady = playWhenReady
 
         // On completion, persist the final position, mark the item watched (so
         // it leaves Continue Watching — mirrors Dart's _completeCurrentItem),
@@ -637,15 +643,26 @@ fun PlayerScreen(
                         if (next != null && next.url != currentUrl) {
                             Log.w("TVPlayer", "Source error on ${source?.displayName} (${playbackError.errorCodeName}), switching to ${next.displayName}")
                             coroutineScope.launch {
+                                // Snapshot BEFORE release: a released player
+                                // reports currentPosition == 0, so reading it
+                                // afterwards restarted the replacement from the
+                                // beginning instead of where the user was.
+                                val pos = player.currentPosition
+                                val shouldPlay = player.playWhenReady
                                 try { player.release() } catch (_: Exception) {}
+                                if (!isActive) return@launch
                                 try {
-                                    val pos = player.currentPosition
                                     val newPlayer = buildPlayer(
                                         HlsAudioHelper.resolvePlaybackUrl(next.url, next.headers, selectedAudioLanguage, context.cacheDir),
                                         next.headers,
                                         next.isHls,
                                         pos,
+                                        shouldPlay,
                                     )
+                                    if (!isActive) {
+                                        releasePlayer(newPlayer)
+                                        return@launch
+                                    }
                                     // Switch to working server without full subtitle re-fetch
                                     exoPlayer = newPlayer
                                     source = next
@@ -674,8 +691,11 @@ fun PlayerScreen(
                         val capturedIsHls = _lastPlayerIsHls
                         coroutineScope.launch {
                             delay(backoffMs)
+                            if (!isActive) return@launch
                             try {
+                                // Snapshot before release (see above).
                                 val pos = player.currentPosition
+                                val shouldPlay = player.playWhenReady
                                 player.release()
                                 val playbackUrl = HlsAudioHelper.resolvePlaybackUrl(capturedUrl, capturedHeaders, selectedAudioLanguage, context.cacheDir)
                                 val p = buildPlayer(
@@ -683,7 +703,12 @@ fun PlayerScreen(
                                     headers = capturedHeaders,
                                     isHls = capturedIsHls,
                                     startMs = pos,
+                                    playWhenReady = shouldPlay,
                                 )
+                                if (!isActive) {
+                                    releasePlayer(p)
+                                    return@launch
+                                }
                                 exoPlayer = p
                             } catch (e: Exception) {
                                 Log.e("TVPlayer", "Retry failed: ${e.message}")
@@ -878,11 +903,17 @@ fun PlayerScreen(
         } else {
             resumePositionMs
         }
+        // Carry the play state across the rebuild. playWhenReady (not isPlaying)
+        // is the intent: isPlaying also goes false while the player is merely
+        // buffering, so a quality/subtitle switch during a stall used to leave
+        // the replacement paused.
+        val shouldPlay = old?.playWhenReady ?: true
         releasePlayer(old)
         val gen = ++rebuildGeneration.value
         loading = true
         status = "Switching..."
         coroutineScope.launch {
+            if (!isActive) return@launch
             // Subtitles are fetched with the server's headers and parsed into
             // timed cues that WE render as an overlay — media3's own subtitle
             // loader sends no headers, so VixSrc's referer-protected sub URLs 403
@@ -899,10 +930,10 @@ fun PlayerScreen(
                     ?.let { parseSubtitleCues(it) }
                     .orEmpty()
             }
-            if (gen != rebuildGeneration.value) return@launch
+            if (gen != rebuildGeneration.value || !isActive) return@launch
             val playbackUrl = HlsAudioHelper.resolvePlaybackUrl(newUrl, newHeaders, selectedAudioLanguage, context.cacheDir)
-            val player = buildPlayer(playbackUrl, newHeaders, newIsHls, positionMs)
-            if (gen != rebuildGeneration.value) {
+            val player = buildPlayer(playbackUrl, newHeaders, newIsHls, positionMs, shouldPlay)
+            if (gen != rebuildGeneration.value || !isActive) {
                 releasePlayer(player)
                 return@launch
             }
@@ -1711,7 +1742,9 @@ fun PlayerScreen(
 
     fun togglePlayPause() {
         val player = exoPlayer ?: return
-        if (player.isPlaying) player.pause() else player.play()
+        // playWhenReady, not isPlaying: isPlaying is also false while merely
+        // buffering, which made "Play" a no-op when pressed during a stall.
+        if (player.playWhenReady) player.pause() else player.play()
     }
 
     /** Activates the currently focused playback control (mirrors Dart's

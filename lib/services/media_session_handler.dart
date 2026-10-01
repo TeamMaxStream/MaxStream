@@ -78,6 +78,7 @@ class MediaSessionHandler {
   }
 
   void updateProgress({
+    required bool isPlaying,
     required Duration position,
     required Duration duration,
   }) {
@@ -85,7 +86,10 @@ class MediaSessionHandler {
       PlaybackState(
         controls: [
           MediaControl.skipToPrevious,
-          MediaControl.pause,
+          // Must mirror the real state: publishing `playing: true` with a Pause
+          // control while the video is paused made the notification lie, and
+          // tapping its Play button re-entered playback the user had ended.
+          if (isPlaying) MediaControl.pause else MediaControl.play,
           MediaControl.skipToNext,
           MediaControl.stop,
         ],
@@ -96,7 +100,7 @@ class MediaSessionHandler {
         },
         androidCompactActionIndices: const [0, 1, 2],
         processingState: AudioProcessingState.ready,
-        playing: true,
+        playing: isPlaying,
         updatePosition: position,
         bufferedPosition: position,
         speed: 1.0,
