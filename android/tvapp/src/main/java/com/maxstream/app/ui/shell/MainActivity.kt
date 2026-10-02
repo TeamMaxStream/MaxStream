@@ -47,8 +47,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.maxstream.app.data.local.WatchEntryCompat
 import com.maxstream.app.data.local.ProfileScope
+import com.maxstream.app.data.repository.UpdateRepository
 import com.maxstream.app.ui.navigation.Screen
 import com.maxstream.app.ui.screens.auth.LoginScreen
+import com.maxstream.app.ui.screens.more.UpdateDialog
+import com.maxstream.app.ui.screens.more.rememberUpdateInstallController
 import com.maxstream.app.ui.screens.profile.ProfileSelectScreen
 import com.maxstream.app.ui.screens.details.DetailsScreen
 import com.maxstream.app.ui.screens.genre.GenreScreen
@@ -61,6 +64,7 @@ import com.maxstream.app.ui.screens.splash.SplashScreen
 import com.maxstream.app.ui.screens.watchlist.WatchlistScreen
 import com.maxstream.app.ui.theme.MaxStreamTheme
 import com.maxstream.app.ui.tv.TvFocusManager
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -121,6 +125,13 @@ private fun TvAppRoot() {
     }
 
     var exitDialogVisible by remember { mutableStateOf(false) }
+
+    // ── Startup update check (mirrors Dart MaxStreamMainScreen._initializeServices) ─
+    // Populated once the Shell is reached; shown as a modal dialog until the
+    // user picks Update Now (in-app download + install) or Later.
+    var updateInfo by remember { mutableStateOf<UpdateRepository.UpdateInfo?>(null) }
+    var updatePromptedVersion by remember { mutableStateOf<String?>(null) }
+    val updateController = rememberUpdateInstallController()
 
     // Bumped on every sidebar → content hand-off so the active screen re-seeds
     // its own focus. Mirrors Dart's _focusContent(): focusing the content
@@ -245,6 +256,19 @@ private fun TvAppRoot() {
                 )
             }
             composable(Screen.Shell.route) {
+                val shellContext = androidx.compose.ui.platform.LocalContext.current
+                // One update check per app start, a beat after the shell lands
+                // so it never fights splash/profile focus.
+                LaunchedEffect(Unit) {
+                    delay(4_000)
+                    if (updatePromptedVersion != null) return@LaunchedEffect
+                    if (!UpdateRepository.isAutoCheckEnabled(shellContext)) return@LaunchedEffect
+                    val info = runCatching { UpdateRepository.checkForUpdate(shellContext) }
+                        .getOrNull()
+                    if (info != null && info.version != updatePromptedVersion) {
+                        updateInfo = info
+                    }
+                }
                 TvShell(
                     appState                = appState,
                     sidebarFocusRequesters  = sidebarFocusRequesters,
@@ -321,6 +345,28 @@ private fun TvAppRoot() {
             ExitDialog(
                 onDismiss = { exitDialogVisible = false },
                 onConfirm = { exitDialogVisible = false; activity?.finish() },
+            )
+        }
+
+        // ── Update available: same "Update to vX / Later / Update Now" flow ──
+        updateInfo?.let { info ->
+            UpdateDialog(
+                info = info,
+                controller = updateController,
+                onDismiss = {
+                    // Only prompt once per version per app start (Dart's
+                    // UpdateService.reserveUpdateDialog equivalent).
+                    updatePromptedVersion = info.version
+                    updateInfo = null
+                    // The dialog owns its own window; nudge the active tab to
+                    // re-seed its own focus (same trick as requestContentFocus)
+                    // so the D-pad still works after it closes.
+                    if (shellNavController.currentBackStackEntry?.destination?.route ==
+                        Screen.Shell.route
+                    ) {
+                        contentFocusTick++
+                    }
+                },
             )
         }
     }
