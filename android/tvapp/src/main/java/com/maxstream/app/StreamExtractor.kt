@@ -75,6 +75,22 @@ class StreamExtractor(private val context: Context) {
 
         /** Standalone stream-extraction API (VixSrc + VidLink + Videasy + NetMirror). */
         private const val MAX_STREAM_API = "https://maxstream-api.maxstream123.workers.dev"
+        /** NetMirror: language subjects to resolve, audio tracks to expose. */
+        private const val NET_MIRROR_MAX_SUBJECTS = 8
+        private const val NET_MIRROR_MAX_AUDIO_TRACKS = 8
+        private const val NET_MIRROR_PROBE_BYTES = 256 * 1024
+        /** Raw NetMirror renditions only answer behind MovieBox's Referer. */
+        private const val MOVIEBOX_REFERER = "https://moviebox.ph/"
+        private val NET_MIRROR_LANGUAGE_CODES = mapOf(
+            "arabic" to "ar", "bengali" to "bn", "chinese" to "zh", "dutch" to "nl",
+            "english" to "en", "filipino" to "fil", "french" to "fr", "german" to "de",
+            "greek" to "el", "hausa" to "ha", "hebrew" to "he", "hindi" to "hi",
+            "indonesian" to "id", "italian" to "it", "japanese" to "ja", "korean" to "ko",
+            "malay" to "ms", "persian" to "fa", "polish" to "pl", "portuguese" to "pt",
+            "punjabi" to "pa", "russian" to "ru", "spanish" to "es", "swahili" to "sw",
+            "tamil" to "ta", "telugu" to "te", "thai" to "th", "turkish" to "tr",
+            "urdu" to "ur", "vietnamese" to "vi",
+        )
     }
 
     /** True on 1GB-class devices (most cheap TV boxes). */
@@ -245,6 +261,15 @@ class StreamExtractor(private val context: Context) {
         .followSslRedirects(false)
         .build()
 
+    /** Short-timeout client for transport probes (must not eat the extraction budget). */
+    private val probeClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(10, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val serverProviders: List<ServerProvider> by lazy {
         listOf(
             StaticTmdbProvider(),
@@ -256,6 +281,7 @@ class StreamExtractor(private val context: Context) {
 
     private val extractorRegistry: List<HostExtractor> by lazy {
         listOf(
+            NetMirrorExtractor(),
             VidLinkExtractor(),
             VidukiExtractor(),
             Mov2DayExtractor(),
@@ -554,6 +580,15 @@ class StreamExtractor(private val context: Context) {
             val id = request.tmdbId
             val servers = mutableListOf<StreamServer>()
 
+            // NetMirror keys everything by TMDB id and serves whole-file MP4s,
+            // so it resolves without any embed scraping. First in the race.
+            servers += StreamServer(
+                "NetMirror",
+                "https://net79.cc/api/variants-tmdb/" +
+                    (if (request.isMovie) "movie" else "tv") +
+                    "/$id?se=${request.season}&ep=${request.episode}",
+            )
+
             // Hosted extractor API: resolves the title through its own provider
             // chain and answers with a playable URL + qualities + subtitles.
             servers += StreamServer(
@@ -647,6 +682,288 @@ class StreamExtractor(private val context: Context) {
             )
 
             return servers
+        }
+    }
+
+    private data class NetMirrorCandidate(val subjectId: String, val language: String)
+    private data class NetMirrorRendition(val height: Int, val codec: String, val url: String)
+    private data class NetMirrorProbe(val ok: Boolean, val ms: Long, val bytes: Long)
+
+    /**
+     * NetMirror (net79.cc) keys titles by TMDB id and serves whole-file MP4 renditions:
+     *   GET /api/variants-tmdb/{movie|tv}/<id>?se=&ep=
+     *        -> { ok, defaultSubjectId, variants[{dubSubjectId, language}] }
+     *   GET /api/download-info?subjectId=&se=&ep=
+     *        -> { ok, qualities[{res,size,url,raw,codec}], captions[{lang,url}] }
+     * Each language variant is its own subject (a whole alternate stream), so dubs are
+     * exposed as `audioTracks` rather than HLS audio groups.
+     */
+    private inner class NetMirrorExtractor : HostExtractor {
+        override val name = "NetMirror"
+
+        override fun supports(server: StreamServer): Boolean {
+            val value = host(server.url)
+            return value.endsWith("net79.cc") || value.endsWith("net27.cc")
+        }
+
+        override suspend fun extract(server: StreamServer): ExtractionResult =
+            withContext(Dispatchers.IO) {
+                val media = server.url.toHttpUrl()
+                val type = if (media.pathSegments.contains("movie")) "movie" else "tv"
+                val tmdbId = media.pathSegments.lastOrNull().orEmpty()
+                require(tmdbId.isNotBlank()) { "NetMirror server URL has no TMDB id" }
+                val se = if (type == "movie") "0" else media.queryParameter("se") ?: "1"
+                val ep = if (type == "movie") "0" else media.queryParameter("ep") ?: "1"
+
+                val base = "https://${host(server.url)}"
+                val siteHeaders = refererHeaders("$base/")
+                val variants =
+                    getJson("$base/api/variants-tmdb/$type/$tmdbId?se=$se&ep=$ep", siteHeaders)
+                require(variants.optBoolean("ok")) { "NetMirror has no title for tmdb $tmdbId" }
+                val defaultSubject = variants.optString("defaultSubjectId").trim()
+                require(defaultSubject.isNotBlank()) { "NetMirror returned no default subject" }
+
+                val variantArray = variants.optJSONArray("variants") ?: JSONArray()
+                val entries = buildList {
+                    for (index in 0 until variantArray.length()) {
+                        val item = variantArray.optJSONObject(index) ?: continue
+                        add(item.optString("dubSubjectId").trim() to item.optString("language").trim())
+                    }
+                }
+
+                val candidates = LinkedHashMap<String, NetMirrorCandidate>()
+                fun addCandidate(subjectId: String, language: String) {
+                    if (subjectId.isBlank() || candidates.containsKey(subjectId)) return
+                    candidates[subjectId] = NetMirrorCandidate(subjectId, language)
+                }
+                addCandidate(
+                    defaultSubject,
+                    entries.firstOrNull { it.first == defaultSubject }?.second ?: "Default",
+                )
+                // Dubs first: subtitle-only variants would push real dubs past the cap.
+                entries
+                    .filter { it.first != defaultSubject && it.second.contains("dub", true) }
+                    .forEach { (subjectId, language) -> addCandidate(subjectId, language) }
+                entries.forEach { (subjectId, language) -> addCandidate(subjectId, language) }
+
+                val infos = coroutineScope {
+                    candidates.values.take(NET_MIRROR_MAX_SUBJECTS).map { candidate ->
+                        async(Dispatchers.IO) {
+                            try {
+                                candidate to getJson(
+                                    "$base/api/download-info" +
+                                        "?subjectId=${candidate.subjectId}&se=$se&ep=$ep",
+                                    siteHeaders,
+                                )
+                            } catch (error: Throwable) {
+                                if (error is CancellationException) throw error
+                                Log.w(
+                                    tag,
+                                    "NetMirror download-info ${candidate.language} " +
+                                        "failed: ${error.message}",
+                                )
+                                candidate to null
+                            }
+                        }
+                    }.awaitAll()
+                }
+
+                val primary = infos.firstOrNull { netMirrorQualities(it.second).isNotEmpty() }
+                    ?: throw IllegalStateException("NetMirror has no copy of this episode")
+                val primaryInfo =
+                    primary.second ?: throw IllegalStateException("NetMirror download-info vanished")
+
+                // A slow hop to one transport starves the video renderer while the audio
+                // keeps playing from its buffer, so time the raw MovieBox CDN and the
+                // site's own proxy and play whichever moves bytes faster from here.
+                val probeEntry = netMirrorQualities(primaryInfo).maxByOrNull { it.optInt("res") }
+                    ?: netMirrorQualities(primaryInfo).first()
+                val rawHeaders = refererHeaders(MOVIEBOX_REFERER)
+                val raw = async(Dispatchers.IO) {
+                    probeRange(probeEntry.optString("raw"), rawHeaders)
+                }.await()
+                val proxy = async(Dispatchers.IO) {
+                    probeRange(absolutizeNetMirror(base, probeEntry.optString("url")), siteHeaders)
+                }.await()
+                val useRaw = if (raw.ok && proxy.ok) raw.ms <= proxy.ms else raw.ok
+                val playbackHeaders = if (useRaw) rawHeaders else siteHeaders
+                Log.d(
+                    tag,
+                    "NetMirror transport raw=${raw.ms}ms/${raw.bytes}B " +
+                        "proxy=${proxy.ms}ms/${proxy.bytes}B -> ${if (useRaw) "raw" else "proxy"}",
+                )
+
+                fun renditionUrl(entry: JSONObject): String {
+                    val preferred = if (useRaw) entry.optString("raw") else entry.optString("url")
+                    val fallback = if (useRaw) entry.optString("url") else entry.optString("raw")
+                    return absolutizeNetMirror(base, preferred)
+                        .ifBlank { absolutizeNetMirror(base, fallback) }
+                }
+
+                val renditions = netMirrorQualities(primaryInfo).mapNotNull { entry ->
+                    val url = renditionUrl(entry)
+                    if (url.isBlank()) return@mapNotNull null
+                    NetMirrorRendition(
+                        entry.optInt("res"),
+                        entry.optString("codec").ifBlank { "h264" },
+                        url,
+                    )
+                }.filter { !it.codec.contains("hevc", true) && !it.codec.contains("h265", true) }
+                require(renditions.isNotEmpty()) { "NetMirror returned no playable qualities" }
+
+                // Progressive MP4 has no adaptive ladder, so the opening rendition has to
+                // be one this device's link can sustain: 1080p runs ~4-6 Mbps and a link
+                // that can't hold that freezes the video while the buffered audio keeps
+                // playing. Cap the default from the probe rate; taller renditions stay in
+                // `qualities` for manual selection.
+                val winner = if (useRaw) raw else proxy
+                val kbps = if (winner.ms > 0L) winner.bytes * 8L / winner.ms else 0L
+                val maxHeight = when {
+                    kbps <= 0L -> 0
+                    kbps >= 7000L -> 0
+                    kbps >= 3500L -> 720
+                    else -> 480
+                }
+                val pool = if (maxHeight > 0) {
+                    renditions.filter { it.height in 1..maxHeight }
+                } else {
+                    renditions
+                }.ifEmpty { renditions }
+                val chosen = pool.maxByOrNull { it.height } ?: renditions.first()
+                Log.d(tag, "NetMirror bitrate probe ${kbps}kbps -> default ${chosen.height}p")
+                val qualities = renditions.sortedByDescending { it.height }.map {
+                    QualityOption(
+                        if (it.height > 0) "${it.height}p" else "Auto",
+                        it.url,
+                        it.height,
+                        it.codec,
+                    )
+                }
+
+                val audioTracks = mutableListOf<AudioOption>()
+                val seenLanguages = mutableSetOf<String>()
+                for ((candidate, info) in infos) {
+                    if (audioTracks.size >= NET_MIRROR_MAX_AUDIO_TRACKS) break
+                    val list = netMirrorQualities(info)
+                    if (list.isEmpty()) continue
+                    val isPrimary = candidate.subjectId == primary.first.subjectId
+                    val label =
+                        candidate.language.ifBlank { if (isPrimary) "Default" else candidate.subjectId }
+                    if (!isPrimary && label.contains("sub", true) && !label.contains("dub", true)) continue
+                    val language = netMirrorLanguage(label)
+                    if (!seenLanguages.add(language.ifBlank { label.lowercase(Locale.US) })) continue
+
+                    val target = list.mapNotNull { entry ->
+                        val url = renditionUrl(entry)
+                        if (url.isBlank()) null else entry.optInt("res") to url
+                    }
+                    val match = target.firstOrNull { it.first == chosen.height }
+                        ?: target.filter { it.first < chosen.height }.maxByOrNull { it.first }
+                        ?: target.maxByOrNull { it.first }
+                        ?: continue
+                    audioTracks += AudioOption(
+                        label = label,
+                        language = language,
+                        url = match.second,
+                        groupId = candidate.subjectId,
+                        isDefault = isPrimary,
+                        source = name,
+                    )
+                }
+
+                val captions = primaryInfo.optJSONArray("captions") ?: JSONArray()
+                val subtitles = buildList {
+                    for (index in 0 until captions.length()) {
+                        val entry = captions.optJSONObject(index) ?: continue
+                        val url = absolutizeNetMirror(base, entry.optString("url"))
+                        if (url.isBlank()) continue
+                        add(SubtitleOption(netMirrorSubtitleLabel(entry), url, source = name))
+                    }
+                }
+
+                Log.d(
+                    tag,
+                    "NetMirror resolved ${chosen.height}p with " +
+                        "${audioTracks.size} audio track(s), ${subtitles.size} subtitle(s)",
+                )
+                ExtractionResult.Final(
+                    StreamResult(
+                        url = chosen.url,
+                        source = name,
+                        type = "direct_video",
+                        headers = playbackHeaders,
+                        qualities = qualities,
+                        subtitles = subtitles,
+                        audioTracks = audioTracks,
+                        method = "NetMirror",
+                    ),
+                )
+            }
+
+        private fun netMirrorQualities(info: JSONObject?): List<JSONObject> {
+            if (info == null || !info.optBoolean("ok")) return emptyList()
+            val array = info.optJSONArray("qualities") ?: return emptyList()
+            return (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+        }
+    }
+
+    /** Reads up to [NET_MIRROR_PROBE_BYTES] from [url] and times it (0 = dead route). */
+    private fun probeRange(url: String, headers: Map<String, String>): NetMirrorProbe {
+        if (url.isBlank()) return NetMirrorProbe(false, 0L, 0L)
+        val started = System.nanoTime()
+        val request = Request.Builder().url(url).apply {
+            header("User-Agent", userAgent)
+            header("Range", "bytes=0-${NET_MIRROR_PROBE_BYTES - 1}")
+            safeHeaders(headers).forEach { (name, value) -> header(name, value) }
+        }.build()
+        return try {
+            probeClient.newCall(request).execute().use { response ->
+                val elapsed = (System.nanoTime() - started) / 1_000_000
+                val body = response.body ?: return NetMirrorProbe(false, elapsed, 0L)
+                var read = 0L
+                body.byteStream().use { stream ->
+                    val buffer = ByteArray(8 * 1024)
+                    while (read < NET_MIRROR_PROBE_BYTES) {
+                        val chunk = stream.read(buffer, 0, minOf(buffer.size, (NET_MIRROR_PROBE_BYTES - read).toInt()))
+                        if (chunk <= 0) break
+                        read += chunk
+                    }
+                }
+                val contentType = response.header("Content-Type").orEmpty()
+                val ok = (response.code == 200 || response.code == 206) &&
+                    read > 0 &&
+                    !contentType.contains("text/html", true)
+                NetMirrorProbe(ok, elapsed, read)
+            }
+        } catch (error: Throwable) {
+            NetMirrorProbe(false, (System.nanoTime() - started) / 1_000_000, 0L)
+        }
+    }
+
+    private fun absolutizeNetMirror(base: String, value: String): String = when {
+        value.isBlank() -> ""
+        value.startsWith("http") -> value
+        value.startsWith("//") -> "https:$value"
+        value.startsWith("/") -> "$base$value"
+        else -> ""
+    }
+
+    private fun netMirrorLanguage(label: String): String {
+        val value = label.trim().lowercase(Locale.US)
+        if (value.isBlank()) return ""
+        if (value == "default" || value == "original") return ""
+        if (value.startsWith("esla")) return "es"
+        if (value.startsWith("ptbr")) return "pt"
+        val cleaned = value.replace(Regex("""\b(dub|sub)\b"""), "").trim()
+        return NET_MIRROR_LANGUAGE_CODES[cleaned] ?: label.trim()
+    }
+
+    private fun netMirrorSubtitleLabel(entry: JSONObject): String {
+        val raw = entry.optString("lang").ifBlank { entry.optString("name") }.trim()
+        return when (raw) {
+            "in_id" -> "id"
+            "zh_cn", "zh-CN" -> "zh"
+            else -> raw.ifBlank { "Subtitle" }
         }
     }
 
@@ -1602,6 +1919,7 @@ class StreamExtractor(private val context: Context) {
             }.getOrDefault(emptyMap()).ifEmpty { refererHeaders(referer) }
 
             val qualities = runCatching { parseWorkerQualities(json) }.getOrDefault(emptyList())
+            val audioTracks = runCatching { parseWorkerAudioTracks(json) }.getOrDefault(emptyList())
 
             val subtitles = runCatching {
                 val subs = json.optJSONArray("subtitles")
@@ -1627,6 +1945,7 @@ class StreamExtractor(private val context: Context) {
                         workerHeaders,
                         qualities = qualities,
                         subtitles = subtitles,
+                        audioTracks = audioTracks,
                         method = "Worker",
                     ),
                 ),
@@ -1648,6 +1967,23 @@ class StreamExtractor(private val context: Context) {
         "direct", "direct_video", "mp4" ->
             if (url.contains(".m3u8", true)) "direct_m3u8" else "direct_video"
         else -> raw.ifBlank { mediaType(url) }
+    }
+
+    private fun parseWorkerAudioTracks(json: JSONObject): List<AudioOption> {
+        val array = json.optJSONArray("audioTracks") ?: return emptyList()
+        return (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            val url = item.optString("url").ifBlank { return@mapNotNull null }
+            AudioOption(
+                label = item.optString("label").ifBlank { item.optString("language", "Audio") },
+                language = item.optString("language"),
+                url = url,
+                groupId = item.optString("groupId"),
+                isDefault = item.optBoolean("default") || item.optBoolean("isDefault"),
+                channels = item.optString("channels"),
+                source = item.optString("source").ifBlank { "MaxStream API" },
+            )
+        }
     }
 
     private fun parseWorkerQualities(json: JSONObject): List<QualityOption> {

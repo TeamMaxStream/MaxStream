@@ -1641,7 +1641,15 @@ fun PlayerScreen(
                 selectedAudioLanguage = track.language.ifBlank { track.label }
                 menuOpen = false
                 activeMenu = null
-                s?.let { switchMedia(it.url, it.headers, it.isHls, activeSubtitle) }
+                val base = s ?: return
+                if (track.url.isNotBlank() && track.url != base.url) {
+                    // Whole alternate stream (NetMirror dubs): the language pin in
+                    // HlsAudioHelper only rewrites masters, so play the track's own
+                    // URL instead of the default rendition.
+                    switchMedia(track.url, base.headers, track.url.contains(".m3u8", true), activeSubtitle)
+                } else {
+                    switchMedia(base.url, base.headers, base.isHls, activeSubtitle)
+                }
             }
             PlayerMenu.Subtitles -> {
                 // Index 0 = Off.
