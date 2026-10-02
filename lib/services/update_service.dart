@@ -185,8 +185,8 @@ class DownloadCompleteDialog extends StatelessWidget {
 }
 
 class UpdateService {
-  static const String githubOwner = 'chila254';
-  static const String githubRepo = 'maxstream';
+  static const String githubOwner = 'TeamMaxStream';
+  static const String githubRepo = 'MaxStream';
   static const String latestReleaseUrl =
       'https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest';
 

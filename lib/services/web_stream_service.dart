@@ -8,10 +8,17 @@ import 'stream_security.dart';
 class WebStreamService {
   static const String _tag = 'WebStreamService';
   static const String _workerUrl =
-      'https://maxstream-extractor.maxstream123.workers.dev';
+      'https://maxstream-api.maxstream123.workers.dev';
 
-  /// All available servers
+  /// All available servers. Ids are passed straight through as the API's
+  /// `server=` parameter, so they must match a provider the API exposes.
   static const List<Map<String, String>> servers = [
+    {
+      'name': 'NetMirror',
+      'id': 'netmirror',
+      'movieUrl': 'https://net79.cc/watch-tmdb/{id}',
+      'tvUrl': 'https://net79.cc/watch-tmdb/{id}',
+    },
     {
       'name': 'VixSrc',
       'id': 'vixsrc',
@@ -25,16 +32,10 @@ class WebStreamService {
       'tvUrl': 'https://vidlink.pro/tv/{id}/{season}/{episode}',
     },
     {
-      'name': '2Embed',
-      'id': '2embed',
-      'movieUrl': 'https://www.2embed.cc/embed/{id}',
-      'tvUrl': 'https://www.2embed.cc/embedtv/{id}&s={season}&e={episode}',
-    },
-    {
-      'name': 'Goodstream',
-      'id': 'goodstream',
-      'movieUrl': 'https://goodstream.one/movie/{id}',
-      'tvUrl': 'https://goodstream.one/tv/{id}/{season}/{episode}',
+      'name': 'Videasy',
+      'id': 'videasy',
+      'movieUrl': 'https://player.videasy.to/movie/{id}',
+      'tvUrl': 'https://player.videasy.to/tv/{id}/{season}/{episode}',
     },
   ];
 
@@ -50,58 +51,56 @@ class WebStreamService {
 
     try {
       final url =
-          '$_workerUrl/api/extract'
-          '?tmdb_id=$tmdbId'
-          '&is_movie=$isMovie'
+          '$_workerUrl/v1/stream'
+          '?tmdb=$tmdbId'
+          '&type=${isMovie ? 'movie' : 'tv'}'
           '&season=$season'
           '&episode=$episode'
           '&server=$serverId';
 
       final response = await http
           .get(Uri.parse(url), headers: const {'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 25));
       if (response.statusCode == 200) {
         final data = json.decode(response.body) as Map<String, dynamic>;
         final streamUrl = data['url']?.toString() ?? '';
-        final streamUri = Uri.tryParse(streamUrl);
-        final workerUri = Uri.parse(_workerUrl);
-        final isWorkerMediaUrl =
-            streamUri != null &&
-            streamUri.scheme == 'https' &&
-            streamUri.host == workerUri.host &&
-            streamUri.path == '/api/media' &&
-            streamUri.queryParameters.containsKey('token') &&
-            streamUri.queryParameters.containsKey('sig');
-        if (isWorkerMediaUrl && data['type'] == 'hls') {
-          return StreamSecurity.sanitizeResolverResult({
-            'url': streamUrl,
-            'source': data['source'] as String? ?? serverId,
-            'type': 'hls',
-            'headers': <String, String>{},
-          });
-        }
-        if (data['type'] == 'embed') {
-          final embed = _sanitizeEmbedUrl(streamUrl);
-          if (embed != null) {
-            return StreamSecurity.sanitizeResolverResult({
-              'url': embed,
-              'source': data['source'] as String? ?? serverId,
-              'type': 'embed',
-              'headers': <String, String>{},
-            });
-          }
-          debugPrint('$_tag: Worker returned an unsafe embed URL');
-        } else {
+        if (data['ok'] != true || streamUrl.isEmpty) {
           debugPrint(
-            '$_tag: Worker returned an unsafe or unsupported stream URL',
+            '$_tag: API found no stream for $serverId: '
+            '${data['error'] ?? 'empty url'}',
           );
+          return null;
         }
+
+        final headers = <String, String>{};
+        (data['headers'] as Map?)?.forEach((key, value) {
+          headers[key.toString()] = value.toString();
+        });
+
+        return StreamSecurity.sanitizeResolverResult({
+          'url': streamUrl,
+          'source': (data['label'] ?? data['provider'] ?? serverId).toString(),
+          'type': _playerType(data['type']?.toString(), streamUrl),
+          'headers': headers,
+          'qualities': data['qualities'] is List ? data['qualities'] : null,
+          'subtitles': data['subtitles'] is List ? data['subtitles'] : null,
+        });
       }
+      debugPrint('$_tag: API returned HTTP ${response.statusCode} for $serverId');
     } catch (e) {
-      debugPrint('$_tag: Worker call failed: $e');
+      debugPrint('$_tag: API call failed: $e');
     }
 
     return null;
+  }
+
+  /// The API answers `hls`/`direct`/`dash`; the web player only knows
+  /// `hls` (hls.js) and anything else (native <video src>).
+  static String _playerType(String? raw, String url) {
+    final type = (raw ?? '').toLowerCase();
+    if (type == 'hls' || url.toLowerCase().contains('.m3u8')) return 'hls';
+    if (type == 'dash') return 'dash';
+    return 'direct';
   }
 
   /// Resolve a stream URL trying all servers in order.
@@ -134,26 +133,5 @@ class WebStreamService {
   /// Get server list for UI picker.
   static List<Map<String, String>> getServerList() {
     return servers.map((s) => {'name': s['name']!, 'id': s['id']!}).toList();
-  }
-
-  /// Allowed hosts for embed player URLs. The embed page is loaded in an
-  /// iframe in the user's browser, so the URL must point at a trusted,
-  /// known player host over HTTPS.
-  static const List<String> _embedAllowedHosts = [
-    'vidlink.pro',
-    'goodstream.one',
-    'www.2embed.cc',
-    '2embed.cc',
-  ];
-
-  static String? _sanitizeEmbedUrl(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return null;
-    if (uri.scheme != 'https') return null;
-    final host = uri.host.toLowerCase();
-    if (!_embedAllowedHosts.any((allowed) => host == allowed || host.endsWith('.$allowed'))) {
-      return null;
-    }
-    return uri.toString();
   }
 }

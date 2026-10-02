@@ -221,10 +221,10 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
 
   String _getVariantDownloadUrl(String baseDownloadUrl, String variantFilename) {
     // GitHub release URL pattern:
-    // https://github.com/chila254/maxstream/releases/download/v1.6.0/maxstream-arm64-v8a.apk
+    // https://github.com/TeamMaxStream/MaxStream/releases/download/v1.6.0/maxstream-arm64-v8a.apk
     // The base URL points to the release tag; we construct the variant URL from the tag
     final tag = baseDownloadUrl.split('/releases/download/').last.split('/').first;
-    return 'https://github.com/chila254/maxstream/releases/download/$tag/$variantFilename';
+    return 'https://github.com/TeamMaxStream/MaxStream/releases/download/$tag/$variantFilename';
   }
 
   Widget _buildSectionTitle(String title) {

@@ -12,12 +12,12 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Native mirror of the Dart [TvUpdateService]: checks the GitHub latest release
- * for `chila254/maxstream` and returns the TV APK asset when a newer version
+ * for `TeamMaxStream/MaxStream` and returns the TV APK asset when a newer version
  * exists.
  */
 object UpdateRepository {
-    private const val OWNER = "chila254"
-    private const val REPO = "maxstream"
+    private const val OWNER = "TeamMaxStream"
+    private const val REPO = "MaxStream"
     private const val LATEST_URL = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
     private const val APK_HINT = "maxstream-tv"
 

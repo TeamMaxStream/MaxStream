@@ -131,8 +131,8 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
                   _buildActionCard(
                     icon: Icons.code,
                     title: 'GitHub Repository',
-                    subtitle: 'https://github.com/chila254/maxstream',
-                    onTap: () => _launchUrl('https://github.com/chila254/maxstream'),
+                    subtitle: 'https://github.com/TeamMaxStream/MaxStream',
+                    onTap: () => _launchUrl('https://github.com/TeamMaxStream/MaxStream'),
                   ),
                   const SizedBox(height: 32),
                   _buildSectionTitle('Legal'),

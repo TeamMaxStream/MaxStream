@@ -1,6 +1,0 @@
-name = "maxstream-extractor"
-main = "src/index.js"
-compatibility_date = "2024-01-01"
-
-[vars]
-CORS_ORIGIN = "*"

@@ -72,6 +72,9 @@ class StreamExtractor(private val context: Context) {
         private const val HTTP_SERVER_TIMEOUT_MS = 18_000L
         private const val WEBVIEW_SERVER_TIMEOUT_MS = 12_000L
         private const val ALL_SERVERS_TOTAL_TIMEOUT_MS = 75_000L
+
+        /** Standalone stream-extraction API (VixSrc + VidLink + Videasy + NetMirror). */
+        private const val MAX_STREAM_API = "https://maxstream-api.maxstream123.workers.dev"
     }
 
     /** True on 1GB-class devices (most cheap TV boxes). */
@@ -551,6 +554,17 @@ class StreamExtractor(private val context: Context) {
             val id = request.tmdbId
             val servers = mutableListOf<StreamServer>()
 
+            // Hosted extractor API: resolves the title through its own provider
+            // chain and answers with a playable URL + qualities + subtitles.
+            servers += StreamServer(
+                "MaxStream API",
+                "$MAX_STREAM_API/v1/stream" +
+                    "?tmdb=$id" +
+                    "&type=${if (request.isMovie) "movie" else "tv"}" +
+                    "&season=${request.season}" +
+                    "&episode=${request.episode}",
+            )
+
             servers += StreamServer(
                 "VixSrc",
                 if (request.isMovie) {
@@ -997,7 +1011,12 @@ class StreamExtractor(private val context: Context) {
             val mediaId = segments.getOrNull(1) ?: throw IllegalStateException("VidLink URL missing media id")
             val season = if (segments.firstOrNull().equals("tv", true)) segments.getOrNull(2) ?: "1" else "1"
             val episode = if (segments.firstOrNull().equals("tv", true)) segments.getOrNull(3) ?: "1" else "1"
-            val workerUrl = "https://maxstream-worker.maxstream123.workers.dev/api/extract?tmdb_id=$mediaId&is_movie=$isMovie&season=$season&episode=$episode&server=vidlink"
+            val workerUrl = "$MAX_STREAM_API/v1/stream" +
+                "?tmdb=$mediaId" +
+                "&type=${if (isMovie) "movie" else "tv"}" +
+                "&season=$season" +
+                "&episode=$episode" +
+                "&server=vidlink"
             requireSafeOutboundUrl(workerUrl)
             val request = Request.Builder().url(workerUrl).header("Accept", "application/json").build()
             client.newCall(request).execute().use { response ->
@@ -1006,12 +1025,26 @@ class StreamExtractor(private val context: Context) {
                 val json = JSONObject(body)
                 val type = json.optString("type")
                 val streamUrl = json.optString("url").ifBlank { throw IllegalStateException("Worker no url") }
-                // Worker returns type:hls + /api/media?token&sig for playable streams.
-                // type:embed (vidlink.pro/tv/… or 2embed.cc/embed…) is not directly playable in ExoPlayer.
-                if (type != "hls" && !streamUrl.contains("/api/media")) {
-                    throw IllegalStateException("Worker returned embed, not HLS")
+                if (!json.optBoolean("ok", true)) {
+                    throw IllegalStateException(json.optString("error").ifBlank { "Worker returned no stream" })
                 }
-                return@withContext ExtractionResult.Final(StreamResult(streamUrl, name, "direct_m3u8", emptyMap(), method = "Worker"))
+                // The API answers hls/direct/dash; embed pages are not playable in ExoPlayer.
+                if (type !in setOf("hls", "direct", "direct_video", "dash")) {
+                    throw IllegalStateException("Worker returned embed, not a stream")
+                }
+                val workerHeaders = runCatching {
+                    val h = json.optJSONObject("headers")
+                    if (h != null) {
+                        val map = mutableMapOf<String, String>()
+                        for (key in h.keys()) {
+                            h.optString(key).ifBlank { null }?.let { map[key] = it }
+                        }
+                        map.toMap()
+                    } else emptyMap()
+                }.getOrDefault(emptyMap())
+                return@withContext ExtractionResult.Final(
+                    StreamResult(streamUrl, name, normalizeWorkerType(type, streamUrl), workerHeaders, method = "Worker"),
+                )
             }
         }
 
@@ -1547,15 +1580,16 @@ class StreamExtractor(private val context: Context) {
                 throw IllegalStateException(error)
             }
             val type = json.optString("type").ifBlank { mediaType(url) }
+            val referer = json.optString("referer").ifBlank { "$MAX_STREAM_API/" }
 
             if (type == "embed") {
-                val source = json.optString("source").ifBlank { "Worker (VidLink)" }
+                val source = workerSource(json)
                 return ExtractionResult.Redirect(
-                    StreamServer(source, url, refererHeaders("https://maxstream-worker.maxstream123.workers.dev")),
+                    StreamServer(source, url, refererHeaders(referer)),
                 )
             }
 
-            val source = json.optString("source").ifBlank { "Worker (VidLink)" }
+            val source = workerSource(json)
             val workerHeaders = runCatching {
                 val h = json.optJSONObject("headers")
                 if (h != null) {
@@ -1565,7 +1599,9 @@ class StreamExtractor(private val context: Context) {
                     }
                     map.toMap()
                 } else emptyMap()
-            }.getOrDefault(emptyMap()).ifEmpty { refererHeaders("https://maxstream-worker.maxstream123.workers.dev") }
+            }.getOrDefault(emptyMap()).ifEmpty { refererHeaders(referer) }
+
+            val qualities = runCatching { parseWorkerQualities(json) }.getOrDefault(emptyList())
 
             val subtitles = runCatching {
                 val subs = json.optJSONArray("subtitles")
@@ -1574,7 +1610,7 @@ class StreamExtractor(private val context: Context) {
                         val sub = subs.getJSONObject(i)
                         val subUrl = sub.optString("url").ifBlank { return@mapNotNull null }
                         SubtitleOption(
-                            sub.optString("language", "Subtitle"),
+                            sub.optString("language").ifBlank { sub.optString("label", "Subtitle") },
                             subUrl,
                             source = source,
                         )
@@ -1584,8 +1620,47 @@ class StreamExtractor(private val context: Context) {
 
             return ExtractionResult.Final(
                 validateStream(
-                    StreamResult(url, source, type, workerHeaders, subtitles = subtitles),
+                    StreamResult(
+                        url,
+                        source,
+                        normalizeWorkerType(type, url),
+                        workerHeaders,
+                        qualities = qualities,
+                        subtitles = subtitles,
+                        method = "Worker",
+                    ),
                 ),
+            )
+        }
+    }
+
+    private fun workerSource(json: JSONObject): String =
+        json.optString("label").ifBlank {
+            json.optString("provider").ifBlank {
+                json.optString("source").ifBlank { "MaxStream API" }
+            }
+        }
+
+    /** The API answers `hls`/`direct`/`dash`; the players key off the app's own tokens. */
+    private fun normalizeWorkerType(raw: String, url: String): String = when (raw.lowercase()) {
+        "hls" -> "direct_m3u8"
+        "dash" -> "dash"
+        "direct", "direct_video", "mp4" ->
+            if (url.contains(".m3u8", true)) "direct_m3u8" else "direct_video"
+        else -> raw.ifBlank { mediaType(url) }
+    }
+
+    private fun parseWorkerQualities(json: JSONObject): List<QualityOption> {
+        val array = json.optJSONArray("qualities") ?: return emptyList()
+        return (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            val url = item.optString("url").ifBlank { return@mapNotNull null }
+            val height = item.optInt("height")
+            QualityOption(
+                item.optString("label").ifBlank { if (height > 0) "${height}p" else "Auto" },
+                url,
+                height,
+                item.optString("codec"),
             )
         }
     }

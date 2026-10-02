@@ -160,7 +160,7 @@ android/app/src/main/kotlin/com/maxstream/app/
 ### Installation
 
 ```bash
-git clone https://github.com/chila254/maxstream.git
+git clone https://github.com/TeamMaxStream/MaxStream.git
 cd maxstream
 flutter pub get
 flutter run
@@ -175,7 +175,7 @@ flutter run
 
 The app checks GitHub Releases on startup for newer versions:
 
-1. Hits `https://api.github.com/repos/chila254/maxstream/releases/latest`
+1. Hits `https://api.github.com/repos/TeamMaxStream/MaxStream/releases/latest`
 2. Compares release tag (e.g. `v1.0.1`) with installed version
 3. Shows local notification + in-app dialog with changelog from release body
 4. Downloads `MaxStream.apk` from the release asset
@@ -212,4 +212,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## Author
 
-**Chila254** — [github.com/chila254/maxstream](https://github.com/chila254/maxstream)
+**TeamMaxStream** — [github.com/TeamMaxStream/MaxStream](https://github.com/TeamMaxStream/MaxStream)

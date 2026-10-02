@@ -102,7 +102,7 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
     ProviderStatus(name: 'Vixcloud', domain: 'vixcloud.co (under construction)', type: 'extractor-native'),
     ProviderStatus(name: 'Okru', domain: 'ok.ru', type: 'extractor-native'),
     ProviderStatus(name: 'Dailymotion', domain: 'dailymotion.com', type: 'extractor-native'),
-    ProviderStatus(name: 'Worker', domain: 'maxstream-worker.maxstream123.workers.dev', type: 'extractor-api'),
+    ProviderStatus(name: 'MaxStream API', domain: 'maxstream-api.maxstream123.workers.dev', type: 'extractor-api'),
     ProviderStatus(name: 'GenericMedia', domain: '-', type: 'extractor-native'),
     // Inactive / defined but not registered
     ProviderStatus(name: 'Moflix', domain: 'moflix-stream.xyz', type: 'extractor-native'),
