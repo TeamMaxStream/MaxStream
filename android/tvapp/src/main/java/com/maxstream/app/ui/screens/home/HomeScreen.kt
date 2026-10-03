@@ -33,6 +33,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Upcoming
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -75,9 +77,16 @@ import com.maxstream.app.data.local.WatchEntryCompat
 import com.maxstream.app.data.local.ProfileScope
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
+import com.maxstream.app.ui.components.ContentCardTotalHeight
+import com.maxstream.app.ui.components.SeeAllCell
 import com.maxstream.app.ui.components.ContentCardRowHeight
+import com.maxstream.app.ui.components.ComingSoonCard
+import com.maxstream.app.ui.components.ComingSoonCardHeight
+import com.maxstream.app.ui.components.ComingSoonCardRowHeight
 import com.maxstream.app.ui.components.focusRing
 import com.maxstream.app.ui.navigation.Screen
+import com.maxstream.app.ui.screens.more.MoreContentKind
+import com.maxstream.app.ui.screens.more.MoreContentSeed
 import com.maxstream.app.ui.theme.Background
 import com.maxstream.app.ui.tv.RowDesc
 import com.maxstream.app.ui.tv.RowNavState
@@ -139,6 +148,25 @@ fun HomeScreen(
             if (comingSoon.isNotEmpty()) add(RowDesc("home:Coming Soon", comingSoon.size.coerceAtMost(15)))
         }
     }
+
+    // Row titles resolved once at composable scope (stringResource is
+    // @Composable, so it can't be called inside a click handler).
+    val cwTitle = stringResource(R.string.continue_watching)
+    val trendingTitle = stringResource(R.string.trending_movies)
+    val forYouTitle = stringResource(R.string.for_you)
+    val popularTitle = stringResource(R.string.popular_movies)
+    val topRatedTitle = stringResource(R.string.top_rated)
+    val bywTitle = stringResource(
+        R.string.because_you_watched,
+        becauseYouWatched?.first ?: "",
+    )
+    val comingSoonTitle = stringResource(R.string.coming_soon)
+
+    // Trailing `>` cell -> seed the full list, then open it.
+    val openMore: (MoreContentKind, String, List<MediaItem>) -> Unit = { kind, title, seed ->
+        MoreContentSeed.set(title, seed)
+        navController.navigate(Screen.MoreContent.createRoute(kind.name))
+    }
     rowNav.setRows(rows)
     rowNav.clearMissingRows()
 
@@ -198,6 +226,13 @@ fun HomeScreen(
     // the hero when no row was active (e.g. cold start).
     LaunchedEffect(isVisible, restoreFocusKey) {
         if (!isVisible || restoreFocusKey <= 0) return@LaunchedEffect
+        // Left via a row's trailing `>` See All cell — put focus back on that
+        // cell, not on the card the navigator last remembered.
+        rowNav.seeAllReturnRowId?.let { returnRow ->
+            rowNav.seeAllReturnRowId = null
+            runCatching { rowNav.seeAllRequester(returnRow).requestFocus() }
+            return@LaunchedEffect
+        }
         val rowId = rowNav.activeRowId
         if (rowId != null && rowNav.count(rowId) > 0) {
             rowNav.moveTo(rowId, rowNav.focusedIndex(rowId), outerListState, coroutineScope)
@@ -319,6 +354,7 @@ fun HomeScreen(
                                     items = continueWatching,
                                     navController = navController,
                                     rowId = "home:Continue Watching",
+                                    onSeeAll = { openMore(MoreContentKind.CONTINUE_WATCHING, cwTitle, continueWatching) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -342,6 +378,7 @@ fun HomeScreen(
                                     items = trendingMovies.take(15),
                                     navController = navController,
                                     rowId = "home:Trending Movies",
+                                    onSeeAll = { openMore(MoreContentKind.TRENDING_MOVIES, trendingTitle, trendingMovies.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -363,6 +400,7 @@ fun HomeScreen(
                                     items = forYou.take(15),
                                     navController = navController,
                                     rowId = "home:For You",
+                                    onSeeAll = { openMore(MoreContentKind.FOR_YOU, forYouTitle, forYou.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -384,6 +422,7 @@ fun HomeScreen(
                                     items = popularMovies.take(15),
                                     navController = navController,
                                     rowId = "home:Popular Movies",
+                                    onSeeAll = { openMore(MoreContentKind.POPULAR_MOVIES, popularTitle, popularMovies.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -405,6 +444,7 @@ fun HomeScreen(
                                     items = topRatedMovies.take(15),
                                     navController = navController,
                                     rowId = "home:Top Rated",
+                                    onSeeAll = { openMore(MoreContentKind.TOP_RATED_MOVIES, topRatedTitle, topRatedMovies.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -427,6 +467,7 @@ fun HomeScreen(
                                     items = byw.second.take(15),
                                     navController = navController,
                                     rowId = "home:Because You Watched",
+                                    onSeeAll = { openMore(MoreContentKind.BECAUSE_YOU_WATCHED, bywTitle, byw.second.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -448,9 +489,11 @@ fun HomeScreen(
                                     items = comingSoon.take(15),
                                     navController = navController,
                                     rowId = "home:Coming Soon",
+                                    onSeeAll = { openMore(MoreContentKind.COMING_SOON, comingSoonTitle, comingSoon.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
+                                    comingSoon = true,
                                     onItemFocus = { mediaItem ->
                                         pendingHeroItem = mediaItem
                                         pendingHeroResume = false
@@ -676,6 +719,8 @@ private fun ContentRow(
     outerListState: LazyListState,
     showProgress: Boolean = false,
     resumeOnSelect: Boolean = false,
+    comingSoon: Boolean = false,
+    onSeeAll: (() -> Unit)? = null,
     onItemFocus: (MediaItem) -> Unit = {},
     onUpToHero: () -> Unit = {},
     onReturnToSidebar: () -> Unit = {},
@@ -692,35 +737,137 @@ private fun ContentRow(
         rowNav.registerRow(rowId, rowListState)
     }
 
+    // RIGHT past the last card lands on the trailing `>` See All cell.
+    val seeAllFromRow: (() -> Unit)? =
+        if (onSeeAll != null) {
+            ({ runCatching { rowNav.seeAllRequester(rowId).requestFocus() } })
+        } else {
+            null
+        }
+
     Column(modifier = modifier.padding(horizontal = 48.dp)) {
-        androidx.compose.material3.Text(
-            text = title,
-            color = Color.White,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.W700,
-            modifier = Modifier.padding(bottom = 12.dp),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (comingSoon) {
+                // Purple icon badge, exactly like Dart's _buildUpcomingSection.
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF7B1FA2), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Upcoming,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.W700,
+                modifier = Modifier.weight(1f),
+            )
+        }
 
         LazyRow(
             state = rowListState,
             contentPadding = PaddingValues(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            // Fixed height for BOTH card types. Previously only the
+            // Fixed height for EVERY card type. Previously only the
             // continue-watching row had one; the poster rows wrapped their
             // content, so any change to a card's measured height (the focus
             // scale, the 0->2.dp border, a 1- vs 2-line title) re-flowed the
             // row and made everything around it jump on LEFT/RIGHT.
-            modifier = (if (showProgress) Modifier.height(260.dp) else Modifier.height(ContentCardRowHeight))
-                .overscroll(null),
+            modifier = (when {
+                showProgress -> Modifier.height(260.dp)
+                comingSoon   -> Modifier.height(ComingSoonCardRowHeight)
+                else         -> Modifier.height(ContentCardRowHeight)
+            }).overscroll(null),
         ) {
             items(
-                count = items.size,
-                key = { index -> "$rowId:$index" },
+                count = items.size + if (onSeeAll != null) 1 else 0,
+                key = { index ->
+                    if (index >= items.size) "$rowId:seeall" else "$rowId:$index"
+                },
             ) { index ->
+                // ── Trailing `>` cell: scroll right past the last card ──────
+                if (index >= items.size) {
+                    SeeAllCell(
+                        focusRequester = rowNav.seeAllRequester(rowId),
+                        cardHeight = if (comingSoon) ComingSoonCardHeight else ContentCardTotalHeight,
+                        modifier = Modifier.padding(horizontal = 7.dp),
+                        onClick = {
+                            rowNav.seeAllReturnRowId = rowId
+                            onSeeAll?.invoke()
+                        },
+                        onKeyEvent = { event ->
+                            if (event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionLeft
+                            ) {
+                                rowNav.moveTo(
+                                    rowId,
+                                    (items.size - 1).coerceAtLeast(0),
+                                    outerListState,
+                                    coroutineScope,
+                                )
+                                true
+                            } else {
+                                rowNav.onCardKey(
+                                    rowId = rowId,
+                                    index = rowNav.focusedIndex(rowId),
+                                    event = event,
+                                    outerListState = outerListState,
+                                    scope = coroutineScope,
+                                    onUpToHero = onUpToHero,
+                                    onReturnToSidebar = onReturnToSidebar,
+                                )
+                            }
+                        },
+                    )
+                    return@items
+                }
+
                 val item = items[index]
                 val isSeries = item.mediaType == "tv"
 
-                if (showProgress) {
+                if (comingSoon) {
+                    ComingSoonCard(
+                        item = item,
+                        isFocused = focusedItemIndex == index,
+                        focusRequester = rowNav.requester(rowId, index),
+                        onClick = {
+                            navController.navigate(
+                                Screen.Details.createRoute(item.id.toString(), item.mediaType),
+                            )
+                        },
+                        onFocusChanged = { focused ->
+                            if (focused) {
+                                focusedItemIndex = index
+                                onItemFocus(item)
+                            } else {
+                                if (focusedItemIndex == index) focusedItemIndex = -1
+                            }
+                        },
+                        onKeyEvent = { event ->
+                            rowNav.onCardKey(
+                                rowId = rowId,
+                                index = index,
+                                event = event,
+                                outerListState = outerListState,
+                                scope = coroutineScope,
+                                onUpToHero = onUpToHero,
+                                onReturnToSidebar = onReturnToSidebar,
+                                onRightAtEnd = seeAllFromRow,
+                            )
+                        },
+                    )
+                } else if (showProgress) {
                     ContinueWatchingCard(
                         item = item,
                         isSeries = isSeries,
@@ -808,6 +955,7 @@ private fun ContentRow(
         }
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Continue Watching card (mirrors Dart's 220×160 resume card in tv_home_screen)

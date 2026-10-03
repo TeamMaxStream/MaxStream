@@ -56,6 +56,8 @@ import com.maxstream.app.ui.screens.profile.ProfileSelectScreen
 import com.maxstream.app.ui.screens.details.DetailsScreen
 import com.maxstream.app.ui.screens.genre.GenreScreen
 import com.maxstream.app.ui.screens.home.HomeScreen
+import com.maxstream.app.ui.screens.more.MoreContentKind
+import com.maxstream.app.ui.screens.more.MoreContentScreen
 import com.maxstream.app.ui.screens.more.MoreScreen
 import com.maxstream.app.ui.screens.player.PlayerScreen
 import com.maxstream.app.ui.screens.search.SearchScreen
@@ -337,6 +339,24 @@ private fun TvAppRoot() {
                 val season    = backStackEntry.arguments?.getString("season")?.toIntOrNull()  ?: 1
                 val episode   = backStackEntry.arguments?.getString("episode")?.toIntOrNull() ?: 1
                 PlayerScreen(deepNavController, itemId, mediaType, season, episode)
+            }
+            composable(Screen.MoreContent.route) { backStackEntry ->
+                // Same `active` gate as Details: a Player pushed on top must not
+                // let a hidden grid tile consume OK.
+                val isActive =
+                    deepNavController.currentBackStackEntryAsState().value?.destination?.route ==
+                        backStackEntry.destination.route
+                MoreContentScreen(
+                    kind = MoreContentKind.from(
+                        backStackEntry.arguments?.getString("kind")
+                    ),
+                    navController = deepNavController,
+                    active = isActive,
+                    // Popping back to the row re-seeds focus on the `>` cell
+                    // the user launched from (see deepNavReturnTick).
+                    onReturnToSidebar = { deepNavController.popBackStack() },
+                    restoreFocusKey = deepNavReturnTick,
+                )
             }
         }
 

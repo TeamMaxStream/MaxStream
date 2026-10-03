@@ -53,6 +53,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -66,7 +67,11 @@ import com.maxstream.app.R
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
 import com.maxstream.app.ui.components.ContentCardRowHeight
+import com.maxstream.app.ui.components.ContentCardTotalHeight
+import com.maxstream.app.ui.components.SeeAllCell
 import com.maxstream.app.ui.navigation.Screen
+import com.maxstream.app.ui.screens.more.MoreContentKind
+import com.maxstream.app.ui.screens.more.MoreContentSeed
 import com.maxstream.app.ui.theme.Background
 import com.maxstream.app.ui.tv.RowDesc
 import com.maxstream.app.ui.tv.RowNavState
@@ -120,6 +125,12 @@ fun SeriesListScreen(
     rowNav.setRows(rows)
     rowNav.clearMissingRows()
 
+    // Trailing `>` cell -> seed the full list, then open it.
+    val openMore: (MoreContentKind, String, List<MediaItem>) -> Unit = { kind, title, seed ->
+        MoreContentSeed.set(title, seed)
+        navController.navigate(Screen.MoreContent.createRoute(kind.name))
+    }
+
     // Seed hero from first trending series item
     LaunchedEffect(trendingSeries) {
         if (heroItem == null && trendingSeries.isNotEmpty()) {
@@ -161,6 +172,12 @@ fun SeriesListScreen(
     // exact row the user left; fall back to the hero if no row was active.
     LaunchedEffect(isVisible, restoreFocusKey) {
         if (!isVisible || restoreFocusKey <= 0) return@LaunchedEffect
+        // Left via a row's trailing `>` See All cell — put focus back on it.
+        rowNav.seeAllReturnRowId?.let { returnRow ->
+            rowNav.seeAllReturnRowId = null
+            runCatching { rowNav.seeAllRequester(returnRow).requestFocus() }
+            return@LaunchedEffect
+        }
         val rowId = rowNav.activeRowId
         if (rowId != null && rowNav.count(rowId) > 0) {
             rowNav.moveTo(rowId, rowNav.focusedIndex(rowId), outerListState, coroutineScope)
@@ -232,6 +249,7 @@ fun SeriesListScreen(
                                     items = trendingSeries.take(15),
                                     navController = navController,
                                     rowId = "series:Trending",
+                                    onSeeAll = { openMore(MoreContentKind.TRENDING_SERIES, "Trending TV Shows", trendingSeries.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -249,6 +267,7 @@ fun SeriesListScreen(
                                     items = popularSeries.take(15),
                                     navController = navController,
                                     rowId = "series:Popular",
+                                    onSeeAll = { openMore(MoreContentKind.POPULAR_SERIES, "Popular TV Shows", popularSeries.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -266,6 +285,7 @@ fun SeriesListScreen(
                                     items = topRatedSeries.take(15),
                                     navController = navController,
                                     rowId = "series:Top Rated",
+                                    onSeeAll = { openMore(MoreContentKind.TOP_RATED_SERIES, "Top Rated TV Shows", topRatedSeries.take(15)) },
                                     rowNav = rowNav,
                                     rows = rows,
                                     outerListState = outerListState,
@@ -489,6 +509,7 @@ private fun SeriesContentRow(
     onItemFocus: (MediaItem) -> Unit = {},
     onUpToHero: () -> Unit = {},
     onReturnToSidebar: () -> Unit = {},
+    onSeeAll: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -519,9 +540,46 @@ private fun SeriesContentRow(
                 .overscroll(null),
         ) {
             items(
-                count = items.size,
-                key   = { index -> "$rowId:$index" },
+                count = items.size + if (onSeeAll != null) 1 else 0,
+                key   = { index -> if (index >= items.size) "$rowId:seeall" else "$rowId:$index" },
             ) { index ->
+                // ── Trailing `>` cell: scroll right past the last card ──────
+                if (index >= items.size) {
+                    SeeAllCell(
+                        focusRequester = rowNav.seeAllRequester(rowId),
+                        cardHeight = ContentCardTotalHeight,
+                        modifier = Modifier.padding(horizontal = 7.dp),
+                        onClick = {
+                            rowNav.seeAllReturnRowId = rowId
+                            onSeeAll?.invoke()
+                        },
+                        onKeyEvent = { event ->
+                            if (event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionLeft
+                            ) {
+                                rowNav.moveTo(
+                                    rowId,
+                                    (items.size - 1).coerceAtLeast(0),
+                                    outerListState,
+                                    coroutineScope,
+                                )
+                                true
+                            } else {
+                                rowNav.onCardKey(
+                                    rowId = rowId,
+                                    index = rowNav.focusedIndex(rowId),
+                                    event = event,
+                                    outerListState = outerListState,
+                                    scope = coroutineScope,
+                                    onUpToHero = onUpToHero,
+                                    onReturnToSidebar = onReturnToSidebar,
+                                )
+                            }
+                        },
+                    )
+                    return@items
+                }
+
                 val item = items[index]
                 ContentCard(
                     posterUrl  = item.posterUrl,

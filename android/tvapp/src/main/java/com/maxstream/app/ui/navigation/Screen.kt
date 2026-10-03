@@ -28,6 +28,12 @@ sealed class Screen(val route: String) {
         ) = "player/$itemId/$mediaType?season=$season&episode=$episode"
     }
 
+    /** Full list behind a row's trailing `>` "See All" cell (Home rows and
+     *  the Series List rows both land here). `kind` is a MoreContentKind name. */
+    data object MoreContent : Screen("more_content/{kind}") {
+        fun createRoute(kind: String) = "more_content/$kind"
+    }
+
     // ── Sidebar tab indices (not routes — kept here for readability) ─────────
     //  0 = Home  1 = Search  2 = Genre  3 = Series list  4 = Watchlist  5 = More
 }

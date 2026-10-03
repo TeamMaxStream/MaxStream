@@ -121,6 +121,20 @@ class RowNavState {
     fun requester(rowId: String, index: Int): FocusRequester =
         cardRequesters.getOrPut("$rowId:$index") { FocusRequester() }
 
+    // ── Trailing "See All" cell (the > at the end of a row) ──────────────────
+    private val seeAllRequesters = mutableMapOf<String, FocusRequester>()
+
+    /** Stable requester for [rowId]'s trailing See All cell. */
+    fun seeAllRequester(rowId: String): FocusRequester =
+        seeAllRequesters.getOrPut(rowId) { FocusRequester() }
+
+    /**
+     * Row whose See All cell launched the full list. Set on click so that when
+     * the user backs out of that screen, focus returns to the cell they left
+     * from instead of the last card in the row.
+     */
+    var seeAllReturnRowId: String? = null
+
     /**
      * Moves focus to card [requestedIndex] of [rowId]. Reveals the outer
      * column and the row ONLY when the target is entirely off-screen, then
@@ -190,7 +204,7 @@ class RowNavState {
      * Shared D-pad handler for a card inside [rowId].
      *
      *  - LEFT  on first card  → [onReturnToSidebar], otherwise previous card
-     *  - RIGHT                → next card
+     *  - RIGHT                → next card, or [onRightAtEnd] past the last one
      *  - UP    on first row   → [onUpToHero], otherwise same column of row above
      *  - DOWN                 → same column of row below (consumed at bottom)
      *
@@ -204,6 +218,7 @@ class RowNavState {
         scope: CoroutineScope,
         onUpToHero: () -> Unit,
         onReturnToSidebar: () -> Unit,
+        onRightAtEnd: (() -> Unit)? = null,
     ): Boolean {
         if (event.type != KeyEventType.KeyDown) return false
         val rowIndex = indexOf(rowId)
@@ -220,6 +235,10 @@ class RowNavState {
             Key.DirectionRight -> {
                 if (index + 1 < count(rowId)) {
                     moveTo(rowId, index + 1, outerListState, scope)
+                } else {
+                    // Trailing edge: rows with a header action (Coming Soon's
+                    // "See All") hand focus there instead of dead-ending.
+                    onRightAtEnd?.invoke()
                 }
                 return true
             }
@@ -269,6 +288,8 @@ class RowNavState {
     fun clearMissingRows() {
         val visible = rows.mapTo(mutableSetOf()) { it.id }
         cardRequesters.keys.removeIf { it.substringBeforeLast(':') !in visible }
+        seeAllRequesters.keys.retainAll(visible)
         activeRowId?.takeIf { it !in visible }?.let { activeRowId = null }
+        seeAllReturnRowId?.takeIf { it !in visible }?.let { seeAllReturnRowId = null }
     }
 }
