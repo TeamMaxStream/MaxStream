@@ -222,24 +222,53 @@ private fun parseSubtitleTimeMs(value: String): Long? {
     return if (totalMs < 0) null else totalMs
 }
 
+/**
+ * Splits a subtitle label into lowercase alnum tokens: `"English (CC)"` →
+ * `["english", "cc"]`, `"en-GB"` → `["en", "gb"]`.
+ */
+private fun subtitleLabelTokens(label: String): List<String> =
+    label.lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+
+/** `"English"`, `"English CC"`, `"British English"` or a bare language code. */
+private fun isEnglishSubtitle(label: String): Boolean =
+    subtitleLabelTokens(label).any { it == "english" || it == "en" || it == "eng" }
+
+/** Captioned English (CC / SDH / captions) — preferred over plain English. */
+private fun isCaptionedSubtitle(label: String): Boolean =
+    subtitleLabelTokens(label).any {
+        it == "cc" || it == "sdh" || it == "caption" || it == "captions" ||
+            it.startsWith("hearing")
+    }
+
+/** Drops the `"Server · "` prefix [buildSubtitleOptions] adds, so the raw
+ *  track label (which may be just `en`) is what gets matched. */
+private fun bareSubtitleLabel(label: String, owner: String): String =
+    if (owner.isNotEmpty()) label.removePrefix("$owner · ") else label.substringAfter(" · ", label)
+
 /** Prefers the English track (CC / SDH first, then plain English) so subtitles
  * come up in English when the stream offers it. Callers fall back to the
  * source's declared default / first entry when no English track exists. */
 private fun pickEnglishSubtitle(available: List<Subtitle>): Subtitle? {
-    val english = available.filter { it.label.contains("english", ignoreCase = true) }
+    val english = available.filter { isEnglishSubtitle(it.label) }
     if (english.isEmpty()) return null
-    return english.firstOrNull { sub ->
-        val label = sub.label.lowercase()
-        label.contains("cc") || label.contains("sdh") || label.contains("hearing")
-    } ?: english.first()
+    return english.firstOrNull { isCaptionedSubtitle(it.label) } ?: english.first()
 }
 
 private fun pickEnglishSubtitleOption(available: List<SubtitleOption>): SubtitleOption? {
-    val english = available.filter { it.label.contains("english", ignoreCase = true) }
-    return english.firstOrNull { option ->
-        val label = option.label.lowercase()
-        label.contains("cc") || label.contains("sdh") || label.contains("hearing")
-    } ?: english.firstOrNull()
+    if (available.isEmpty()) return null
+    // The first entry is the server being switched TO (buildSubtitleOptions puts
+    // it first), so its own English track wins over another server's English.
+    val targetOwner = available.first().owner
+    val english = available.filter {
+        isEnglishSubtitle(bareSubtitleLabel(it.label, it.owner))
+    }
+    if (english.isEmpty()) return null
+    return english
+        .sortedWith(
+            compareByDescending<SubtitleOption> { it.owner == targetOwner }
+                .thenByDescending { isCaptionedSubtitle(bareSubtitleLabel(it.label, it.owner)) },
+        )
+        .first()
 }
 
 @Composable

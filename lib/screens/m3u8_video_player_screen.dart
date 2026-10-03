@@ -1668,6 +1668,68 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     return result;
   }
 
+  /// Subtitle group label a stream's tracks are filed under in
+  /// [_unionSubtitleTracks] ("NetMirror" or "NetMirror via net79.cc").
+  String _serverSubtitleGroup(Map<String, dynamic> stream) {
+    final source = stream['source']?.toString() ?? 'Server';
+    final route = stream['server']?.toString() ?? source;
+    return route == source ? source : '$source via $route';
+  }
+
+  /// English subtitle of the server being switched to: "English",
+  /// "English CC", "British English" or a bare `en`/`eng` code. Prefers the
+  /// target server's own group, then a captioned (CC/SDH) track within it.
+  _SubtitleTrack? _pickEnglishSubtitleTrack(String group) {
+    bool english(String label) {
+      final tokens = label
+          .toLowerCase()
+          .split(RegExp(r'[^a-z0-9]+'))
+          .where((t) => t.isNotEmpty);
+      return tokens.any((t) => t == 'english' || t == 'en' || t == 'eng');
+    }
+
+    bool captioned(String label) {
+      final tokens = label.toLowerCase().split(RegExp(r'[^a-z0-9]+'));
+      return tokens.any(
+        (t) =>
+            t == 'cc' ||
+            t == 'sdh' ||
+            t == 'caption' ||
+            t == 'captions' ||
+            t.startsWith('hearing'),
+      );
+    }
+
+    final englishTracks =
+        _subtitleTracks.where((t) => english(t.label)).toList();
+    if (englishTracks.isEmpty) return null;
+    final own = englishTracks.where((t) => t.group == group).toList();
+    final pool = own.isNotEmpty ? own : englishTracks;
+    final captionedTracks = pool.where((t) => captioned(t.label)).toList();
+    return (captionedTracks.isNotEmpty ? captionedTracks : pool).first;
+  }
+
+  /// Applies the English track picked above after a server switch. Quiet by
+  /// design: a missing caption file must not toast over the new server.
+  Future<void> _autoSelectEnglishSubtitle(String group) async {
+    final track = _pickEnglishSubtitleTrack(group);
+    if (track == null) return; // no English on this server -> stays Off
+    try {
+      final cues = await _fetchSubtitles(
+        track,
+        track.headers.isNotEmpty ? track.headers : _streamHeaders,
+      );
+      if (!mounted || cues.isEmpty) return;
+      setState(() {
+        _selectedSubtitle.value = _subtitleTileValue(track);
+        _selectedSubtitleUrl = track.url;
+        _activeSubtitles.value = cues;
+      });
+    } catch (error) {
+      debugPrint('M3U8Player: auto subtitle failed: $error');
+    }
+  }
+
   /// Display identity for a subtitle tile: owning server group + track label.
   /// Used both as the selection value and the subtitle button label, so the
   /// value stays unique across servers (e.g. "RPM via Vidflix · English").
@@ -2415,6 +2477,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     if (current == null) {
       final headers = _parseStreamHeaders(stream);
       final qualities = _parseQualities(stream['qualities']);
+      final targetGroup = _serverSubtitleGroup(stream);
       _separateAudio = stream['separateAudio'] == true;
       _syncAudioFromStream(stream);
       var selectedQuality = 'Auto';
@@ -2440,8 +2503,10 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
           position: position,
           shouldPlay: _userWantsPlayback,
         );
-        if (ok && mounted)
+        if (ok && mounted) {
           setState(() => _selectedServerKey = _serverIdentity(stream));
+          await _autoSelectEnglishSubtitle(targetGroup);
+        }
       } finally {
         if (mounted) setState(() => _isSwitchingServer = false);
       }
@@ -2453,6 +2518,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     final oldSubtitles = _activeSubtitles.value;
     final headers = _parseStreamHeaders(stream);
     final qualities = _parseQualities(stream['qualities']);
+    final targetGroup = _serverSubtitleGroup(stream);
     _separateAudio = stream['separateAudio'] == true;
     _syncAudioFromStream(stream);
     var selectedQuality = 'Auto';
@@ -2492,6 +2558,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       );
       if (mounted) {
         setState(() => _selectedServerKey = _serverIdentity(stream));
+        await _autoSelectEnglishSubtitle(targetGroup);
       }
     } catch (error) {
       if (!mounted) return;
