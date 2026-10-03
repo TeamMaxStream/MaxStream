@@ -66,7 +66,9 @@ import coil.compose.AsyncImage
 import com.maxstream.app.R
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
+import com.maxstream.app.ui.components.ContentCardPosterHeight
 import com.maxstream.app.ui.components.ContentCardRowHeight
+import com.maxstream.app.ui.components.ContentCardWidth
 import com.maxstream.app.ui.components.ContentCardTotalHeight
 import com.maxstream.app.ui.components.SeeAllCell
 import com.maxstream.app.ui.navigation.Screen
@@ -555,7 +557,8 @@ private fun SeriesContentRow(
                 if (index >= items.size) {
                     SeeAllCell(
                         focusRequester = rowNav.seeAllRequester(rowId),
-                        cardHeight = ContentCardTotalHeight,
+                        cardWidth = ContentCardWidth,
+                        cardHeight = ContentCardPosterHeight,
                         modifier = Modifier.padding(horizontal = 7.dp),
                         onClick = {
                             rowNav.seeAllReturnRowId = rowId

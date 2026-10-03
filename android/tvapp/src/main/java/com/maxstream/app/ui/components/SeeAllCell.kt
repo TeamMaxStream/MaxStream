@@ -52,6 +52,7 @@ fun SeeAllCell(
     focusRequester: FocusRequester,
     cardHeight: Dp,
     cardWidth: Dp = 130.dp,
+    cornerRadius: Dp = 10.dp,
     label: String = "See All",
     onClick: () -> Unit,
     onFocusChanged: (Boolean) -> Unit = {},
@@ -85,10 +86,10 @@ fun SeeAllCell(
             .clickable(onClick = onClick)
             .width(cardWidth)
             .height(cardHeight)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(cornerRadius))
             .background(Color(0x14FFFFFF))
             // Identical to ContentCard: a constant 2.dp white ring drawn on top.
-            .focusRing(visible = focused, cornerRadius = 10.dp),
+            .focusRing(visible = focused, cornerRadius = cornerRadius),
         contentAlignment = Alignment.Center,
     ) {
         Column(

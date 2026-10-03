@@ -43,8 +43,10 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 
 // Uniform poster card size, matching the Dart TvContentCard (width 130 / height 190).
-private val CardWidth = 130.dp
-private val CardHeight = 190.dp
+// Exported: this is the SURFACE the focus ring wraps, so the trailing `>` See
+// All cell can present the exact same focused surface.
+val ContentCardWidth: Dp = 130.dp
+val ContentCardPosterHeight: Dp = 190.dp
 private val CardCornerRadius = 10.dp
 
 // Horizontal breathing room between cards (matches the Dart TvContentCard).
@@ -61,7 +63,7 @@ private val CardTitleHeight = 42.dp
  * A card sized to its content reflows its parent on every focus change, which
  * is what made rows jump when moving LEFT/RIGHT.
  */
-val ContentCardTotalHeight: Dp = CardHeight + CardTitleTopPadding + CardTitleHeight
+val ContentCardTotalHeight: Dp = ContentCardPosterHeight + CardTitleTopPadding + CardTitleHeight
 
 /**
  * Focus-pop headroom: a focused card is drawn 2% larger, so a container with a
@@ -157,7 +159,7 @@ fun ContentCard(
     onKeyEvent: (KeyEvent) -> Boolean = { false },
     focusRequester: FocusRequester? = null,
 ) {
-    val cardHeightPx = with(LocalDensity.current) { CardHeight.toPx() }
+    val cardHeightPx = with(LocalDensity.current) { ContentCardPosterHeight.toPx() }
 
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.02f else 1f,
@@ -199,8 +201,8 @@ fun ContentCard(
             // ── Poster ──────────────────────────────────────────────────────
             Box(
                 modifier = Modifier
-                    .width(CardWidth)
-                    .height(CardHeight)
+                    .width(ContentCardWidth)
+                    .height(ContentCardPosterHeight)
                     .clip(RoundedCornerShape(CardCornerRadius))
                     // Focus ring: drawn last (via drawWithContent) so it sits
                     // on top of the poster, scrim, progress bar and badges, and
@@ -282,7 +284,7 @@ fun ContentCard(
             // the whole row.
             Column(
                 modifier = Modifier
-                    .width(CardWidth)
+                    .width(ContentCardWidth)
                     .padding(top = CardTitleTopPadding)
                     .height(CardTitleHeight),
                 verticalArrangement = Arrangement.Center,

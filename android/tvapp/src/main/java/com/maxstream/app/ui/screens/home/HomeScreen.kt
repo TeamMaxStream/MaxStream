@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -68,6 +67,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -78,10 +78,12 @@ import com.maxstream.app.data.local.WatchEntryCompat
 import com.maxstream.app.data.local.ProfileScope
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.ui.components.ContentCard
-import com.maxstream.app.ui.components.ContentCardTotalHeight
 import com.maxstream.app.ui.components.SeeAllCell
+import com.maxstream.app.ui.components.ContentCardPosterHeight
 import com.maxstream.app.ui.components.ContentCardRowHeight
+import com.maxstream.app.ui.components.ContentCardWidth
 import com.maxstream.app.ui.components.ComingSoonCard
+import com.maxstream.app.ui.components.ComingSoonCardWidth
 import com.maxstream.app.ui.components.ComingSoonCardHeight
 import com.maxstream.app.ui.components.ComingSoonCardRowHeight
 import com.maxstream.app.ui.components.focusRing
@@ -97,6 +99,10 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+
+/** Continue Watching poster — the surface its focus ring wraps. */
+private val CWPosterWidth: Dp = 220.dp
+private val CWPosterHeight: Dp = 160.dp
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HomeScreen
@@ -801,7 +807,21 @@ private fun ContentRow(
                 if (index >= items.size) {
                     SeeAllCell(
                         focusRequester = rowNav.seeAllRequester(rowId),
-                        cardHeight = if (comingSoon) ComingSoonCardHeight else ContentCardTotalHeight,
+                        cardWidth = when {
+                            comingSoon -> ComingSoonCardWidth
+                            showProgress -> CWPosterWidth
+                            else -> ContentCardWidth
+                        },
+                        cardHeight = when {
+                            comingSoon -> ComingSoonCardHeight
+                            showProgress -> CWPosterHeight
+                            else -> ContentCardPosterHeight
+                        },
+                        cornerRadius = when {
+                            comingSoon -> 12.dp
+                            showProgress -> 8.dp
+                            else -> 10.dp
+                        },
                         modifier = Modifier.padding(horizontal = 7.dp),
                         onClick = {
                             rowNav.seeAllReturnRowId = rowId
@@ -999,18 +1019,14 @@ private fun ContinueWatchingCard(
             .focusRequester(focusRequester)
             .onFocusChanged { state -> onFocusChanged(state.hasFocus) }
             .focusable()
-            .clickable(onClick = onClick)
-            // Pin the height so every Continue Watching card (and the row's
-            // trailing `>` cell) measures identically regardless of how much
-            // title/caption/overview text the item carries.
-            .requiredHeight(ContentCardTotalHeight),
+            .clickable(onClick = onClick),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             // ── Poster (220 × 160) ─────────────────────────────────────────
             Box(
                 modifier = Modifier
-                    .width(220.dp)
-                    .height(160.dp)
+                    .width(CWPosterWidth)
+                    .height(CWPosterHeight)
                     .clip(RoundedCornerShape(8.dp))
                     // Constant-width ring drawn last, on top of the badges and
                     // progress bar. See Modifier.focusRing for why this is not a
