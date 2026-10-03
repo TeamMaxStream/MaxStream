@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -81,6 +82,7 @@ import com.maxstream.app.ui.components.ContentCardTotalHeight
 import com.maxstream.app.ui.components.SeeAllCell
 import com.maxstream.app.ui.components.ContentCardRowHeight
 import com.maxstream.app.ui.components.ComingSoonCard
+import com.maxstream.app.ui.components.ComingSoonCardHeight
 import com.maxstream.app.ui.components.ComingSoonCardRowHeight
 import com.maxstream.app.ui.components.focusRing
 import com.maxstream.app.ui.navigation.Screen
@@ -799,7 +801,7 @@ private fun ContentRow(
                 if (index >= items.size) {
                     SeeAllCell(
                         focusRequester = rowNav.seeAllRequester(rowId),
-                        cardHeight = ContentCardTotalHeight,
+                        cardHeight = if (comingSoon) ComingSoonCardHeight else ContentCardTotalHeight,
                         modifier = Modifier.padding(horizontal = 7.dp),
                         onClick = {
                             rowNav.seeAllReturnRowId = rowId
@@ -997,7 +999,11 @@ private fun ContinueWatchingCard(
             .focusRequester(focusRequester)
             .onFocusChanged { state -> onFocusChanged(state.hasFocus) }
             .focusable()
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            // Pin the height so every Continue Watching card (and the row's
+            // trailing `>` cell) measures identically regardless of how much
+            // title/caption/overview text the item carries.
+            .requiredHeight(ContentCardTotalHeight),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             // ── Poster (220 × 160) ─────────────────────────────────────────
