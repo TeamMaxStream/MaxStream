@@ -154,8 +154,9 @@ fun UpdatesScreen(onBack: () -> Unit = {}) {
         ),
         UpdateAction("Website") {
             runCatching {
-                val url = updateInfo?.releaseUrl ?: UpdateRepository.releasesUrl
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(UpdateRepository.websiteUrl)),
+                )
             }
         },
     )
@@ -313,7 +314,7 @@ fun UpdatesScreen(onBack: () -> Unit = {}) {
                                     context.startActivity(
                                         Intent(
                                             Intent.ACTION_VIEW,
-                                            Uri.parse(UpdateRepository.releasesUrl),
+                                            Uri.parse(UpdateRepository.websiteUrl),
                                         ),
                                     )
                                 }

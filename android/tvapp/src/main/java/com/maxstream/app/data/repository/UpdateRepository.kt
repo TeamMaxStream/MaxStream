@@ -29,12 +29,16 @@ object UpdateRepository {
     private const val LATEST_URL = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
     private const val APK_HINT = "maxstream-tv"
     private const val RELEASES_URL = "https://github.com/$OWNER/$REPO/releases"
+    private const val WEBSITE_URL = "https://maxstreamweb.vercel.app/"
     private const val DOWNLOAD_FILE_NAME = "MaxStream-tv.apk"
     private const val PREFS = "maxstream_tv_settings"
     private const val KEY_AUTO_CHECK = "auto_check_updates"
     private const val MIN_APK_BYTES = 1000L
 
     val releasesUrl: String get() = RELEASES_URL
+
+    /** Where the "Website" action sends users (matches the phone app). */
+    val websiteUrl: String get() = WEBSITE_URL
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(Constants.NETWORK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
