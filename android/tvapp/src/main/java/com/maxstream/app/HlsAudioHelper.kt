@@ -23,6 +23,18 @@ import okhttp3.Request
  */
 object HlsAudioHelper {
 
+    /**
+     * Progressive containers can never carry `#EXT-X-MEDIA` audio groups, and
+     * reading one as a playlist would stream the whole movie into memory —
+     * NetMirror's dubbed renditions are whole-file MP4s, which is what left the
+     * player stuck on "Switching..." forever.
+     */
+    private val NON_PLAYLIST_SUFFIXES =
+        listOf(".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".ts")
+
+    /** A master playlist is a few KB; never buffer more than this from a body. */
+    private const val MASTER_HEAD_BYTES = 256L * 1024L
+
     private val client by lazy {
         OkHttpClient.Builder()
             .connectTimeout(12, TimeUnit.SECONDS)
@@ -66,6 +78,10 @@ object HlsAudioHelper {
         if (language.trim().isEmpty()) return null
         val uri = runCatching { URI(masterUrl) }.getOrNull() ?: return null
         if (uri.scheme != "http" && uri.scheme != "https") return null
+        // Direct media file: no playlist, nothing to pin, and fetching it here
+        // would download the entire video.
+        val path = uri.path.orEmpty().lowercase()
+        if (NON_PLAYLIST_SUFFIXES.any { path.endsWith(it) }) return null
         return try {
             val request = Request.Builder().url(masterUrl).apply {
                 headers.forEach { (name, value) ->
@@ -77,7 +93,14 @@ object HlsAudioHelper {
             }.build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
-                val text = response.body?.string().orEmpty()
+                val source = response.body?.source() ?: return null
+                // Read only the head: a master is tiny, so anything larger (or
+                // a URL that isn't a playlist at all) stops at this cap instead
+                // of buffering the whole body before the format check runs.
+                runCatching { source.request(MASTER_HEAD_BYTES) }
+                val available = minOf(source.buffer.size, MASTER_HEAD_BYTES)
+                if (available <= 0L) return null
+                val text = source.buffer.snapshot(available.toInt()).utf8()
                 if (!text.startsWith("#EXTM3U") || !text.contains("#EXT-X-STREAM-INF")) return null
                 val rewritten = rewriteMaster(uri, text, language) ?: return null
                 val dir = File(cacheDir, "audio_pref").apply { mkdirs() }
