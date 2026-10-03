@@ -81,7 +81,6 @@ import com.maxstream.app.ui.components.ContentCardTotalHeight
 import com.maxstream.app.ui.components.SeeAllCell
 import com.maxstream.app.ui.components.ContentCardRowHeight
 import com.maxstream.app.ui.components.ComingSoonCard
-import com.maxstream.app.ui.components.ComingSoonCardHeight
 import com.maxstream.app.ui.components.ComingSoonCardRowHeight
 import com.maxstream.app.ui.components.focusRing
 import com.maxstream.app.ui.navigation.Screen
@@ -800,7 +799,7 @@ private fun ContentRow(
                 if (index >= items.size) {
                     SeeAllCell(
                         focusRequester = rowNav.seeAllRequester(rowId),
-                        cardHeight = if (comingSoon) ComingSoonCardHeight else ContentCardTotalHeight,
+                        cardHeight = ContentCardTotalHeight,
                         modifier = Modifier.padding(horizontal = 7.dp),
                         onClick = {
                             rowNav.seeAllReturnRowId = rowId
@@ -905,6 +904,7 @@ private fun ContentRow(
                                 scope = coroutineScope,
                                 onUpToHero = onUpToHero,
                                 onReturnToSidebar = onReturnToSidebar,
+                                onRightAtEnd = seeAllFromRow,
                             )
                         },
                     )
@@ -947,6 +947,7 @@ private fun ContentRow(
                                 scope = coroutineScope,
                                 onUpToHero = onUpToHero,
                                 onReturnToSidebar = onReturnToSidebar,
+                                onRightAtEnd = seeAllFromRow,
                             )
                         },
                     )

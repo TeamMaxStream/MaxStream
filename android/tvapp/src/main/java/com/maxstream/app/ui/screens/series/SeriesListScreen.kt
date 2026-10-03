@@ -521,6 +521,14 @@ private fun SeriesContentRow(
         rowNav.registerRow(rowId, rowListState)
     }
 
+    // RIGHT past the last card lands on the trailing `>` See All cell.
+    val seeAllFromRow: (() -> Unit)? =
+        if (onSeeAll != null) {
+            ({ runCatching { rowNav.seeAllRequester(rowId).requestFocus() } })
+        } else {
+            null
+        }
+
     Column(modifier = modifier.padding(horizontal = 48.dp)) {
         androidx.compose.material3.Text(
             text = title,
@@ -607,6 +615,7 @@ private fun SeriesContentRow(
                             scope = coroutineScope,
                             onUpToHero = onUpToHero,
                             onReturnToSidebar = onReturnToSidebar,
+                            onRightAtEnd = seeAllFromRow,
                         )
                     },
                 )

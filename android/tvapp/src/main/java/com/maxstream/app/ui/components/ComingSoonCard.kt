@@ -44,14 +44,15 @@ import coil.compose.AsyncImage
 import com.maxstream.app.data.model.MediaItem
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Coming Soon card — a 1:1 port of Dart's `_buildUpcomingCard`
-// (lib/screens/maxstream_home_screen.dart): 280×300 backdrop card with the
+// Coming Soon card — a port of Dart's `_buildUpcomingCard`
+// (lib/screens/maxstream_home_screen.dart): 280×240 backdrop card (height trimmed
+// from the phone's 300 so the TV row header stays on screen) with the
 // MOVIE/TV + UPCOMING badges, star rating pill, poster thumbnail and the
 // title / release date / overview block.
 // ─────────────────────────────────────────────────────────────────────────────
 
 val ComingSoonCardWidth: Dp = 280.dp
-val ComingSoonCardHeight: Dp = 300.dp
+val ComingSoonCardHeight: Dp = 240.dp
 
 /** Height a row must reserve for a [ComingSoonCard] (card + focus-pop headroom). */
 val ComingSoonCardRowHeight: Dp = ComingSoonCardHeight + 8.dp
