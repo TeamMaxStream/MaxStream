@@ -346,6 +346,9 @@ fun PlayerScreen(
     // True after a memory-pressure release so the recovery effect rebuilds the
     // player (distinct from the initial load, which must not double-resolve).
     var memoryReleased by remember { mutableStateOf(false) }
+    // Was the player playing when it was torn down for memory? Rebuilt players
+    // default to playing, which made a paused video resume by itself.
+    var resumePlayIntent by remember { mutableStateOf<Boolean?>(null) }
     // Root focus target so D-pad/OK always reach onKeyDown even when no control
     // is focused (the PlayerView itself is not focusable). Focus returns here
     // whenever the controls are hidden.
@@ -502,6 +505,11 @@ fun PlayerScreen(
         }
     }
 
+    /** Remembers whether the video was playing, for a rebuild that follows. */
+    fun capturePlayIntent() {
+        resumePlayIntent = exoPlayer?.playWhenReady ?: true
+    }
+
     fun qualityLabelFor(s: Source): String {
         if (s.separateAudio) return "Auto"
         val currentUrl = s.url
@@ -550,9 +558,31 @@ fun PlayerScreen(
             // Unreleased episodes have no stream yet — never auto-play them;
             // surface the release date instead so autoplay stops cleanly
             // (mirrors mobile: isReleased gates _playEpisode).
-            val next = (if (nextSeason == currentSeason) seasonEpisodes
-                        else menuEpisodesCache[nextSeason]?.orEmpty())
-                ?.firstOrNull { it.number == nextEpisode }
+            val nextSeasonEpisodes: List<EpisodeRef> = if (nextSeason == currentSeason) {
+                seasonEpisodes
+            } else {
+                // Season boundary: the menu only loads a season when the user
+                // opens it, so season 2 is normally uncached when S1 ends. A plain
+                // cache lookup therefore reported "Series complete" and autoplay
+                // never rolled into S2E1 — fetch the season on demand instead.
+                val cached = menuEpisodesCache[nextSeason]
+                if (cached != null) {
+                    cached
+                } else {
+                    val id = itemId.toIntOrNull()
+                    val fetched = if (id != null) {
+                        runCatching { Modules.catalogRepository.seasonEpisodes(id, nextSeason) }
+                            .getOrDefault(emptyList())
+                    } else {
+                        emptyList()
+                    }
+                    if (fetched.isNotEmpty()) {
+                        menuEpisodesCache = menuEpisodesCache + (nextSeason to fetched)
+                    }
+                    fetched
+                }
+            }
+            val next = nextSeasonEpisodes.firstOrNull { it.number == nextEpisode }
             if (next == null) {
                 status = "Series complete"
                 return
@@ -925,6 +955,7 @@ fun PlayerScreen(
         newHeaders: Map<String, String>,
         newIsHls: Boolean,
         newSubtitle: SubtitleOption?,
+        playWhenReady: Boolean? = null,
     ) {
         val old = exoPlayer
         val positionMs = if (old != null && old.playbackState != Player.STATE_IDLE) {
@@ -935,8 +966,10 @@ fun PlayerScreen(
         // Carry the play state across the rebuild. playWhenReady (not isPlaying)
         // is the intent: isPlaying also goes false while the player is merely
         // buffering, so a quality/subtitle switch during a stall used to leave
-        // the replacement paused.
-        val shouldPlay = old?.playWhenReady ?: true
+        // the replacement paused. Callers that tore the player down first (the
+        // memory-pressure resume) pass the captured intent explicitly — without
+        // it the rebuild defaulted to playing and resumed a paused video.
+        val shouldPlay = playWhenReady ?: (old?.playWhenReady ?: true)
         releasePlayer(old)
         val gen = ++rebuildGeneration.value
         loading = true
@@ -991,7 +1024,7 @@ fun PlayerScreen(
     }
 
     /** Resolved the initial stream, remembers the resume position, and starts playback. */
-    suspend fun loadAndPlay() {
+    suspend fun loadAndPlay(playWhenReady: Boolean = true) {
         loading = true
         error = null
         retryPlaybackCount = 0
@@ -1126,6 +1159,7 @@ fun PlayerScreen(
                         headers = candidate.headers,
                         isHls = candidate.isHls,
                         startMs = resumePositionMs,
+                        playWhenReady = playWhenReady,
                     )
                     // Quick validation: if build succeeds, use it
                     player = p
@@ -1157,6 +1191,7 @@ fun PlayerScreen(
                             headers = srv.headers,
                             isHls = srv.isHls,
                             startMs = resumePositionMs,
+                            playWhenReady = playWhenReady,
                         )
                         player = p
                         source = srv
@@ -1264,6 +1299,7 @@ fun PlayerScreen(
         val callbacks = object : ComponentCallbacks2 {
             override fun onTrimMemory(level: Int) {
                 if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+                    capturePlayIntent()
                     saveProgress()
                     captureResumePosition()
                     releasePlayer(exoPlayer)
@@ -1275,6 +1311,7 @@ fun PlayerScreen(
             }
 
             override fun onLowMemory() {
+                capturePlayIntent()
                 saveProgress()
                 captureResumePosition()
                 releasePlayer(exoPlayer)
@@ -1323,10 +1360,15 @@ fun PlayerScreen(
         if (loading && exoPlayer == null && error == null && memoryReleased) {
             memoryReleased = false
             val current = source
+            // Replay the state the user left the player in before the teardown:
+            // a rebuild that always starts playing resumed paused videos on its
+            // own (1 GB TV boxes hit TRIM_MEMORY often enough to notice).
+            val playIntent = resumePlayIntent ?: true
+            resumePlayIntent = null
             if (current != null) {
-                switchMedia(current.url, current.headers, current.isHls, activeSubtitle)
+                switchMedia(current.url, current.headers, current.isHls, activeSubtitle, playIntent)
             } else {
-                loadAndPlay()
+                loadAndPlay(playIntent)
             }
         }
     }
