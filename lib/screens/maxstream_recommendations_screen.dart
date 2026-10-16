@@ -34,6 +34,12 @@ class _MaxStreamRecommendationsScreenState
   bool _loadingMoreForYou = false;
   final Map<String, int> _genrePage = {};
   final Map<String, bool> _loadingMoreGenre = {};
+  /// Guards against a slow load overwriting a newer one (history can change
+  /// while the first build is still in flight).
+  int _loadGeneration = 0;
+  /// When the on-screen rows were last refreshed from the network, so a slow
+  /// snapshot read can't replace fresher data.
+  DateTime? _lastNetworkUpdate;
 
   @override
   void initState() {
@@ -41,7 +47,33 @@ class _MaxStreamRecommendationsScreenState
     WidgetsBinding.instance.addObserver(this);
     CloudSyncService.historyRevision.addListener(_onHistoryChanged);
     WatchHistoryService.localHistoryRevision.addListener(_onHistoryChanged);
+    // Paint the last saved rows immediately (local read), then refresh behind
+    // it — previously the screen showed a skeleton through the entire network
+    // round-trip.
+    unawaited(_restoreSnapshot());
     _loadRecommendations();
+  }
+
+  /// Loads the previous session's rows so the screen has content on the first
+  /// frame instead of waiting on TMDB.
+  Future<void> _restoreSnapshot() async {
+    final snapshot = await RecommendationService.loadSnapshot();
+    if (snapshot == null || !mounted) return;
+    // A refresh that already landed wins; don't overwrite fresher data.
+    final network = _lastNetworkUpdate;
+    if (network != null && !snapshot.savedAt.isAfter(network)) return;
+    if (_loading == false && _forYou.isNotEmpty) return;
+    setState(() {
+      _forYou = filterForKids(snapshot.forYou);
+      _becauseYouWatched = snapshot.becauseYouWatched;
+      _byGenre = snapshot.byGenre;
+      _genreIdByName = snapshot.genreIdByName;
+      for (final name in snapshot.byGenre.keys) {
+        _genrePage[name] = 1;
+      }
+      _hasHistory = true;
+      _loading = false;
+    });
   }
 
   @override
@@ -55,8 +87,11 @@ class _MaxStreamRecommendationsScreenState
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // User may have watched on TV while phone was backgrounded — pull and refresh.
-      _onHistoryChanged();
+      // Pull TV watches, but do NOT force a reload: the revision listeners below
+      // already react when new history actually arrives, and clearing the cache
+      // on every resume re-ran the whole (expensive) build every time the app
+      // came back to the foreground.
+      unawaited(CloudSyncService.pullToDevice().catchError((_) {}));
     }
   }
 
@@ -87,11 +122,17 @@ class _MaxStreamRecommendationsScreenState
     }
   }
 
+  /// Builds every row.
+  ///
+  /// Rows are painted as they arrive instead of after one big `Future.wait`, and
+  /// the genre *name* lookup (two more TMDB calls) now runs in parallel with the
+  /// content instead of after it — it used to keep the spinner up even when the
+  /// rows were already computed.
   Future<void> _loadRecommendations({bool showLoading = true}) async {
     // Pull TV watches in background without blocking first paint; the
     // historyRevision listener will auto-reload when new data lands.
-    // Awaiting here previously added 1–2s to every load.
     unawaited(CloudSyncService.pullToDevice().catchError((_) {}));
+    final generation = ++_loadGeneration;
     final bool hasCached = _forYou.isNotEmpty || _becauseYouWatched.isNotEmpty || _byGenre.isNotEmpty;
     if (showLoading) {
       if (!hasCached) {
@@ -101,37 +142,89 @@ class _MaxStreamRecommendationsScreenState
         if (mounted) setState(() => _loading = false);
       }
     }
+
+    // Genre names run alongside everything else instead of gating the spinner.
+    final genreNamesFuture = TmdbApiService.fetchGenres('movie')
+        .then((movie) async => {
+              ...movie,
+              ...await TmdbApiService.fetchGenres('tv'),
+            })
+        .catchError((_) => <int, String>{});
+
     try {
-      final topGenres = await RecommendationService.getTopGenres(limit: 4)
-          .catchError((_) => <int>[]);
+      // Both are started together: genre profiling used to be awaited FIRST,
+      // so the whole chain stood between the screen and its first row.
+      final topGenresFuture =
+          RecommendationService.getTopGenres(limit: 4).catchError((_) => <int>[]);
+      final bywFuture = _safeRec(() => RecommendationService.getBecauseYouWatched());
+
+      // Because You Watched is usually a single request and is the row people
+      // look at first — show it the moment it lands.
+      final byw = await bywFuture;
+      if (!mounted || generation != _loadGeneration) return;
+      if (byw.isNotEmpty) {
+        setState(() {
+          _becauseYouWatched = byw;
+          _lastNetworkUpdate = DateTime.now();
+          _loading = false;
+        });
+      }
+
+      final topGenres = await topGenresFuture;
+      if (!mounted || generation != _loadGeneration) return;
       _hasHistory = topGenres.isNotEmpty;
 
-      final results = await Future.wait([
-        _safeRec(() => RecommendationService.getForYou()),
-        _safeRec(() => RecommendationService.getBecauseYouWatched()),
-        if (_hasHistory)
-          ...topGenres.map((g) => _safeRec(() => RecommendationService.getByGenre(g))),
-      ]);
+      final forYouFuture = _safeRec(
+        () => RecommendationService.getForYou(topGenres: topGenres),
+      );
+      final genreFutures = _hasHistory
+          ? topGenres
+              .map((genre) async {
+                final items = await _safeRec(
+                  () => RecommendationService.getByGenre(genre),
+                );
+                return (genre, items);
+              })
+              .toList()
+          : <Future<(int, List<Map<String, dynamic>>)>>[];
 
-      _forYou = filterForKids(results[0]);
-      _becauseYouWatched = results[1];
+      final forYou = await forYouFuture;
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _forYou = filterForKids(forYou);
+        _lastNetworkUpdate = DateTime.now();
+        _loading = false;
+      });
 
-      if (_hasHistory) {
-        Map<int, String> allGenres = {};
-        try {
-          final genreNames = await TmdbApiService.fetchGenres('movie');
-          final genreNamesTv = await TmdbApiService.fetchGenres('tv');
-          allGenres = {...genreNames, ...genreNamesTv};
-        } catch (_) {}
-        _byGenre = {};
-        _genreIdByName = {};
-        for (int i = 0; i < topGenres.length; i++) {
-          final name = allGenres[topGenres[i]] ?? 'Genre ${topGenres[i]}';
-          _byGenre[name] = filterForKids((2 + i < results.length) ? results[2 + i] : []);
-          _genreIdByName[topGenres[i]] = name;
+      final genreResults = await Future.wait(genreFutures);
+      if (!mounted || generation != _loadGeneration) return;
+      final allGenres = await genreNamesFuture;
+      if (!mounted || generation != _loadGeneration) return;
+
+      final byGenre = <String, List<Map<String, dynamic>>>{};
+      final genreIdByName = <int, String>{};
+      for (var i = 0; i < topGenres.length && i < genreResults.length; i++) {
+        final (genreId, items) = genreResults[i];
+        if (items.isEmpty) continue;
+        final name = allGenres[genreId] ?? 'Genre $genreId';
+        byGenre[name] = filterForKids(items);
+        genreIdByName[genreId] = name;
+      }
+      setState(() {
+        _byGenre = byGenre;
+        _genreIdByName = genreIdByName;
+        _lastNetworkUpdate = DateTime.now();
+        for (final name in byGenre.keys) {
           _genrePage[name] = 1;
         }
-      }
+      });
+
+      await RecommendationService.saveSnapshot(
+        forYou: _forYou,
+        becauseYouWatched: _becauseYouWatched,
+        byGenre: _byGenre,
+        genreIdByName: _genreIdByName,
+      );
     } catch (e) {
       debugPrint('Error loading recommendations: $e');
     }
