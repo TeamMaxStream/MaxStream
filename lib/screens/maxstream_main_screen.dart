@@ -146,12 +146,12 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
       reason = 'Scan your fingerprint to unlock MaxStream';
     }
 
-    final authenticated = await BiometricService.authenticate(
+    final result = await BiometricService.authenticateDetailed(
       reason: reason,
       biometricOnly: false, // Allow PIN fallback
     );
 
-    if (!authenticated && mounted) {
+    if (!result.success && mounted) {
       // Show dialog before closing
       await showDialog(
         context: context,
@@ -159,8 +159,9 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
         builder: (ctx) => AlertDialog(
           backgroundColor: const Color(0xFF1A1A1A),
           title: const Text('Authentication Required', style: TextStyle(color: Colors.white)),
-          content: const Text(
-            'You must authenticate to use MaxStream. Would you like to try again or exit?',
+          content: Text(
+            result.error ??
+                'You must authenticate to use MaxStream. Would you like to try again or exit?',
             style: TextStyle(color: Colors.grey),
           ),
           actions: [

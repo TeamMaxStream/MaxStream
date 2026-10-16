@@ -430,17 +430,17 @@ class _MaxStreamMoreScreenState extends State<MaxStreamMoreScreen> {
                 reason = 'Scan your fingerprint to enable biometric lock';
               }
 
-              final authenticated = await BiometricService.authenticate(
+              final result = await BiometricService.authenticateDetailed(
                 reason: reason,
                 biometricOnly: false, // Allow PIN/password fallback
               );
 
-              if (!authenticated) {
+              if (!result.success) {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
+                    SnackBar(
                       content: Text(
-                        'Authentication failed. Biometric lock not enabled.',
+                        result.error ?? 'Authentication failed.',
                       ),
                       backgroundColor: Colors.orange,
                     ),

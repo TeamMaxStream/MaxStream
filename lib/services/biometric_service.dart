@@ -1,5 +1,16 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:local_auth/local_auth.dart';
+
+/// Outcome of a biometric attempt: success, or a message worth showing.
+class BiometricAuthResult {
+  final bool success;
+  final String? error;
+  const BiometricAuthResult.success()
+      : success = true,
+        error = null;
+  const BiometricAuthResult.failure(this.error) : success = false;
+}
 
 /// Biometric Authentication Service
 /// Supports fingerprint and face recognition
@@ -45,10 +56,29 @@ class BiometricService {
     bool stickyAuth = false,
     bool biometricOnly = true,
   }) async {
+    return (await authenticateDetailed(
+      reason: reason,
+      stickyAuth: stickyAuth,
+      biometricOnly: biometricOnly,
+    ))
+        .success;
+  }
+
+  /// Same as [authenticate], but reports WHY it failed.
+  ///
+  /// Every failure used to collapse into `false`, so the UI always said
+  /// "Authentication failed. Biometric lock not enabled." — even when the
+  /// prompt never appeared because the host activity was not a FragmentActivity.
+  static Future<BiometricAuthResult> authenticateDetailed({
+    required String reason,
+    bool stickyAuth = false,
+    bool biometricOnly = true,
+  }) async {
     try {
       final isAvailable = await canUseBiometric();
       if (!isAvailable) {
-        throw Exception('Biometric not available on this device');
+        return const BiometricAuthResult.failure(
+            'No screen lock set up. Add a PIN, pattern or fingerprint in Android Settings first.');
       }
 
       final isAuthenticated = await _localAuth.authenticate(
@@ -60,10 +90,35 @@ class BiometricService {
         ),
       );
 
-      return isAuthenticated;
+      if (isAuthenticated) return const BiometricAuthResult.success();
+      return const BiometricAuthResult.failure('Authentication failed.');
+    } on PlatformException catch (e) {
+      debugPrint('Biometric authentication error: ${e.code} ${e.message}');
+      return BiometricAuthResult.failure(_messageForCode(e.code));
     } catch (e) {
       debugPrint('Biometric authentication error: $e');
-      return false;
+      return const BiometricAuthResult.failure('Authentication failed.');
+    }
+  }
+
+  /// local_auth throws a PlatformException per native failure reason; mapping
+  /// them here is the difference between an actionable message and a generic one.
+  static String _messageForCode(String code) {
+    switch (code) {
+      case 'NotAvailable':
+      case 'no_biometrics':
+        return 'Biometrics are not available. Use your PIN instead.';
+      case 'NotEnrolled':
+        return 'No biometrics enrolled on this device. Use your PIN instead.';
+      case 'LockedOut':
+      case 'PermanentlyLockedOut':
+        return 'Too many attempts. Unlock with your PIN first, then retry.';
+      case 'no_fragment_activity':
+        return 'Biometric unlock is unavailable in this build.';
+      case 'temporary_lockout':
+        return 'Too many attempts. Try again in a moment.';
+      default:
+        return 'Authentication failed.';
     }
   }
 
