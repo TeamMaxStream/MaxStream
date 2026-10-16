@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../database/db_helper.dart';
+import '../services/download_storage_service.dart';
 import '../services/downloads_settings_service.dart';
 import '../services/profile_scope.dart';
 
@@ -29,6 +30,10 @@ class _DownloadsSettingsScreenState extends State<DownloadsSettingsScreen> {
     super.initState();
     _loadSettings();
     _loadStorageInfo();
+    // Re-measure when a download finishes or is deleted, so the figure here
+    // tracks what is actually on disk instead of what it was when the screen
+    // opened.
+    DownloadStorageService.revision.addListener(_handleDownloadsChanged);
   }
 
   @override
@@ -36,6 +41,14 @@ class _DownloadsSettingsScreenState extends State<DownloadsSettingsScreen> {
     super.didChangeDependencies();
     _loadStorageInfo();
   }
+
+  @override
+  void dispose() {
+    DownloadStorageService.revision.removeListener(_handleDownloadsChanged);
+    super.dispose();
+  }
+
+  void _handleDownloadsChanged() => _loadStorageInfo();
 
   Future<void> _loadSettings() async {
     final quality = await DownloadsSettingsService.getQuality();
@@ -72,17 +85,7 @@ class _DownloadsSettingsScreenState extends State<DownloadsSettingsScreen> {
     }
   }
 
-  String _formatBytes(int bytes) {
-    if (bytes == 0) return '0 B';
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    }
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-  }
+  String _formatBytes(int bytes) => DownloadStorageService.formatBytes(bytes);
 
   String _limitLabel(double gb) {
     if (gb <= 0) return 'Unlimited';

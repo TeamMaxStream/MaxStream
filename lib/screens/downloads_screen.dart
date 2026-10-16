@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../database/db_helper.dart';
+import '../services/download_storage_service.dart';
 import '../services/media_download_manager.dart';
 import '../services/profile_scope.dart';
 import '../screens/downloads_settings_screen.dart';
@@ -20,6 +21,10 @@ class DownloadsScreen extends StatefulWidget {
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
   List<Map<String, dynamic>> _downloads = const [];
+  /// Real on-disk bytes per download, measured when the list loads. The rows
+  /// carry no size column and `localPath` is a few-KB playlist for HLS
+  /// downloads, so nothing could be derived from the row itself.
+  Map<String, int> _sizes = const {};
   bool _loading = true;
   final MediaDownloadManager _downloadManager = MediaDownloadManager.instance;
   late int _completionVersion;
@@ -31,6 +36,10 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     _completionVersion = _downloadManager.completionVersion;
     _downloadManager.addListener(_handleDownloadManagerChanged);
     ProfileScope.activeProfile.addListener(_handleProfileChanged);
+    // Sizes are measured from disk, so re-measure whenever a download finishes
+    // or one is deleted — otherwise the numbers only changed after reopening
+    // the screen.
+    DownloadStorageService.revision.addListener(_handleDownloadsChanged);
     _loadDownloads();
   }
 
@@ -38,6 +47,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   void dispose() {
     _downloadManager.removeListener(_handleDownloadManagerChanged);
     ProfileScope.activeProfile.removeListener(_handleProfileChanged);
+    DownloadStorageService.revision.removeListener(_handleDownloadsChanged);
     super.dispose();
   }
 
@@ -45,6 +55,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     _downloadManager.onProfileChanged();
     _loadDownloads();
   }
+
+  void _handleDownloadsChanged() => _loadDownloads();
 
   void _handleDownloadManagerChanged() {
     if (_completionVersion != _downloadManager.completionVersion) {
@@ -69,13 +81,25 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         existing.add(download);
       }
     }
+    final sizes = <String, int>{};
+    for (final download in existing) {
+      final key = download['downloadKey']?.toString() ?? '';
+      final path = download['localPath']?.toString() ?? '';
+      if (key.isEmpty || path.isEmpty) continue;
+      sizes[key] = await DownloadStorageService.sizeOfDownload(path);
+    }
     if (mounted && generation == _loadGeneration) {
       setState(() {
         _downloads = existing;
+        _sizes = sizes;
         _loading = false;
       });
     }
   }
+
+  /// On-disk bytes for one download row.
+  int _sizeOf(Map<String, dynamic> download) =>
+      _sizes[download['downloadKey']?.toString() ?? ''] ?? 0;
 
   bool _isStillDownloading(Map<String, dynamic> download) {
     final key = download['downloadKey']?.toString() ?? '';
@@ -139,12 +163,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     );
     if (confirmed != true) return;
 
-    final file = File(download['localPath']?.toString() ?? '');
-    try {
-      if (await file.exists()) await file.parent.delete(recursive: true);
-    } on FileSystemException {
-      // Remove stale database entries even if their files are already gone.
-    }
+    // DBHelper.deleteMediaDownload removes the download directory as well, so
+    // the bytes (and the app's storage figure) actually go away.
     await DBHelper.deleteMediaDownload(download['downloadKey'].toString());
     await _loadDownloads();
   }
@@ -200,19 +220,18 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     String totalSizeLabel(Iterable<int?> bytes) {
       final total = bytes.whereType<int>().fold<int>(0, (a, b) => a + b);
       if (total == 0) return '';
-      if (total < 1024 * 1024) return '${(total / 1024).toStringAsFixed(0)} KB';
-      if (total < 1024 * 1024 * 1024)
-        return '${(total / (1024 * 1024)).toStringAsFixed(1)} MB';
-      return '${(total / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+      return DownloadStorageService.formatBytes(total);
     }
 
     final activeTotal = totalSizeLabel(
       _downloadManager.activeDownloads.map((d) => d.totalBytes),
     );
-    final downloadedMoviesSize = totalSizeLabel(
-      movies.map((m) => m['totalBytes'] as int? ?? m['fileSize'] as int?),
+    // Measured from disk, not from a column the table never had.
+    final downloadedSize = totalSizeLabel(_downloads.map(_sizeOf));
+    final downloadedMoviesSize = totalSizeLabel(movies.map(_sizeOf));
+    final downloadedSeriesSize = totalSizeLabel(
+      series.values.expand((episodes) => episodes).map(_sizeOf),
     );
-    // series total from episodes' file sizes if available
 
     final body = _loading && _downloadManager.activeDownloads.isEmpty
         ? AppShimmer(
@@ -266,7 +285,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 ],
                 if (_downloads.isNotEmpty)
                   _sectionTitle(
-                    'Downloaded${downloadedMoviesSize.isNotEmpty ? ' • $downloadedMoviesSize' : ''}',
+                    'Downloaded${downloadedSize.isNotEmpty ? ' • $downloadedSize' : ''}',
                     _downloads.length,
                   ),
                 if (movies.isNotEmpty) ...[
@@ -277,7 +296,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   const SizedBox(height: 20),
                 ],
                 if (series.isNotEmpty) ...[
-                  _subsectionTitle('Series'),
+                  _subsectionTitle(
+                    'Series${downloadedSeriesSize.isNotEmpty ? ' • $downloadedSeriesSize' : ''}',
+                  ),
                   ...series.values.map(_seriesGroup),
                 ],
               ],
@@ -435,15 +456,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final title = first['title']?.toString().split(' - S').first ?? 'Series';
     // Total size for this series (sum of local files + active downloads for its episodes)
     String seriesTotal() {
-      int total = 0;
+      // Measured from disk (see _sizeOf): an HLS episode's localPath is the
+      // playlist, so summing those files reported ~3 KB per season.
+      var total = 0;
       for (final ep in episodes) {
-        final path = ep['localPath']?.toString() ?? '';
-        if (path.isNotEmpty) {
-          try {
-            final f = File(path);
-            if (f.existsSync()) total += f.lengthSync();
-          } catch (_) {}
-        }
+        total += _sizeOf(ep);
       }
       // Add active downloads for this series if any
       final sid = first['seriesId']?.toString() ?? first['mediaId'].toString();
@@ -452,11 +469,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           total += d.totalBytes!;
       }
       if (total == 0) return '';
-      if (total < 1024 * 1024)
-        return ' • ${(total / 1024).toStringAsFixed(0)} KB';
-      if (total < 1024 * 1024 * 1024)
-        return ' • ${(total / (1024 * 1024)).toStringAsFixed(1)} MB';
-      return ' • ${(total / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+      return ' • ${DownloadStorageService.formatBytes(total)}';
     }
 
     final seasons = <int, List<Map<String, dynamic>>>{};
@@ -575,9 +588,16 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(color: Colors.white),
       ),
-      subtitle: Text(
-        episodeLabel,
-        style: const TextStyle(color: Colors.white54),
+      subtitle: Builder(
+        builder: (context) {
+          final size = _sizeOf(download);
+          return Text(
+            size > 0
+                ? '$episodeLabel • ${DownloadStorageService.formatBytes(size)}'
+                : episodeLabel,
+            style: const TextStyle(color: Colors.white54),
+          );
+        },
       ),
       onTap: () => _play(download),
       trailing: IconButton(

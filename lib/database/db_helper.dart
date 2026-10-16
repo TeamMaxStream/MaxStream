@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' as p;
 import '../models/movie.dart';
 import '../services/cloud_sync_service.dart';
+import '../services/download_storage_service.dart';
 import '../services/profile_scope.dart';
 import '../services/user_scope.dart';
 
@@ -20,7 +21,7 @@ class DBHelper {
   }
 
   static Future<Database> _initDb() async {
-    final path = join(await getDatabasesPath(), 'watchlist.db');
+    final path = p.join(await getDatabasesPath(), 'watchlist.db');
     return openDatabase(
       path,
       version: 12,
@@ -315,47 +316,100 @@ class DBHelper {
     }).toList();
   }
 
+  /// Every download row, ignoring the active profile (used by storage
+  /// migration, which has to fix rows for all profiles).
+  static Future<List<Map<String, dynamic>>> getAllMediaDownloads() async {
+    if (kIsWeb) return const [];
+    final db = await database;
+    final downloads = await db.query('media_downloads', orderBy: 'downloadDate DESC');
+    return downloads.map((download) {
+      final result = Map<String, dynamic>.from(download);
+      try {
+        result['subtitles'] = jsonDecode(download['subtitles']?.toString() ?? '[]');
+      } on FormatException {
+        result['subtitles'] = <dynamic>[];
+      }
+      return result;
+    }).toList();
+  }
+
+  /// Points a row at a relocated download directory (migration only).
+  static Future<void> updateMediaDownloadPaths({
+    required String downloadKey,
+    required String localPath,
+    required List<Map<String, dynamic>> subtitles,
+    String? legacyRoot,
+  }) async {
+    if (kIsWeb || downloadKey.isEmpty) return;
+    final db = await database;
+    await db.update(
+      'media_downloads',
+      {
+        'localPath': localPath,
+        'subtitles': jsonEncode(subtitles),
+      },
+      where: 'downloadKey = ?',
+      whereArgs: [downloadKey],
+    );
+    notifyDownloadsChanged();
+  }
+
+  /// Removes a download's row AND its files.
+  ///
+  /// The file deletion used to live in the Downloads screen only, so any other
+  /// caller (and "Clear all downloads") could leave the bytes behind — which is
+  /// what kept the storage figure and the system's app storage from going back
+  /// down after a delete.
   static Future<void> deleteMediaDownload(String downloadKey) async {
     if (kIsWeb) return;
     final db = await database;
+    final rows = await db.query(
+      'media_downloads',
+      where: 'downloadKey = ?',
+      whereArgs: [downloadKey],
+    );
+    for (final row in rows) {
+      await _deleteDownloadFiles(row['localPath']?.toString() ?? '');
+    }
     await db.delete(
       'media_downloads',
       where: 'downloadKey = ? AND profileId = ?',
       whereArgs: [downloadKey, ProfileScope.currentProfileId],
     );
+    notifyDownloadsChanged();
   }
 
+  /// Deletes the download directory that holds [localPath] (video/playlist,
+  /// segments and subtitles all live in the same per-download folder).
+  static Future<void> _deleteDownloadFiles(String localPath) async {
+    if (localPath.isEmpty) return;
+    try {
+      final dir = Directory(p.dirname(localPath));
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+        return;
+      }
+      final file = File(localPath);
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Best effort: the row still goes away so a stale entry can't linger.
+    }
+  }
+
+  /// Real bytes used by downloads. Measured per download directory — for HLS
+  /// downloads `localPath` is the rewritten playlist (a few KB) and the media is
+  /// the segments beside it, which is why this used to report ~0.
   static Future<int> getDownloadStorageUsage({String? profileId}) async {
     if (kIsWeb) return 0;
     final downloads = await getMediaDownloads(profileId: profileId);
-    int totalBytes = 0;
-    for (final download in downloads) {
-      final path = download['localPath']?.toString() ?? '';
-      if (path.isNotEmpty) {
-        try {
-          final file = File(path);
-          if (await file.exists()) {
-            totalBytes += await file.length();
-          }
-        } catch (_) {}
-      }
-    }
-    return totalBytes;
+    return DownloadStorageService.totalSizeOf(downloads);
   }
 
   static Future<void> clearAllDownloads() async {
     if (kIsWeb) return;
     final downloads = await getMediaDownloads();
     for (final download in downloads) {
-      final path = download['localPath']?.toString() ?? '';
-      if (path.isNotEmpty) {
-        try {
-          final file = File(path);
-          if (await file.exists()) {
-            await file.parent.delete(recursive: true);
-          }
-        } catch (_) {}
-      }
+      await _deleteDownloadFiles(download['localPath']?.toString() ?? '');
     }
     final db = await database;
     await db.delete(
@@ -363,7 +417,15 @@ class DBHelper {
       where: 'profileId = ?',
       whereArgs: [ProfileScope.currentProfileId],
     );
+    notifyDownloadsChanged();
   }
+
+  /// Lets the Downloads / Download Settings screens refresh their numbers the
+  /// moment the set of downloads changes.
+  static void notifyDownloadsChanged() {
+    DownloadStorageService.notifyChanged();
+  }
+
 
   static Future<void> addToWatchlist(Movie movie) async {
     if (kIsWeb) return;
