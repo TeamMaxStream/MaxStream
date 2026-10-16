@@ -341,6 +341,7 @@ class MediaDownloadManager extends ChangeNotifier {
     } finally {
       cleanup.dispose();
     }
+    DBHelper.notifyDownloadsChanged();
   }
 
   Future<void> _restartDownload(ActiveMediaDownload task) async {
@@ -408,6 +409,9 @@ class MediaDownloadManager extends ChangeNotifier {
         localPath: result.localPath,
         subtitles: localSubtitles,
       );
+      // Storage figures are computed on demand from disk, so the Downloads and
+      // Download Settings screens need to be told to re-measure.
+      DBHelper.notifyDownloadsChanged();
       _completionVersion++;
       notifyListeners();
       await NotificationService().showDownloadFinished(
@@ -879,6 +883,9 @@ class MediaDownloadManager extends ChangeNotifier {
         localPath: result.localPath,
         subtitles: localSubtitles,
       );
+      // Storage figures are computed on demand from disk, so the Downloads and
+      // Download Settings screens need to be told to re-measure.
+      DBHelper.notifyDownloadsChanged();
       _completionVersion++;
       notifyListeners();
       await NotificationService().showDownloadFinished(

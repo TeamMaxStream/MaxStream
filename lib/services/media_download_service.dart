@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' show ClientException;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'download_storage_service.dart';
 import 'stream_security.dart';
 
 typedef DownloadProgress = void Function(double progress);
@@ -92,10 +92,10 @@ class MediaDownloadService {
     DownloadProgress? onProgress,
     DownloadBytesProgress? onBytesProgress,
   }) async {
-    final root = Directory(
-      p.join((await getApplicationSupportDirectory()).path, 'media_downloads'),
-    );
-    await root.create(recursive: true);
+    // Lives in app-specific external storage (see DownloadStorageService.root)
+    // so the space we report matches Android's Settings → App storage, and
+    // deleting the files frees it there the same moment it frees it here.
+    final root = await DownloadStorageService.root();
     final id = _safeName(
       downloadId ?? DateTime.now().microsecondsSinceEpoch.toString(),
     );
@@ -844,12 +844,16 @@ class MediaDownloadService {
   }
 
   Future<void> discard(String downloadId) async {
-    final root = Directory(
-      p.join((await getApplicationSupportDirectory()).path, 'media_downloads'),
-    );
-    await _deleteIfPresent(
-      Directory(p.join(root.path, '.${_safeName(downloadId)}.partial')),
-    );
+    // Both roots: the partial may predate the move to external storage.
+    final roots = <Directory>{
+      await DownloadStorageService.root(),
+      await DownloadStorageService.legacyRoot(),
+    };
+    for (final root in roots) {
+      await _deleteIfPresent(
+        Directory(p.join(root.path, '.${_safeName(downloadId)}.partial')),
+      );
+    }
   }
 
   bool _isMaster(String playlist) => playlist.contains('#EXT-X-STREAM-INF:');

@@ -7,6 +7,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'services/notification_router.dart';
+import 'services/download_storage_service.dart';
 import 'services/media_download_manager.dart';
 import 'services/theme_service.dart';
 import 'services/crashlytics_service.dart';
@@ -76,7 +77,13 @@ class _StartupGateState extends State<_StartupGate> {
       attachCrashlyticsFatalHandlers();
 
       if (!kIsWeb) await NotificationService().initialize();
-      if (!kIsWeb) await MediaDownloadManager.instance.initialize();
+      if (!kIsWeb) {
+        // Downloads now live in app-specific external storage so the space they
+        // use matches what Android's Settings → App storage reports; move any
+        // downloads made before that (best effort, never blocks start-up).
+        await DownloadStorageService.migrateLegacyDownloads();
+        await MediaDownloadManager.instance.initialize();
+      }
       await ThemeService.instance.loadTheme();
     } catch (e, stack) {
       recordCrash('Bootstrap', e, stack);
