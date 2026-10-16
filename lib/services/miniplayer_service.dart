@@ -136,7 +136,16 @@ class MiniplayerService extends ChangeNotifier {
   }
 
   void close() {
-    _controller?.dispose();
+    // Pause before disposing: a controller created with allowBackgroundPlayback
+    // keeps its audio pipeline alive until dispose() finishes, so without this
+    // the old video can be heard over whatever starts next (e.g. a download).
+    final controller = _controller;
+    if (controller != null) {
+      try {
+        if (controller.value.isPlaying) controller.pause();
+      } catch (_) {}
+    }
+    controller?.dispose();
     _controller = null;
     _title = '';
     _tmdbId = '';

@@ -12,6 +12,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +66,43 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.experimental.xor
+
+/** Teardown handler for extractor WebViews (see [teardownWebView]). */
+private val MAIN_HANDLER: Handler = Handler(Looper.getMainLooper())
+
+/**
+ * Pauses and mutes every media element on the page. Injected into extractor
+ * pages so a server that autoplays its player is never audible, even while the
+ * extractor is still polling for the stream URL.
+ */
+private const val MUTE_ALL_MEDIA_JS =
+    "document.querySelectorAll('video,audio').forEach(function(m){" +
+        "try{m.pause();m.muted=true;m.volume=0;}catch(e){}});" +
+        "if(window.MutationObserver){new MutationObserver(function(){" +
+        "document.querySelectorAll('video,audio').forEach(function(m){" +
+        "try{m.muted=true;m.volume=0;}catch(e){}});}).observe(document.documentElement," +
+        "{childList:true,subtree:true});}"
+
+/**
+ * Tears down an extractor WebView.
+ *
+ * Extractors never attach their WebView to a window, so `View.post` is useless
+ * for cleanup: the runnable sits in the attach queue forever and the page keeps
+ * running with an unmuted, autoplaying `<video>`. Starting a download races
+ * every server with nothing on screen, which is when that leak was audible —
+ * the movie started playing in the background on its own. A Handler post does
+ * not depend on attachment, so teardown now always runs; media is muted and
+ * paused first as a second line of defence.
+ */
+private fun teardownWebView(webView: WebView?) {
+    if (webView == null) return
+    MAIN_HANDLER.post {
+        runCatching { webView.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
+        runCatching { webView.onPause() }
+        runCatching { webView.stopLoading() }
+        runCatching { webView.destroy() }
+    }
+}
 
 /** Resolves TMDB metadata through server providers and host-specific extractors. */
 class StreamExtractor(private val context: Context) {
@@ -1663,7 +1702,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         webView.addJavascriptInterface(object {
@@ -1743,6 +1782,8 @@ class StreamExtractor(private val context: Context) {
                                 return super.shouldInterceptRequest(view, request)
                             }
                             override fun onPageFinished(view: WebView, url: String) {
+                                // Extraction pages autoplay their player with sound; keep them silent.
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__nativeStreamHook) return;
@@ -1828,10 +1869,7 @@ class StreamExtractor(private val context: Context) {
                         }
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -1863,7 +1901,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         webView.addJavascriptInterface(object {
@@ -1895,6 +1933,10 @@ class StreamExtractor(private val context: Context) {
                             }
 
                             override fun onPageFinished(view: WebView, url: String) {
+
+                                // Extraction pages autoplay their player with sound; keep them silent.
+
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__vidukiHook) return;
@@ -1958,10 +2000,7 @@ class StreamExtractor(private val context: Context) {
 
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -2113,7 +2152,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         webView.addJavascriptInterface(object {
@@ -2141,6 +2180,8 @@ class StreamExtractor(private val context: Context) {
 
                         webView.webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
+                                // Extraction pages autoplay their player with sound; keep them silent.
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__maxstreamHook) return;
@@ -2214,10 +2255,7 @@ class StreamExtractor(private val context: Context) {
 
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -2336,7 +2374,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         val mediaPath = URI(server.url).rawPath.orEmpty()
@@ -2372,6 +2410,8 @@ class StreamExtractor(private val context: Context) {
 
                         webView.webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
+                                // Extraction pages autoplay their player with sound; keep them silent.
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 if (host(url).endsWith("mov2day.xyz") && !url.contains("/embed", true)) {
                                     val script = """
                                         (() => {
@@ -2439,10 +2479,7 @@ class StreamExtractor(private val context: Context) {
 
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -3063,10 +3100,7 @@ class StreamExtractor(private val context: Context) {
                                 val url = request?.url?.toString() ?: ""
                                 if (url.contains(".m3u8") && !url.contains("analytics") && !url.contains("cloudflare")) {
                                     if (continuation.isActive) {
-                                        webView.post {
-                                            webView.stopLoading()
-                                            webView.destroy()
-                                        }
+                                        teardownWebView(webView)
                                         continuation.resume(
                                             ExtractionResult.Final(
                                                 StreamResult(url, name, "direct_m3u8", refererHeaders(server.url)),
@@ -3079,10 +3113,7 @@ class StreamExtractor(private val context: Context) {
                         }
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -3679,27 +3710,28 @@ class StreamExtractor(private val context: Context) {
                                 val newUrl = request?.url.toString()
                                 if (newUrl.contains(hostName) || newUrl.contains("/e/")) {
                                     if (continuation.isActive) continuation.resume(newUrl)
-                                    webView.post { webView.destroy() }
+                                    teardownWebView(webView)
                                     return true
                                 }
                                 return false
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
+
+                                // Extraction pages autoplay their player with sound; keep them silent.
+
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 if (url != null &&
                                     (url.contains(hostName) || url.contains("/e/") || !url.contains("about:blank"))
                                 ) {
                                     if (continuation.isActive) continuation.resume(url)
-                                    webView.post { webView.destroy() }
+                                    teardownWebView(webView)
                                 }
                             }
                         }
                         webView.loadUrl(url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 } ?: url
@@ -5385,10 +5417,7 @@ class StreamExtractor(private val context: Context) {
                         }
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
