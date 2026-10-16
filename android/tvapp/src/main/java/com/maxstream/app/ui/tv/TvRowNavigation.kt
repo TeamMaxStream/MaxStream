@@ -81,11 +81,27 @@ class RowNavState {
     private val rowStates = mutableMapOf<String, LazyListState>()
     private val savedIndices = mutableMapOf<String, Int>()
 
-    /** In-flight focus move. Cancelled before every new move so rapid D-pad
-     *  presses never queue up stale scroll+focus jobs that fight each other
-     *  (the same guard GridNavState uses for the watchlist grid, which is why
-     *  it navigates noticeably smoother than the row screens). */
+    /**
+     * Focus moves are serialised, NOT cancelled.
+     *
+     * A move is a coroutine: scroll the outer column, scroll the row, then
+     * request focus. Cancelling one to start the next (the old behaviour) had
+     * two failure modes on fast D-pad input:
+     *  - cancel between the two scrolls left the row scrolled with focus still
+     *    on the old card, and the *new* job's `index` was computed from that
+     *    stale card, so focus landed one card further along than the single
+     *    press warranted;
+     *  - whichever job's `requestFocus()` happened to run last won, which is
+     *    how a single press could move focus twice.
+     *
+     * Instead a new press replaces the *queued* target and the running job
+     * picks it up when it finishes, so every move is applied in order and
+     * exactly once.
+     */
     private var focusJob: Job? = null
+    private var queuedMove: Move? = null
+
+    private data class Move(val rowId: String, val index: Int, val outer: LazyListState)
 
     /** Ordered list of currently visible rows. */
     var rows: List<RowDesc> = emptyList()
@@ -116,6 +132,26 @@ class RowNavState {
 
     /** Last focused card index for [rowId] (used to restore hero DOWN). */
     fun focusedIndex(rowId: String): Int = savedIndices[rowId] ?: 0
+
+    /**
+     * Records where focus actually landed. Called from each card's
+     * `onFocusChanged(true)`.
+     *
+     * This used to be written optimistically at the START of a focus move, so
+     * the remembered index ran one card ahead whenever a move was interrupted
+     * (a rapid second press cancelling the in-flight scroll). hero DOWN then
+     * restored to that phantom index and focus visibly jumped over cards.
+     */
+    fun commitFocus(rowId: String, index: Int) {
+        savedIndices[rowId] = index
+        activeRowId = rowId
+        focusStamp++
+    }
+
+    /** Bumped by every real focus landing; focusCard polls it to know its
+     *  requestFocus() actually took effect. */
+    private var focusStamp = 0
+        private set
 
     /** Stable per-card [FocusRequester], kept alive across recompositions. */
     fun requester(rowId: String, index: Int): FocusRequester =
@@ -157,9 +193,9 @@ class RowNavState {
         val rowIndex = indexOf(rowId)
         if (rowIndex < 0) return
 
-        savedIndices[rowId] = index
-        activeRowId = rowId
-
+        // NOT savedIndices[rowId] — that is committed by the card's own
+        // onFocusChanged, so the remembered position always matches where focus
+        // really is. See commitFocus.
         val requester = requester(rowId, index)
         val rowState = rowStates[rowId]
 
@@ -186,18 +222,37 @@ class RowNavState {
         var attempt = 0
         while (attempt < 4) {
             if (attempt > 0) delay(30L * attempt)
+            val stamp = focusStamp
             runCatching { requester.requestFocus() }
-            val composed = rowState?.layoutInfo?.visibleItemsInfo?.any { it.index == index } ?: true
-            if (composed) break
+            // Only stop once focus ACTUALLY landed. The old check was "is the item
+            // composed?", which is true the moment the scroll lands — a frame
+            // before the focus request takes effect. The loop then gave up while
+            // focus was still on the old card, and the next D-pad press was
+            // computed from that stale index: one press, two cards of movement.
+            // commitFocus() bumps focusStamp from the card's onFocusChanged.
+            if (focusStamp != stamp) break
             attempt++
         }
     }
 
-    /** Cancels the previous move then starts a new one — keeps navigation
-     *  snappy and prevents stale focus requests from stealing focus back. */
+    /**
+     * Moves focus to [index] in [rowId], serialised against any move already in
+     * flight. A press that arrives mid-move replaces the queued target instead
+     * of cancelling the running one, so focus can never be applied twice for one
+     * press (which read as "some cards get skipped") and can never be left
+     * un-applied (which read as the row scrolling past a card with focus stuck).
+     */
     fun moveTo(rowId: String, index: Int, outerListState: LazyListState, scope: CoroutineScope) {
-        focusJob?.cancel()
-        focusJob = scope.launch { focusCard(rowId, index, outerListState) }
+        val clamped = index.coerceIn(0, (count(rowId) - 1).coerceAtLeast(0))
+        queuedMove = Move(rowId, clamped, outerListState)
+        if (focusJob?.isActive == true) return
+        focusJob = scope.launch {
+            while (true) {
+                val next = queuedMove ?: break
+                queuedMove = null
+                focusCard(next.rowId, next.index, next.outer)
+            }
+        }
     }
 
     /**

@@ -870,6 +870,9 @@ private fun ContentRow(
                         onFocusChanged = { focused ->
                             if (focused) {
                                 focusedItemIndex = index
+                                // Record the real landing spot for hero DOWN and
+                                // deep-nav restore (never optimistically).
+                                rowNav.commitFocus(rowId, index)
                                 onItemFocus(item)
                             } else {
                                 if (focusedItemIndex == index) focusedItemIndex = -1
@@ -912,6 +915,9 @@ private fun ContentRow(
                         onFocusChanged = { focused ->
                             if (focused) {
                                 focusedItemIndex = index
+                                // Record the real landing spot for hero DOWN and
+                                // deep-nav restore (never optimistically).
+                                rowNav.commitFocus(rowId, index)
                                 onItemFocus(item)
                             } else {
                                 if (focusedItemIndex == index) focusedItemIndex = -1
@@ -955,6 +961,9 @@ private fun ContentRow(
                         onFocusChanged = { focused ->
                             if (focused) {
                                 focusedItemIndex = index
+                                // Record the real landing spot for hero DOWN and
+                                // deep-nav restore (never optimistically).
+                                rowNav.commitFocus(rowId, index)
                                 onItemFocus(item)
                             } else {
                                 if (focusedItemIndex == index) focusedItemIndex = -1

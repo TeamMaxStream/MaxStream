@@ -606,6 +606,8 @@ private fun SeriesContentRow(
                     onFocusChanged = { focused ->
                         if (focused) {
                             focusedItemIndex = index
+                            // Record the real landing spot (see commitFocus).
+                            rowNav.commitFocus(rowId, index)
                             onItemFocus(item)
                         } else if (focusedItemIndex == index) focusedItemIndex = -1
                     },
