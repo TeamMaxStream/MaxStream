@@ -1,13 +1,11 @@
 package com.maxstream.app
 
 import android.content.ComponentCallbacks2
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.core.content.FileProvider
-import com.ryanheise.audioservice.AudioServicePlugin
-import io.flutter.embedding.android.FlutterFragmentActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.*
@@ -17,15 +15,18 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * FlutterFragmentActivity (not AudioServiceActivity): local_auth's
+ * AudioServiceFragmentActivity, not AudioServiceActivity: local_auth's
  * BiometricPrompt requires a FragmentActivity host and bails out with
  * "no_fragment_activity" on a plain FlutterActivity — which surfaced as
  * "Authentication failed. Biometric lock not enabled." on every attempt.
- * AudioServiceActivity extends FlutterActivity (a plain Activity), so the
- * audio_service engine wiring is reproduced below to keep the fix that stopped
- * the duplicate-engine crash in commit f1d2dc4.
+ *
+ * The Fragment variant also keeps audio_service's cached FlutterEngine alive
+ * across activity destruction (`shouldDestroyEngineWithHost() == false`). With a
+ * hand-rolled FragmentActivity override the base class destroyed the engine
+ * while audio_service still held it, and the next AudioService stop threw
+ * "Cannot execute operation because FlutterJNI is not attached to native."
  */
-class MainActivity : FlutterFragmentActivity() {
+class MainActivity : AudioServiceFragmentActivity() {
     private val EXTRACTOR_CHANNEL = "com.maxstream.app/extractor"
     private val DOWNLOAD_SERVICE_CHANNEL = "com.maxstream.app/download_service"
     private val RESTART_CHANNEL = "com.maxstream.app/restart"
@@ -40,14 +41,6 @@ class MainActivity : FlutterFragmentActivity() {
         installNativeCrashHandler()
         super.onCreate(savedInstanceState)
     }
-
-    /**
-     * Same body as audio_service's AudioServiceActivity: reuse the plugin's
-     * cached FlutterEngine so the audio_service background engine and the UI
-     * share one engine (creating a second one crashed at startup).
-     */
-    override fun provideFlutterEngine(context: Context): FlutterEngine =
-        AudioServicePlugin.getFlutterEngine(context)
 
     /**
      * Dart caches (decoded posters, subtitle buffers) can be released when the
