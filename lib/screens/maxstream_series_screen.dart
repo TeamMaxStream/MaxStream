@@ -2139,19 +2139,27 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                widget.onDownload(_selectedStream);
-              },
+              // Gated on the server list: while it is still resolving there is no
+              // selection, and a null stream means "auto-resolve" — which raced
+              // every server natively and started downloading something the user
+              // never picked. Wait for the list instead.
+              onPressed: _loadingStreams
+                  ? null
+                  : () {
+                      Navigator.pop(context);
+                      widget.onDownload(_selectedStream);
+                    },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.red.withValues(alpha: 0.35),
+                disabledForegroundColor: Colors.white70,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'Start Download',
+              child: Text(
+                _loadingStreams ? 'Loading servers…' : 'Start Download',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
             ),
