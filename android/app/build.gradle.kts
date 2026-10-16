@@ -73,9 +73,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    // local_auth's BiometricPrompt needs a FragmentActivity host and an AppCompat
-    // theme (its dialog is an AppCompatDialog). Without both, the prompt never
-    // shows and every unlock reports "Authentication failed".
+    // BiometricAuthActivity hosts androidx.biometric's prompt directly (its
+    // dialog is an AppCompatDialog, so it needs a FragmentActivity + AppCompat
+    // theme). Declared explicitly so the app does not depend on local_auth's
+    // transitive versions.
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment:1.8.6")
     implementation("androidx.appcompat:appcompat:1.7.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")

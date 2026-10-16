@@ -5,7 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.core.content.FileProvider
-import com.ryanheise.audioservice.AudioServiceFragmentActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.*
@@ -15,19 +15,21 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * AudioServiceFragmentActivity, not AudioServiceActivity: local_auth's
- * BiometricPrompt requires a FragmentActivity host and bails out with
- * "no_fragment_activity" on a plain FlutterActivity — which surfaced as
- * "Authentication failed. Biometric lock not enabled." on every attempt.
+ * Plain AudioServiceActivity (a FlutterActivity) on purpose.
  *
- * The Fragment variant also keeps audio_service's cached FlutterEngine alive
- * across activity destruction (`shouldDestroyEngineWithHost() == false`). With a
- * hand-rolled FragmentActivity override the base class destroyed the engine
- * while audio_service still held it, and the next AudioService stop threw
- * "Cannot execute operation because FlutterJNI is not attached to native."
+ * Making this a FragmentActivity so local_auth could host its prompt broke the
+ * audio_service engine lifecycle twice: the retained FlutterFragment fought
+ * over the shared cached engine ("The internal FlutterEngine ... has been
+ * attached to by another activity"), and taking the engine down with the host
+ * left the AudioService touching a detached JNI ("FlutterJNI is not attached
+ * to native").
+ *
+ * The biometric prompt therefore lives in its own engine-less activity —
+ * [BiometricAuthActivity] — and this activity only relays its result.
  */
-class MainActivity : AudioServiceFragmentActivity() {
+class MainActivity : AudioServiceActivity() {
     private val EXTRACTOR_CHANNEL = "com.maxstream.app/extractor"
+    private val BIOMETRIC_CHANNEL = "com.maxstream.app/biometric"
     private val DOWNLOAD_SERVICE_CHANNEL = "com.maxstream.app/download_service"
     private val RESTART_CHANNEL = "com.maxstream.app/restart"
     private val CRASHLOG_CHANNEL = "com.maxstream.app/crashlog"
@@ -36,6 +38,13 @@ class MainActivity : AudioServiceFragmentActivity() {
     private val extractor by lazy { StreamExtractor(this) }
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var memoryChannel: MethodChannel? = null
+
+    private companion object {
+        const val BIOMETRIC_REQUEST = 0x8D17
+    }
+
+    /** Result of an in-flight biometric prompt, completed in onActivityResult. */
+    private var pendingBiometric: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         installNativeCrashHandler()
@@ -121,6 +130,38 @@ class MainActivity : AudioServiceFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // Biometric relay: Dart asks, we launch the engine-less
+        // BiometricAuthActivity and pass its verdict straight back.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BIOMETRIC_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "authenticate" -> {
+                        if (pendingBiometric != null) {
+                            result.error(
+                                "in_progress",
+                                "A biometric prompt is already showing",
+                                null,
+                            )
+                            return@setMethodCallHandler
+                        }
+                        val reason =
+                            call.argument<String>("reason") ?: "Unlock MaxStream"
+                        val biometricOnly = call.argument<Boolean>("biometricOnly") ?: false
+                        pendingBiometric = result
+                        runCatching {
+                            startActivityForResult(
+                                BiometricAuthActivity.intent(this, reason, biometricOnly),
+                                BIOMETRIC_REQUEST,
+                            )
+                        }.onFailure {
+                            pendingBiometric = null
+                            result.error("prompt_failed", it.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         memoryChannel =
             MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEMORY_CHANNEL)
@@ -352,6 +393,26 @@ class MainActivity : AudioServiceFragmentActivity() {
 
     override fun onDestroy() {
         scope.cancel()
+        // Dart will never see this prompt's outcome if the activity goes away
+        // first; fail it explicitly so the UI doesn't wait forever.
+        pendingBiometric?.error("cancelled", "Activity destroyed", null)
+        pendingBiometric = null
         super.onDestroy()
+    }
+
+    @Deprecated("Kept for the biometric relay; Flutter uses its own plumbing.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != BIOMETRIC_REQUEST) return
+        val pending = pendingBiometric ?: return
+        pendingBiometric = null
+        val errorCode = data?.getStringExtra(BiometricAuthActivity.EXTRA_ERROR_CODE) ?: "failed"
+        // Same shape local_auth returns, so the Dart error mapping is unchanged.
+        pending.success(
+            mapOf(
+                "authenticated" to (resultCode == BiometricAuthActivity.RESULT_AUTHENTICATED && errorCode.isEmpty()),
+                "errorCode" to errorCode,
+            ),
+        )
     }
 }

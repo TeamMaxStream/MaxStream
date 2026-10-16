@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show PlatformException;
+import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 
 /// Outcome of a biometric attempt: success, or a message worth showing.
@@ -16,6 +16,13 @@ class BiometricAuthResult {
 /// Supports fingerprint and face recognition
 class BiometricService {
   static final LocalAuthentication _localAuth = LocalAuthentication();
+
+  /// MainActivity's biometric relay. The prompt is hosted by
+  /// BiometricAuthActivity (a FragmentActivity with no FlutterEngine) because
+  /// androidx.biometric requires a FragmentActivity host and local_auth's
+  /// plugin cannot use one without breaking audio_service's shared engine.
+  static const MethodChannel _biometricChannel =
+      MethodChannel('com.maxstream.app/biometric');
 
   /// Check if biometric is available on device
   static Future<bool> isBiometricAvailable() async {
@@ -66,9 +73,14 @@ class BiometricService {
 
   /// Same as [authenticate], but reports WHY it failed.
   ///
-  /// Every failure used to collapse into `false`, so the UI always said
-  /// "Authentication failed. Biometric lock not enabled." — even when the
-  /// prompt never appeared because the host activity was not a FragmentActivity.
+  /// The prompt itself is shown by MainActivity's own engine-less
+  /// BiometricAuthActivity rather than local_auth: androidx.biometric needs a
+  /// FragmentActivity host, and making the Flutter activity one broke
+  /// audio_service's cached engine twice (retained fragment attaching the
+  /// shared engine to a second activity, then a detached FlutterJNI when the
+  /// AudioService stopped). local_auth's plugin can't host the prompt from a
+  /// plain FlutterActivity, so we own it natively and get the same
+  /// error-code vocabulary back.
   static Future<BiometricAuthResult> authenticateDetailed({
     required String reason,
     bool stickyAuth = false,
@@ -81,17 +93,22 @@ class BiometricService {
             'No screen lock set up. Add a PIN, pattern or fingerprint in Android Settings first.');
       }
 
-      final isAuthenticated = await _localAuth.authenticate(
-        localizedReason: reason,
-        options: AuthenticationOptions(
-          stickyAuth: stickyAuth,
-          biometricOnly: biometricOnly,
-          useErrorDialogs: true,
-        ),
+      final response = await _biometricChannel.invokeMapMethod<String, dynamic>(
+        'authenticate',
+        {'reason': reason, 'biometricOnly': biometricOnly},
       );
-
-      if (isAuthenticated) return const BiometricAuthResult.success();
-      return const BiometricAuthResult.failure('Authentication failed.');
+      if (response == null) {
+        return const BiometricAuthResult.failure('Authentication failed.');
+      }
+      if (response['authenticated'] == true) {
+        return const BiometricAuthResult.success();
+      }
+      final code = response['errorCode'] as String? ?? 'failed';
+      // A user-cancelled prompt is not a failure to report loudly.
+      if (code == 'canceled') {
+        return const BiometricAuthResult.failure('Authentication cancelled.');
+      }
+      return BiometricAuthResult.failure(_messageForCode(code));
     } on PlatformException catch (e) {
       debugPrint('Biometric authentication error: ${e.code} ${e.message}');
       return BiometricAuthResult.failure(_messageForCode(e.code));
@@ -101,8 +118,8 @@ class BiometricService {
     }
   }
 
-  /// local_auth throws a PlatformException per native failure reason; mapping
-  /// them here is the difference between an actionable message and a generic one.
+  /// Error codes reported by BiometricAuthActivity; mapping them here is the
+  /// difference between an actionable message and a generic one.
   static String _messageForCode(String code) {
     switch (code) {
       case 'NotAvailable':
@@ -117,6 +134,8 @@ class BiometricService {
         return 'Biometric unlock is unavailable in this build.';
       case 'temporary_lockout':
         return 'Too many attempts. Try again in a moment.';
+      case 'in_progress':
+        return 'A biometric prompt is already open.';
       default:
         return 'Authentication failed.';
     }

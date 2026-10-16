@@ -80,6 +80,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Hosts the androidx BiometricPrompt. A plain FragmentActivity with no
+             FlutterEngine: androidx.biometric needs a FragmentActivity host, but
+             making the Flutter activity one breaks audio_service's cached engine
+             lifecycle (see MainActivity's comment). Not exported, not in recents,
+             and the theme is translucent so the app stays visible behind it. -->
+        <activity
+            android:name=".BiometricAuthActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/BiometricAuthTheme"
+            android:configChanges="keyboardHidden|orientation|screenSize" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
