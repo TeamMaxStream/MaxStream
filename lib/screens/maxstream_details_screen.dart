@@ -1334,10 +1334,6 @@ class _QualitySelectionSheet extends StatefulWidget {
 
 class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
   bool _loadingStreams = true;
-  /// Exact (progressive) or estimated (HLS) size per quality URL, filled in
-  /// when the server list arrives so every server row can show it.
-  final Map<String, int?> _qualitySizes = {};
-  bool _sizesLoading = false;
   bool _refreshing = false;
   int _resolveGeneration = 0;
   List<Map<String, dynamic>> _availableStreams = [];
@@ -1376,65 +1372,152 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
             _error = error.toString();
           }
         });
-        unawaited(_probeQualitySizes(available));
+        unawaited(_probeVisibleQualities(available));
       },
     );
   }
 
-  /// Asks each server's quality variants how big they are. Progressive files
-  /// report an exact byte count; HLS variants are estimated from their bitrate
-  /// and shown with a "~". Runs in the background so the sheet paints at once.
-  Future<void> _probeQualitySizes(List<Map<String, dynamic>> streams) async {
-    if (_sizesLoading) return;
-    final pending = <String, Map<String, dynamic>>{};
-    for (final stream in streams) {
-      for (final raw in (stream['qualities'] as List? ?? const [])) {
-        if (raw is! Map) continue;
-        final q = raw.map((k, v) => MapEntry(k.toString(), v));
-        final url = q['url']?.toString() ?? '';
-        if (url.isEmpty || _qualitySizes.containsKey(url)) continue;
-        pending[url] = q;
-      }
-      final auto = stream['url']?.toString() ?? '';
-      if (auto.isNotEmpty && !_qualitySizes.containsKey(auto)) {
-        pending.putIfAbsent(auto, () => <String, dynamic>{});
+  /// Sizes probed per quality URL. A null value means "probed, unknown".
+  final Map<String, int?> _qualitySizes = {};
+  /// URLs currently being probed, so a slow probe shows "sizing…" rather than
+  /// an empty cell — and a stalled one can't pin the sheet in that state
+  /// forever (see _probeQualitySizes' per-URL deadline).
+  final Set<String> _sizingUrls = {};
+  bool _sizesLoading = false;
+
+  /// Probes the qualities of the servers that are actually on screen.
+  ///
+  /// Probing every server's every variant up front meant dozens of playlist
+  /// fetches for rows nobody had opened — which is why the sizes took minutes
+  /// to appear (and used to sit on "sizing…" indefinitely). Now only the first
+  /// server and the currently selected one are measured when the list arrives,
+  /// and any other server is measured the moment it is tapped. Requests inside
+  /// a server still run concurrently through a bounded pool, and each has a
+  /// deadline so one slow host cannot hold the row hostage.
+  Future<void> _probeVisibleQualities(
+    List<Map<String, dynamic>> streams, {
+    int? alsoIndex,
+  }) async {
+    final indexes = <int>{0};
+    for (final candidate in [alsoIndex, _selectedServerIndex]) {
+      if (candidate != null && candidate >= 0 && candidate < streams.length) {
+        indexes.add(candidate);
       }
     }
+    for (final index in indexes) {
+      await _probeServerQualities(streams, index);
+    }
+  }
+
+  /// Measures one server's qualities concurrently (pool of 6, per-URL deadline).
+  Future<void> _probeServerQualities(
+    List<Map<String, dynamic>> streams,
+    int index,
+  ) async {
+    if (index < 0 || index >= streams.length) return;
+    final stream = streams[index];
+    final pending = <String, Map<String, dynamic>>{};
+    for (final raw in (stream['qualities'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      final q = raw.map((k, v) => MapEntry(k.toString(), v));
+      final url = q['url']?.toString() ?? '';
+      if (url.isEmpty || _qualitySizes.containsKey(url)) continue;
+      if (_sizingUrls.contains(url)) continue;
+      pending[url] = q;
+    }
+    final auto = stream['url']?.toString() ?? '';
+    if (auto.isNotEmpty &&
+        !_qualitySizes.containsKey(auto) &&
+        !_sizingUrls.contains(auto)) {
+      pending.putIfAbsent(auto, () => <String, dynamic>{});
+    }
     if (pending.isEmpty) return;
-    setState(() => _sizesLoading = true);
-    for (final entry in pending.entries) {
-      final headers = streams
-              .firstWhere(
-                (s) =>
-                    s['url']?.toString() == entry.key ||
-                    (s['qualities'] as List? ?? const []).any(
-                      (q) => q is Map && q['url']?.toString() == entry.key,
-                    ),
-                orElse: () => const <String, dynamic>{},
-              )['headers'] as Map<String, dynamic>? ??
-          const {};
-      final bitrate = int.tryParse('${entry.value['averageBitrate'] ?? ''}');
-      final seconds =
-          int.tryParse('${entry.value['runtime'] ?? entry.value['duration'] ?? ''}');
-      final size = await StreamSizeProbe.probe(
-        entry.key,
-        headers: headers.map((k, v) => MapEntry('$k', '$v')),
-        averageBitrate: bitrate,
-        runtimeSeconds: seconds,
-      );
+
+    if (mounted) setState(() => _sizesLoading = true);
+    final urls = pending.keys.toList();
+    final slots = <_ProbeSlot>[];
+    for (final url in urls) {
+      if (mounted) setState(() => _sizingUrls.add(url));
+      slots.add(_ProbeSlot(url, pending[url]!));
+    }
+
+    // Bounded pool: all variants are requested at once (not one at a time,
+    // which is why sizes never arrived), but capped so a sheet with 30
+    // variants doesn't open 30 simultaneous playlist fetches and get throttled.
+    const poolSize = 6;
+    for (var offset = 0; offset < slots.length; offset += poolSize) {
       if (!mounted) return;
-      setState(() => _qualitySizes[entry.key] = size);
+      final batch = slots.skip(offset).take(poolSize).toList();
+      await _probeBatch(batch, streams);
     }
     if (mounted) setState(() => _sizesLoading = false);
   }
 
+  Future<void> _probeBatch(
+    List<_ProbeSlot> batch,
+    List<Map<String, dynamic>> streams,
+  ) async {
+    await Future.wait(
+      batch.map((slot) async {
+        final headers = _headersFor(stream0: streams, url: slot.url);
+        final bitrate = int.tryParse('${slot.quality['averageBitrate'] ?? ''}');
+        final seconds = int.tryParse(
+          '${slot.quality['runtime'] ?? slot.quality['duration'] ?? ''}',
+        );
+        int? size;
+        try {
+          // Deadline per URL: a server that never answers must not leave its
+          // row saying "sizing…" for the rest of the session.
+          size = await StreamSizeProbe.probe(
+            slot.url,
+            headers: headers,
+            averageBitrate: bitrate,
+            runtimeSeconds: seconds,
+          ).timeout(const Duration(seconds: 12));
+        } catch (_) {
+          size = null;
+        }
+        if (!mounted) return;
+        setState(() {
+          _sizingUrls.remove(slot.url);
+          _qualitySizes[slot.url] = size;
+        });
+      }),
+    );
+  }
+
+  Map<String, String> _headersFor({
+    required List<Map<String, dynamic>> stream0,
+    required String url,
+  }) {
+    for (final stream in stream0) {
+      final matches = stream['url']?.toString() == url ||
+          (stream['qualities'] as List? ?? const []).any(
+            (q) => q is Map && q['url']?.toString() == url,
+          );
+      if (!matches) continue;
+      final headers = stream['headers'];
+      if (headers is Map) {
+        return headers.map((k, v) => MapEntry('$k', '$v'));
+      }
+    }
+    return const {};
+  }
+
   String _sizeLabel(String url) {
     final size = _qualitySizes[url];
-    if (size == null) return '';
+    if (size == null || size <= 0) return '';
     return StreamSizeProbe.format(
       size,
       estimated: StreamSizeProbe.isHls(url),
     );
+  }
+
+  /// Text shown on the right of a quality row.
+  String _sizeCell(String url) {
+    if (_qualitySizes.containsKey(url)) return _sizeLabel(url);
+    if (_sizingUrls.contains(url)) return 'sizing…';
+    return '';
   }
 
   void _clampSelection() {
@@ -1674,6 +1757,11 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
                               _selectedQualityIndex = null;
                               _selectedAudioIndex = null;
                             });
+                            // Measure this server's variants now that its
+                            // quality list is what the user is looking at.
+                            unawaited(
+                              _probeServerQualities(_availableStreams, serverIdx),
+                            );
                           },
                           child: Container(
                             padding: const EdgeInsets.all(12),
@@ -1774,9 +1862,7 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
                             // quality (exact for progressive, "~" estimate for
                             // HLS) — the quality name is already on the left,
                             // so it is not repeated here.
-                            final sizeText = _sizesLoading && !_qualitySizes.containsKey(qualityUrl)
-                                ? 'sizing…'
-                                : _sizeLabel(qualityUrl);
+                            final sizeText = _sizeCell(qualityUrl);
 
                             return Padding(
                               padding: const EdgeInsets.only(
@@ -2031,4 +2117,11 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
       ),
     );
   }
+}
+
+/// One in-flight size probe.
+class _ProbeSlot {
+  const _ProbeSlot(this.url, this.quality);
+  final String url;
+  final Map<String, dynamic> quality;
 }
