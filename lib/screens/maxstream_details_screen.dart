@@ -1513,9 +1513,14 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
     );
   }
 
-  /// Text shown on the right of a quality row.
+  /// Text shown on the right of a quality row: the size once known, "sizing…"
+  /// while it is being measured, and an explicit dash when the host would not
+  /// answer (so the row never looks half-broken).
   String _sizeCell(String url) {
-    if (_qualitySizes.containsKey(url)) return _sizeLabel(url);
+    if (_qualitySizes.containsKey(url)) {
+      final size = _sizeLabel(url);
+      return size.isEmpty ? '—' : size;
+    }
     if (_sizingUrls.contains(url)) return 'sizing…';
     return '';
   }

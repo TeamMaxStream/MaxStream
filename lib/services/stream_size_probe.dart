@@ -21,9 +21,26 @@ import 'stream_security.dart';
 class StreamSizeProbe {
   StreamSizeProbe._();
 
-  static final Map<String, int?> _cache = {};
+  static final Map<String, int> _cache = {};
+  /// URLs that failed, with the time, so a transient network hiccup does not
+  /// blank the row for the rest of the session — but a dead server is not
+  /// re-probed on every keystroke either.
+  static final Map<String, DateTime> _failed = {};
+  static const Duration _failureCooldown = Duration(seconds: 60);
   static final Map<String, Future<int?>> _inFlight = {};
   static const Duration _timeout = Duration(seconds: 6);
+
+  /// Stream CDNs frequently reject requests without a browser User-Agent, which
+  /// made a probe return nothing while the real download (which sets one)
+  /// worked fine.
+  static const String _defaultUserAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+  static Map<String, String> _withUserAgent(Map<String, String> headers) {
+    final hasUa = headers.keys.any((k) => k.toLowerCase() == 'user-agent');
+    return hasUa ? headers : {'User-Agent': _defaultUserAgent, ...headers};
+  }
 
   static bool isHls(String url) {
     final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
@@ -38,7 +55,13 @@ class StreamSizeProbe {
     int? runtimeSeconds,
   }) {
     final key = keyFor(url, headers);
-    if (_cache.containsKey(key)) return Future.value(_cache[key]);
+    final cached = _cache[key];
+    if (cached != null) return Future.value(cached);
+    final failedAt = _failed[key];
+    if (failedAt != null &&
+        DateTime.now().difference(failedAt) < _failureCooldown) {
+      return Future.value(null);
+    }
     return _inFlight[key] ??= _probe(url, headers, averageBitrate, runtimeSeconds)
         .whenComplete(() => _inFlight.remove(key));
   }
@@ -53,7 +76,12 @@ class StreamSizeProbe {
     final int? value = isHls(url)
         ? await _estimateHls(url, headers, averageBitrate, runtimeSeconds)
         : await _exactContentLength(url, headers);
-    _cache[keyFor(url, headers)] = value;
+    if (value != null && value > 0) {
+      _cache[keyFor(url, headers)] = value;
+      _failed.remove(keyFor(url, headers));
+    } else {
+      _failed[keyFor(url, headers)] = DateTime.now();
+    }
     return value;
   }
 
@@ -68,7 +96,7 @@ class StreamSizeProbe {
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(url))
-        ..headers.addAll(headers)
+        ..headers.addAll(_withUserAgent(headers))
         ..followRedirects = true
         ..headers['Range'] = 'bytes=0-0';
       final response = await client.send(request).timeout(_timeout);
@@ -113,7 +141,8 @@ class StreamSizeProbe {
         // BANDWIDTH lives on the master; the runtime lives on the media
         // playlist, so a master URL costs one extra tiny request.
         bitrate ??= _bandwidthOf(playlist, isMaster: isMaster);
-        final media = isMaster ? await _firstVariantUrl(playlist) : playlist;
+        final media =
+            isMaster ? _firstVariantUrl(playlist, url) : playlist;
         if (media != null) {
           seconds ??= _durationOf(await _fetchText(media, headers) ?? media);
         }
@@ -156,21 +185,27 @@ class StreamSizeProbe {
     return found ? seconds.round() : null;
   }
 
-  /// First variant URI of a master playlist (absolute URLs only).
-  static Future<String?> _firstVariantUrl(String master) async {
+  /// First variant URI of a master playlist, resolved against the playlist's own
+  /// URL. Variant lines are almost always RELATIVE ("720p/index.m3u8"); only
+  /// accepting absolute ones meant the runtime was never found and every HLS
+  /// size came back empty.
+  static String? _firstVariantUrl(String master, String playlistUrl) {
+    final Uri? base = Uri.tryParse(playlistUrl);
     final lines = const LineSplitter().convert(master);
-    String? pendingVariant;
+    var sawVariantTag = false;
     for (final line in lines) {
-      if (line.startsWith('#EXT-X-STREAM-INF:')) {
-        pendingVariant = line;
+      final trimmed = line.trim();
+      if (trimmed.startsWith('#EXT-X-STREAM-INF:')) {
+        sawVariantTag = true;
         continue;
       }
-      if (line.trim().isEmpty || line.startsWith('#')) continue;
-      if (pendingVariant == null) continue;
-      final resolved = Uri.parse(line.trim()).isAbsolute
-          ? line.trim()
-          : null;
-      return resolved;
+      if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+      if (!sawVariantTag) continue;
+      final uri = Uri.tryParse(trimmed);
+      if (uri == null) continue;
+      if (uri.hasScheme) return trimmed;
+      if (base == null) return null;
+      return base.resolveUri(uri).toString();
     }
     return null;
   }
@@ -183,7 +218,7 @@ class StreamSizeProbe {
     final client = http.Client();
     try {
       final response = await client
-          .get(Uri.parse(url), headers: headers)
+          .get(Uri.parse(url), headers: _withUserAgent(headers))
           .timeout(_timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       return response.body;
@@ -194,7 +229,10 @@ class StreamSizeProbe {
     }
   }
 
-  static void clear() => _cache.clear();
+  static void clear() {
+    _cache.clear();
+    _failed.clear();
+  }
 
   /// Human-readable, with `~` marking an estimate.
   static String format(int? bytes, {required bool estimated}) {
