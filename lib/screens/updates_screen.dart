@@ -21,17 +21,21 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
   UpdateInfo? _availableUpdate;
   String _deviceArch = '...';
 
-  // APK variant names matching GitHub release assets
+  // APK variant names matching GitHub release assets. Must stay in sync with
+  // kApkVariants in services/update_service.dart and with the split-per-ABI
+  // build in .github/workflows/build.yml.
   static const Map<String, String> variantNames = {
     'arm64-v8a': 'maxstream-arm64-v8a.apk',
     'armeabi-v7a': 'maxstream-armeabi-v7a.apk',
     'x86_64': 'maxstream-x86_64.apk',
+    'x86': 'maxstream-x86.apk',
   };
 
   static const Map<String, String> variantLabels = {
     'arm64-v8a': 'ARM 64-bit (arm64-v8a)',
     'armeabi-v7a': 'ARM 32-bit (armeabi-v7a)',
-    'x86_64': 'x86_64 (Intel/AMD)',
+    'x86_64': 'x86_64 (Intel/AMD 64-bit)',
+    'x86': 'x86 (Intel/AMD 32-bit)',
   };
 
   @override

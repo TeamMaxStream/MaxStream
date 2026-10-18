@@ -58,20 +58,26 @@ jobs:
 
       - name: Build Mobile APKs (split per ABI for VLC size)
         run: |
-          # --split-per-abi produces app-arm64-v8a, app-armeabi-v7a, app-x86_64 release APKs
+          # --split-per-abi produces app-arm64-v8a, app-armeabi-v7a, app-x86_64 and
+          # app-x86 release APKs. x86 (32-bit) is required too: older emulators and
+          # some Intel tablets have no 64-bit support, and without that APK the app
+          # matched no variant and offered them an arm64 build that cannot install.
           # Flutter's post-build check looks for app-release.apk (single) and fails, so || true
           flutter build apk --release --split-per-abi || true
           # Verify the split APKs actually exist
           ls -lh build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
           ls -lh build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
           ls -lh build/app/outputs/flutter-apk/app-x86_64-release.apk
+          ls -lh build/app/outputs/flutter-apk/app-x86-release.apk
           # Copy into per-ABI folders for clean artifact upload
           mkdir -p build/app/outputs/flutter-apk/arm64-v8a
           mkdir -p build/app/outputs/flutter-apk/armeabi-v7a
           mkdir -p build/app/outputs/flutter-apk/x86_64
+          mkdir -p build/app/outputs/flutter-apk/x86
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app/outputs/flutter-apk/arm64-v8a/maxstream-arm64-v8a.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/app/outputs/flutter-apk/armeabi-v7a/maxstream-armeabi-v7a.apk
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk build/app/outputs/flutter-apk/x86_64/maxstream-x86_64.apk
+          cp build/app/outputs/flutter-apk/app-x86-release.apk build/app/outputs/flutter-apk/x86/maxstream-x86.apk
 
       - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@v4
@@ -92,6 +98,13 @@ jobs:
         with:
           name: maxstream-x86_64
           path: build/app/outputs/flutter-apk/x86_64/maxstream-x86_64.apk
+          retention-days: 7
+
+      - name: Upload x86 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: maxstream-x86
+          path: build/app/outputs/flutter-apk/x86/maxstream-x86.apk
           retention-days: 7
 
   build-tv:

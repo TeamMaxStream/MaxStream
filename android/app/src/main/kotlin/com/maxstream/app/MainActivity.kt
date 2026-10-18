@@ -298,20 +298,26 @@ class MainActivity : AudioServiceActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getArch" -> {
-                        // Return the device's primary ABI for APK variant selection.
-                        val primaryAbi = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                            android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+                        // Pick the ABI this device can actually install, preferring
+                        // the one our release APKs are split for. Reporting only
+                        // SUPPORTED_ABIS.first() meant a 32-bit x86 device/emulator
+                        // returned "x86", which matched no APK variant and silently
+                        // fell back to arm64 — an APK that cannot install on it.
+                        val supported = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                            android.os.Build.SUPPORTED_ABIS.toList()
                         } else {
                             @Suppress("DEPRECATION")
-                            android.os.Build.CPU_ABI
+                            listOf(android.os.Build.CPU_ABI)
                         }
-                        // Map CPU ABI to APK variant name
-                        val variant = when {
-                            primaryAbi.contains("arm64") || primaryAbi.contains("aarch64") -> "arm64-v8a"
-                            primaryAbi.contains("arm") -> "armeabi-v7a"
-                            primaryAbi.contains("x86_64") || primaryAbi.contains("amd64") -> "x86_64"
-                            else -> primaryAbi
-                        }
+                        val variant = supported.firstNotNullOfOrNull { abi ->
+                            when {
+                                abi.startsWith("arm64") || abi.startsWith("aarch64") -> "arm64-v8a"
+                                abi.startsWith("armeabi") || abi == "arm" -> "armeabi-v7a"
+                                abi.startsWith("x86_64") || abi.startsWith("amd64") -> "x86_64"
+                                abi.startsWith("x86") -> "x86"
+                                else -> null
+                            }
+                        } ?: supported.firstOrNull() ?: "arm64-v8a"
                         result.success(variant)
                     }
                     "installApk" -> {

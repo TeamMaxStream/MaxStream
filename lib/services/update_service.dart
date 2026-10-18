@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -14,6 +15,10 @@ const Map<String, String> kApkVariants = {
   'arm64-v8a': 'maxstream-arm64-v8a.apk',
   'armeabi-v7a': 'maxstream-armeabi-v7a.apk',
   'x86_64': 'maxstream-x86_64.apk',
+  // 32-bit x86 (older emulators and some Intel tablets). Was missing here, so
+  // those devices matched no variant and were handed an arm64 APK that cannot
+  // install on them.
+  'x86': 'maxstream-x86.apk',
 };
 
 /// Get the device's primary ABI (arm64-v8a, armeabi-v7a, x86_64).
@@ -25,12 +30,17 @@ Future<String> getDeviceArch() async {
       if (arch != null && kApkVariants.containsKey(arch)) return arch;
     }
   } catch (_) {}
-  // Fallback from Dart
+  // Fallback from Dart (only used if the native channel is unavailable).
   try {
     final abi = Platform.operatingSystemVersion;
     if (abi.contains('arm64') || abi.contains('aarch64')) return 'arm64-v8a';
-    if (abi.contains('arm')) return 'armeabi-v7a';
+    if (abi.contains('armeabi') ||
+        abi.contains('armv7') ||
+        abi.contains('arm ')) {
+      return 'armeabi-v7a';
+    }
     if (abi.contains('x86_64') || abi.contains('amd64')) return 'x86_64';
+    if (abi.contains('x86')) return 'x86';
   } catch (_) {}
   return 'arm64-v8a'; // default to most common
 }
@@ -243,24 +253,37 @@ class UpdateService {
         }
       }
 
-      // Fallback: find any arm64 APK (most common).
-      for (final asset in assets) {
-        final name = (asset['name'] as String? ?? '').toLowerCase();
-        if (name.endsWith('.apk') && name.contains('maxstream-arm64')) {
-          return UpdateInfo(
-            downloadUrl: asset['browser_download_url'] as String,
-            version: latestVersion,
-            changelog: changelog,
-          );
+      // Fallback: the release is missing this exact variant, so try the others
+      // in a sensible order. This used to hard-prefer arm64, which handed x86
+      // and armeabi devices an APK their CPU cannot run (a failed install with
+      // no explanation).
+      for (final fallbackArch in _fallbackArchOrder(deviceArch)) {
+        final filename = kApkVariants[fallbackArch];
+        if (filename == null || filename == expectedFilename) continue;
+        for (final asset in assets) {
+          if (asset['name'] == filename) {
+            return UpdateInfo(
+              downloadUrl: asset['browser_download_url'] as String,
+              version: latestVersion,
+              changelog: changelog,
+            );
+          }
         }
       }
 
-      // Last fallback: any maxstream APK (not TV).
+      // Last resort: any maxstream APK that isn't the TV build. Never a
+      // different-CPU APK than we already tried above, because installing it
+      // cannot work.
+      final tried = <String>{
+        expectedFilename,
+        ..._fallbackArchOrder(deviceArch).map((a) => kApkVariants[a] ?? ''),
+      };
       for (final asset in assets) {
         final name = (asset['name'] as String? ?? '').toLowerCase();
         if (name.endsWith('.apk') &&
             name.contains('maxstream') &&
-            !name.contains('-tv')) {
+            !name.contains('-tv') &&
+            !tried.contains(asset['name'])) {
           return UpdateInfo(
             downloadUrl: asset['browser_download_url'] as String,
             version: latestVersion,
@@ -299,6 +322,20 @@ class UpdateService {
       if (_notifiedVersion == availableUpdate.version) _notifiedVersion = null;
       rethrow;
     }
+  }
+
+  /// Variants to try when a release doesn't carry the device's exact APK.
+  /// 64-bit first (nearly every current device), then 32-bit. Never returns the
+  /// device's own variant — the exact match already ran.
+  static List<String> _fallbackArchOrder(String deviceArch) {
+    final order = <String>[
+      if (deviceArch != 'arm64-v8a') 'arm64-v8a',
+      if (deviceArch != 'x86_64') 'x86_64',
+      if (deviceArch != 'armeabi-v7a') 'armeabi-v7a',
+      if (deviceArch != 'x86') 'x86',
+      'arm64-v8a',
+    ];
+    return LinkedHashSet<String>.of(order).toList();
   }
 
   static bool reserveUpdateDialog(String version) =>

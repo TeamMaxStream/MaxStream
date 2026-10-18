@@ -46,8 +46,15 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
     try {
       final abi = Platform.operatingSystemVersion;
       if (abi.contains('arm64') || abi.contains('aarch64')) return 'arm64-v8a';
-      if (abi.contains('arm')) return 'armeabi-v7a';
+      if (abi.contains('armeabi') ||
+          abi.contains('armv7') ||
+          abi.contains('arm ')) {
+        return 'armeabi-v7a';
+      }
       if (abi.contains('x86_64') || abi.contains('amd64')) return 'x86_64';
+      // 32-bit x86 (older emulators / Intel tablets) — was falling through to
+      // "unknown" here while the updater thought it was arm64.
+      if (abi.contains('x86')) return 'x86';
     } catch (_) {}
     return 'unknown';
   }
