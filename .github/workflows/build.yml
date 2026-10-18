@@ -58,26 +58,32 @@ jobs:
 
       - name: Build Mobile APKs (split per ABI for VLC size)
         run: |
-          # --split-per-abi produces app-arm64-v8a, app-armeabi-v7a, app-x86_64 and
-          # app-x86 release APKs. x86 (32-bit) is required too: older emulators and
-          # some Intel tablets have no 64-bit support, and without that APK the app
-          # matched no variant and offered them an arm64 build that cannot install.
+          # --split-per-abi produces app-arm64-v8a, app-armeabi-v7a and
+          # app-x86_64 release APKs. Flutter 3.47 no longer ships a 32-bit x86
+          # Android engine (its AndroidArch enum only has armeabi-v7a,
+          # arm64-v8a and x86_64), so there is no x86 split to publish. The step
+          # below still handles one if a future toolchain adds it, but never
+          # fails the build when it is absent.
           # Flutter's post-build check looks for app-release.apk (single) and fails, so || true
           flutter build apk --release --split-per-abi || true
-          # Verify the split APKs actually exist
-          ls -lh build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-          ls -lh build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-          ls -lh build/app/outputs/flutter-apk/app-x86_64-release.apk
-          ls -lh build/app/outputs/flutter-apk/app-x86-release.apk
+          APKS=build/app/outputs/flutter-apk
+          # Verify the splits we depend on actually exist
+          ls -lh $APKS/app-arm64-v8a-release.apk
+          ls -lh $APKS/app-armeabi-v7a-release.apk
+          ls -lh $APKS/app-x86_64-release.apk
           # Copy into per-ABI folders for clean artifact upload
-          mkdir -p build/app/outputs/flutter-apk/arm64-v8a
-          mkdir -p build/app/outputs/flutter-apk/armeabi-v7a
-          mkdir -p build/app/outputs/flutter-apk/x86_64
-          mkdir -p build/app/outputs/flutter-apk/x86
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app/outputs/flutter-apk/arm64-v8a/maxstream-arm64-v8a.apk
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/app/outputs/flutter-apk/armeabi-v7a/maxstream-armeabi-v7a.apk
-          cp build/app/outputs/flutter-apk/app-x86_64-release.apk build/app/outputs/flutter-apk/x86_64/maxstream-x86_64.apk
-          cp build/app/outputs/flutter-apk/app-x86-release.apk build/app/outputs/flutter-apk/x86/maxstream-x86.apk
+          mkdir -p $APKS/arm64-v8a $APKS/armeabi-v7a $APKS/x86_64
+          cp $APKS/app-arm64-v8a-release.apk $APKS/arm64-v8a/maxstream-arm64-v8a.apk
+          cp $APKS/app-armeabi-v7a-release.apk $APKS/armeabi-v7a/maxstream-armeabi-v7a.apk
+          cp $APKS/app-x86_64-release.apk $APKS/x86_64/maxstream-x86_64.apk
+          # Optional 32-bit x86: only when the toolchain actually emits it.
+          if [ -f $APKS/app-x86-release.apk ]; then
+            mkdir -p $APKS/x86
+            cp $APKS/app-x86-release.apk $APKS/x86/maxstream-x86.apk
+            echo "32-bit x86 APK produced"
+          else
+            echo "No 32-bit x86 APK (Flutter no longer ships that engine) - skipping"
+          fi
 
       - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@v4
@@ -100,12 +106,13 @@ jobs:
           path: build/app/outputs/flutter-apk/x86_64/maxstream-x86_64.apk
           retention-days: 7
 
-      - name: Upload x86 APK
+      - name: Upload x86 APK (only if the toolchain produced one)
         uses: actions/upload-artifact@v4
         with:
           name: maxstream-x86
           path: build/app/outputs/flutter-apk/x86/maxstream-x86.apk
           retention-days: 7
+          if-no-files-found: ignore
 
   build-tv:
     name: Kotlin TV APK (FossUniversalRelease)
