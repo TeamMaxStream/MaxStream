@@ -1770,11 +1770,13 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
                             final isQSelected =
                                 (_selectedQualityIndex ?? 0) == qIdx;
                             final qualityUrl = q['url']?.toString() ?? '';
-                            final sizeText = _sizeLabel(qualityUrl);
-                            final subtitle = [
-                              if (height > 0) '${height}p' else 'Adaptive bitrate',
-                              if (sizeText.isNotEmpty) sizeText,
-                            ].join(' • ');
+                            // The right-hand side carries the size for this
+                            // quality (exact for progressive, "~" estimate for
+                            // HLS) — the quality name is already on the left,
+                            // so it is not repeated here.
+                            final sizeText = _sizesLoading && !_qualitySizes.containsKey(qualityUrl)
+                                ? 'sizing…'
+                                : _sizeLabel(qualityUrl);
 
                             return Padding(
                               padding: const EdgeInsets.only(
@@ -1828,12 +1830,13 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
                                       ),
                                       const Spacer(),
                                       Text(
-                                        subtitle,
+                                        sizeText,
                                         style: TextStyle(
                                           color: isQSelected
-                                              ? Colors.white60
+                                              ? Colors.white
                                               : Colors.grey,
                                           fontSize: 11,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                     ],
