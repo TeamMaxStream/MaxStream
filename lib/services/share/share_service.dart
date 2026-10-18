@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../database/db_helper.dart';
 import '../download_storage_service.dart';
+import '../notification_service.dart';
 import '../profile_scope.dart';
 import 'lan_http_transport.dart';
 import 'nearby_transport.dart';
@@ -49,26 +50,38 @@ class ShareService {
   /// Missing ADVERTISE surfaces as Android error 8038
   /// (MISSING_PERMISSION_BLUETOOTH_ADVERTISE), which is what the app used to
   /// show verbatim when the user picked the Bluetooth option.
+  /// Extra setup the user still has to do (e.g. precise location).
+  static List<String> _pendingNearbyHints = const [];
+
+  /// Human-readable list of what's still missing, empty when all good.
+  static List<String> pendingNearbyHints() => _pendingNearbyHints;
+
   static Future<PermissionStatus> ensureTransportPermissions(
     String transportId,
   ) async {
-    if (transportId != 'nearby') return PermissionStatus.granted;
-    final results = <PermissionStatus>[
-      await Permission.locationWhenInUse.request(),
-      await Permission.bluetoothScan.request(),
-      await Permission.bluetoothConnect.request(),
-      await Permission.bluetoothAdvertise.request(),
-    ];
-    if (results.every(
-      (status) =>
-          status.isGranted || status.isLimited || status.isProvisional,
-    )) {
+    if (transportId != 'nearby') {
+      _pendingNearbyHints = const [];
       return PermissionStatus.granted;
     }
-    return results.firstWhere(
-      (status) => !status.isGranted && !status.isLimited && !status.isProvisional,
-      orElse: () => PermissionStatus.denied,
-    );
+    final location = await Permission.locationWhenInUse.request();
+    if (location.isDenied) return PermissionStatus.denied;
+    final missing = <String>[];
+    if (location.isLimited) {
+      // "Approximate location" is granted, but Nearby Connections needs
+      // precise to discover peers — without this the user was told location was
+      // denied even though they had allowed it.
+      missing.add('precise location');
+    }
+    for (final entry in {
+      Permission.bluetoothScan: 'Nearby devices',
+      Permission.bluetoothConnect: 'Nearby devices',
+      Permission.bluetoothAdvertise: 'Nearby devices',
+    }.entries) {
+      final status = await entry.key.request();
+      if (!status.isGranted && !status.isLimited) missing.add(entry.value);
+    }
+    _pendingNearbyHints = missing;
+    return PermissionStatus.granted;
   }
 
   /// Turns a native failure into something a user can act on.
@@ -85,9 +98,12 @@ class ShareService {
             'MaxStream in Settings, then try again.';
       }
       if (code.contains('8029') || code.contains('LOCATION')) {
-        return 'Location permission denied. Nearby sharing needs location to '
-            'discover the other device — allow it in Settings, or use the '
-            'Wi-Fi option.';
+        return 'Location permission denied. Nearby sharing needs precise '
+            'location to discover the other device — allow it in Settings, or '
+            'use the Wi-Fi option.';
+      }
+      if (code.contains('8037') || code.contains('BLUETOOTH_DISABLED')) {
+        return 'Turn on Bluetooth and Wi-Fi to use nearby sharing.';
       }
       return error.message?.toString() ?? error.code;
     }
@@ -174,23 +190,96 @@ class ShareService {
     final transport = transportById(transportId);
     final session = ShareSession(
       manifest: manifest,
+      // The LAN sender always streams from `start` to EOF, so only the start
+      // offset matters; openRead takes it positionally and never loads the
+      // whole file into memory.
       openFile: (file, {int? start, int? end}) async {
         final path = file.path;
-        if (path == null) {
-          return const Stream<Uint8List>.empty();
-        }
-        // openRead takes positional range args, so a partial read of a multi-GB
-        // file never loads the whole thing.
+        if (path == null) return const Stream<Uint8List>.empty();
         return File(path)
-            .openRead(start, end)
+            .openRead(start)
             .map((chunk) => Uint8List.fromList(chunk));
       },
     );
-    return transport.publish(session);
+    final descriptor = await transport.publish(session);
+    _watchSendingProgress(transportId, manifest);
+    return descriptor;
   }
 
   Future<void> stopSending(String transportId) =>
       transportById(transportId).unpublish();
+
+  /// Watches a running share and mirrors it into a notification (bytes sent).
+  void _watchSendingProgress(
+    String transportId,
+    ShareManifest manifest,
+  ) {
+    final transport = transportById(transportId);
+    final notifications = NotificationService();
+    const notificationId = 0x5A4E; // 'SN' — same slot as receiving
+    final filesByIndex = <int, ShareItem>{};
+    for (final item in manifest.items) {
+      for (final file in item.files) {
+        filesByIndex[file.index] = item;
+      }
+    }
+    final total = manifest.totalBytes;
+    final byItem = <String, int>{};
+    var lastPercent = -1;
+    final sub = transport.progress.listen((files) {
+      byItem.clear();
+      var sent = 0;
+      files.forEach((index, entry) {
+        sent += entry.received;
+        final item = filesByIndex[index];
+        if (item != null) {
+          byItem[item.downloadKey] = (byItem[item.downloadKey] ?? 0) + entry.received;
+        }
+      });
+      final percent = total <= 0 ? 0 : ((sent / total) * 100).round();
+      if (percent == lastPercent) return;
+      lastPercent = percent;
+      final active = byItem.entries.isEmpty
+          ? manifest.senderName
+          : manifest.items
+              .firstWhere(
+                (i) => i.downloadKey == byItem.keys.first,
+                orElse: () => manifest.items.first,
+              )
+              .title;
+      unawaited(notifications.showShareProgress(
+        id: notificationId,
+        title: 'Sending ${manifest.items.length} item${manifest.items.length == 1 ? '' : 's'}',
+        label: active,
+        done: sent,
+        total: total,
+        sending: true,
+      ));
+    });
+    _sendingSubscribers[transportId] = sub;
+  }
+
+  final Map<String, StreamSubscription<Map<int, ShareFileProgress>>>
+      _sendingSubscribers = {};
+
+  /// Ends the sending notification with a success/failure line.
+  Future<void> finishSending(
+    String transportId,
+    ShareManifest manifest, {
+    String? error,
+  }) async {
+    final sub = _sendingSubscribers.remove(transportId);
+    await sub?.cancel();
+    await NotificationService().showShareFinished(
+      id: 0x5A4E,
+      label: error == null
+          ? '${manifest.items.length} item${manifest.items.length == 1 ? '' : 's'} '
+              '· ${DownloadStorageService.formatBytes(manifest.totalBytes)}'
+          : 'Send failed',
+      sending: true,
+      error: error,
+    );
+  }
 
   Stream<ShareSenderEvent> senderEvents(String transportId) =>
       transportById(transportId).senderEvents;
@@ -216,9 +305,35 @@ class ShareService {
   }) async {
     final transport = transportById(descriptor.transportId);
     final root = await DownloadStorageService.root();
+    final notifications = NotificationService();
+    const notificationId = 0x5A4E; // 'SN'
+    // Per-file progress from the transport, mapped back to the item it belongs
+    // to so the notification can show "3 of 8 episodes • 1.2 GB of 3.4 GB".
+    var currentLabel = '';
+    var progressSub = transport.progress.listen((files) {
+      if (items.isEmpty) return;
+      var received = 0;
+      for (final item in items) {
+        for (final file in item.files) {
+          final entry = files[file.index];
+          if (entry != null) received += entry.received;
+        }
+      }
+      final total = items.fold<int>(0, (sum, item) => sum + item.totalBytes);
+      unawaited(notifications.showShareProgress(
+        id: notificationId,
+        title: 'Receiving ${items.length} item${items.length == 1 ? '' : 's'}',
+        label: currentLabel,
+        done: received,
+        total: total,
+        sending: false,
+      ));
+    });
 
-    for (final item in items) {
+    try {
+      for (final item in items) {
       onStage?.call(item.title);
+      currentLabel = item.title;
       final key = item.downloadKey.isEmpty
           ? 'shared_${item.mediaId}_${DateTime.now().microsecondsSinceEpoch}'
           : item.downloadKey;
@@ -268,8 +383,25 @@ class ShareService {
         seasonNumber: item.seasonNumber,
         episodeNumber: item.episodeNumber,
       );
+      }
+      DBHelper.notifyDownloadsChanged();
+      await notifications.showShareFinished(
+        id: notificationId,
+        label: '${items.length} item${items.length == 1 ? '' : 's'} '
+            '· ${DownloadStorageService.formatBytes(items.fold<int>(0, (sum, i) => sum + i.totalBytes))}',
+        sending: false,
+      );
+    } catch (error) {
+      await notifications.showShareFinished(
+        id: notificationId,
+        label: 'Receive failed',
+        sending: false,
+        error: error.toString(),
+      );
+      rethrow;
+    } finally {
+      await progressSub.cancel();
     }
-    DBHelper.notifyDownloadsChanged();
   }
 
   Future<void> _writeFile(

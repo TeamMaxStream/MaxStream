@@ -7,6 +7,7 @@ import '../services/download_storage_service.dart';
 import '../services/media_download_manager.dart';
 import '../services/profile_scope.dart';
 import '../screens/downloads_settings_screen.dart';
+import '../screens/share/share_picker_sheet.dart';
 import '../screens/share/share_send_sheet.dart';
 import '../widgets/app_network_image.dart';
 import '../widgets/app_shimmer.dart';
@@ -518,7 +519,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         collapsedIconColor: Colors.white70,
         trailing: IconButton(
           tooltip: 'Send series to another device',
-          onPressed: () => _share(List.of(episodes), title),
+          onPressed: () => _pickAndSendSeries(List.of(episodes), title),
           icon: const Icon(Icons.send_outlined, color: Colors.white70),
         ),
         children: seasons.entries.map((entry) {
@@ -564,11 +565,12 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           const SizedBox(width: 10),
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: _downloads.isEmpty
-                  ? null
-                  : () => _share(List.of(_downloads), 'all downloads'),
+              // Opens the picker rather than sending everything: the user
+              // decides between a whole series, some seasons or single
+              // episodes.
+              onPressed: _downloads.isEmpty ? null : () => _pickAndSend(),
               icon: const Icon(Icons.send_outlined, size: 18),
-              label: const Text('Send all'),
+              label: const Text('Send'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -701,6 +703,17 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   /// Opens the device-to-device send sheet for [downloads].
   void _share(List<Map<String, dynamic>> downloads, String? title) {
     showShareSendSheet(context, downloads: downloads, title: title);
+  }
+
+  /// Top-level Send: let the user choose what goes.
+  void _pickAndSend() => showSharePicker(context);
+
+  /// Per-series Send: same picker, scoped to that series' episodes.
+  void _pickAndSendSeries(
+    List<Map<String, dynamic>> episodes,
+    String title,
+  ) {
+    showSharePicker(context, downloads: episodes, title: title);
   }
 
   Widget _thumbnail(String url) {

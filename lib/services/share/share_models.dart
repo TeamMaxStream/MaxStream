@@ -160,6 +160,10 @@ class ShareSession {
   });
 
   final ShareManifest manifest;
+
+  /// Opens a file for streaming. [start]/[end] are a byte range hint: the LAN
+  /// transport honours [start] and always streams to EOF, Nearby sends the
+  /// whole file and ignores both.
   final Future<Stream<Uint8List>> Function(
     ShareFileEntry file, {
     int? start,

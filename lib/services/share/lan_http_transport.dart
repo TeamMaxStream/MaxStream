@@ -29,10 +29,6 @@ class LanHttpTransport implements ShareTransport {
       StreamController<Map<int, ShareFileProgress>>.broadcast();
   final Map<int, ShareFileProgress> _lastProgress = {};
 
-  /// Concurrent chunk requests per file. More than one stream keeps both the
-  /// Wi-Fi link and the storage pipeline busy; 4 is a good ceiling on phones.
-  static const int _parallelChunks = 4;
-  static const int _chunkSize = 4 * 1024 * 1024;
   static const Duration _connectTimeout = Duration(seconds: 8);
   static const Duration _idleTimeout = Duration(minutes: 30);
 
@@ -128,9 +124,15 @@ class LanHttpTransport implements ShareTransport {
       return;
     }
     final file = files[index];
-    final range = _parseRange(request.headers.value(HttpHeaders.rangeHeader), file.size);
-    final start = range?.$1 ?? 0;
-    final end = range?.$2 ?? (file.size - 1);
+    // Honour only the START of the Range header: the response always runs to
+    // EOF. Taking a bounded [start, end] window made the sender advertise a
+    // content-length that could disagree with what openRead actually produced,
+    // and the transfer died mid-file ("starts then stops").
+    final start = _parseRangeStart(
+      request.headers.value(HttpHeaders.rangeHeader),
+      file.size,
+    );
+    final end = file.size - 1;
     final length = file.size == 0 ? 0 : end - start + 1;
 
     request.response
@@ -146,7 +148,7 @@ class LanHttpTransport implements ShareTransport {
 
     _emit('progress', 'Sending ${file.name}');
     try {
-      final stream = await session.openFile(file, start: start, end: end);
+      final stream = await session.openFile(file, start: start);
       // A receiver that walks away mid-file makes the next write throw; the
       // catch below turns that into a transport event instead of a crash.
       await for (final chunk in stream) {
@@ -223,63 +225,45 @@ class LanHttpTransport implements ShareTransport {
     }
 
     final from = start ?? 0;
-    final to = end ?? (file.size == 0 ? 0 : file.size - 1);
-    final total = file.size == 0 ? 0 : to - from + 1;
-    if (total <= 0) return;
+    if (file.size > 0 && from >= file.size) return;
 
+    // One request per file, written in order. Splitting a file into parallel
+    // ranged requests and writing the results in *completion* order silently
+    // interleaved the pieces, so the file arrived corrupt and the transfer
+    // stalled. Parallelism now happens across files instead (see
+    // ShareService.receive), which keeps the link busy without reordering.
     final client = HttpClient()..connectionTimeout = _connectTimeout;
     var received = 0;
     try {
-      final chunks = <(int, int)>[];
-      for (var offset = from; offset <= to; offset += _chunkSize) {
-        final chunkEnd = min(offset + _chunkSize - 1, to);
-        chunks.add((offset, chunkEnd));
+      final uri = Uri.parse('http://$host:$port/s/$token/f/${file.index}');
+      final request = await client.getUrl(uri).timeout(_connectTimeout);
+      if (from > 0) {
+        request.headers.set(HttpHeaders.rangeHeader, 'bytes=$from-');
       }
-      // Up to _parallelChunks requests in flight; results are emitted in
-      // completion order, which is fine because the caller writes at offsets.
-      final pending = chunks.toList();
-      while (pending.isNotEmpty) {
-        final batch = pending.take(_parallelChunks).toList();
-        pending.removeRange(0, batch.length);
-        final results = await Future.wait(batch.map((range) async {
-          return _fetchChunk(client, host, port, token, file.index, range);
-        }));
-        for (final result in results) {
-          yield result;
-          received += result.length;
-          _updateProgress(file, received, done: false);
-        }
+      final response = await request.close().timeout(const Duration(minutes: 5));
+      if (response.statusCode != HttpStatus.partialContent &&
+          response.statusCode != HttpStatus.ok) {
+        throw HttpException(
+          'Transfer failed (${response.statusCode})',
+          uri: uri,
+        );
+      }
+      final expected = response.contentLength;
+      await for (final chunk in response) {
+        received += chunk.length;
+        yield Uint8List.fromList(chunk);
+        _updateProgress(file, received, done: false);
+      }
+      if (received != expected) {
+        throw HttpException(
+          'Transfer ended early ($received of $expected bytes)',
+          uri: uri,
+        );
       }
       _updateProgress(file, received, done: true);
     } finally {
       client.close(force: true);
     }
-  }
-
-  Future<Uint8List> _fetchChunk(
-    HttpClient client,
-    String host,
-    String port,
-    String token,
-    int index,
-    (int, int) range,
-  ) async {
-    final uri = Uri.parse('http://$host:$port/s/$token/f/$index');
-    final request = await client.getUrl(uri).timeout(_connectTimeout);
-    request.headers.set(HttpHeaders.rangeHeader, 'bytes=${range.$1}-${range.$2}');
-    final response = await request.close().timeout(const Duration(minutes: 5));
-    if (response.statusCode != HttpStatus.partialContent &&
-        response.statusCode != HttpStatus.ok) {
-      throw HttpException(
-        'Transfer failed (${response.statusCode})',
-        uri: uri,
-      );
-    }
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in response) {
-      builder.add(chunk);
-    }
-    return builder.takeBytes();
   }
 
   @override
@@ -302,18 +286,13 @@ class LanHttpTransport implements ShareTransport {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  static (int, int)? _parseRange(String? header, int size) {
-    if (header == null || size == 0) return null;
-    if (!header.startsWith('bytes=')) return null;
-    final parts = header.substring(6).split('-');
-    if (parts.length != 2) return null;
-    final start = int.tryParse(parts[0].trim());
-    var end = int.tryParse(parts[1].trim());
-    if (start == null || start < 0 || start >= size) return null;
-    end ??= size - 1;
-    if (end >= size) end = size - 1;
-    if (end < start) return null;
-    return (start, end);
+  /// Start offset of a `bytes=START-` / `bytes=START-END` header, or 0.
+  static int _parseRangeStart(String? header, int size) {
+    if (header == null || size == 0 || !header.startsWith('bytes=')) return 0;
+    final first = header.substring(6).split('-').first.trim();
+    final start = int.tryParse(first);
+    if (start == null || start < 0 || start >= size) return 0;
+    return start;
   }
 
   /// Picks the address other devices can actually reach: the first non-loopback

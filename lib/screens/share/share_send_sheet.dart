@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../database/db_helper.dart';
@@ -32,6 +32,7 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
   List<Map<String, dynamic>> _available = const [];
   String _transportId = 'lan';
   ShareDescriptor? _descriptor;
+  ShareManifest? _sentManifest;
   int _manifestItems = 0;
   int _manifestBytes = 0;
   String _status = '';
@@ -308,6 +309,16 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
         ));
         return;
       }
+      final hints = ShareService.pendingNearbyHints();
+      if (hints.isNotEmpty) {
+        // Usually "approximate location" — Nearby Connections needs precise to
+        // discover peers, and telling the user to "allow location" when they
+        // already did is exactly the dead end we hit.
+        _permissionHint(
+          'Nearby needs ${hints.join(' and ')}. Open settings to finish setup, '
+          'or use the Wi-Fi option.',
+        );
+      }
       final manifest = await ShareService.instance.buildManifest(_items);
       if (manifest.items.isEmpty) {
         _toast('Nothing to send — the files are missing on this device.');
@@ -323,6 +334,7 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
       });
       setState(() {
         _descriptor = descriptor;
+        _sentManifest = manifest;
         _sharing = true;
         _manifestItems = manifest.items.length;
         _manifestBytes = manifest.totalBytes;
@@ -336,6 +348,10 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
   }
 
   Future<void> _stop() async {
+    final manifest = _sentManifest;
+    if (manifest != null) {
+      await ShareService.instance.finishSending(_transportId, manifest);
+    }
     await ShareService.instance.stopSending(_transportId);
     if (!mounted) return;
     setState(() {
@@ -343,6 +359,22 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
       _sharing = false;
       _status = '';
     });
+  }
+
+  /// Message with a shortcut into the app's settings page.
+  void _permissionHint(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.orange,
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: 'Settings',
+          onPressed: openAppSettings,
+        ),
+      ),
+    );
   }
 
   void _toast(String message) {

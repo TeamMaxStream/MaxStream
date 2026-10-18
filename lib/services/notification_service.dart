@@ -99,6 +99,84 @@ class NotificationService {
     );
   }
 
+  /// Progress for a device-to-device share (sending on one phone, receiving
+  /// on the other). [done]/[total] are bytes so the notification can show the
+  /// real transferred size, not just a percentage.
+  Future<void> showShareProgress({
+    required int id,
+    required String title,
+    required String label,
+    required int done,
+    required int total,
+    required bool sending,
+  }) async {
+    final percent = total <= 0 ? 0 : ((done / total) * 100).round().clamp(0, 100);
+    final size = _humanBytes(done);
+    final details = AndroidNotificationDetails(
+      'maxstream_share',
+      'Device-to-device sharing',
+      channelDescription: 'Progress while sending or receiving a shared movie '
+          'or series to another device',
+      importance: Importance.low,
+      priority: Priority.low,
+      category: AndroidNotificationCategory.progress,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+      showProgress: true,
+      maxProgress: 100,
+      progress: percent,
+      icon: 'ic_notification',
+      largeIcon: const DrawableResourceAndroidBitmap('ic_launcher'),
+    );
+    await _notificationsPlugin.show(
+      id,
+      title,
+      '$label · $percent% · $size'
+      '${total <= 0 ? '' : ' of ${_humanBytes(total)}'}',
+      NotificationDetails(android: details),
+      payload: 'downloads',
+    );
+  }
+
+  /// Terminal state of a share: finished, failed or stopped.
+  Future<void> showShareFinished({
+    required int id,
+    required String label,
+    required bool sending,
+    String? error,
+  }) async {
+    const details = AndroidNotificationDetails(
+      'maxstream_share',
+      'Device-to-device sharing',
+      channelDescription: 'Progress while sending or receiving a shared movie '
+          'or series to another device',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      autoCancel: true,
+      onlyAlertOnce: true,
+      icon: 'ic_notification',
+      largeIcon: DrawableResourceAndroidBitmap('ic_launcher'),
+    );
+    final verb = sending ? 'Sent' : 'Received';
+    await _notificationsPlugin.show(
+      id,
+      error == null ? '$verb to device' : 'Share failed',
+      error == null ? label : '$label · $error',
+      const NotificationDetails(android: details),
+      payload: 'downloads',
+    );
+  }
+
+  static String _humanBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
   Future<void> showDownloadFinished({
     required int id,
     required String label,
