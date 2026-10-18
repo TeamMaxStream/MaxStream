@@ -1466,7 +1466,15 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.7,
       ),
-      padding: const EdgeInsets.all(20),
+      // The sheet's last row of servers and the Start Download button sat
+      // behind the system nav bar: a modal bottom sheet is laid out to the
+      // screen edge, so pad past the nav bar inset.
+      padding: EdgeInsets.fromLTRB(
+        20,
+        20,
+        20,
+        20 + MediaQuery.viewPaddingOf(context).bottom,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
