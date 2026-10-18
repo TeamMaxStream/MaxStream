@@ -37,28 +37,28 @@ dependencies:
   flutter_local_notifications: ^19.4.2
   flutter_native_splash: ^2.4.6
   flutter_launcher_icons: ^0.14.4
-  installed_apps: ^2.0.0
+  installed_apps: ^2.2.1
   html: ^0.15.4
-  package_info_plus: ^9.0.0
-  permission_handler: ^12.0.1
+  package_info_plus: ^10.2.2
+  permission_handler: ^13.0.2
   image_picker: ^1.0.8
   image: ^4.1.0
   local_auth: ^2.3.0
-  flutter_secure_storage: ^9.0.0
+  flutter_secure_storage: ^11.2.0
   google_fonts: ^6.1.0
-  wakelock_plus: ^1.2.1
+  wakelock_plus: ^1.5.2
   web: ^1.1.1
   firebase_crashlytics: ^4.3.10
-  speech_to_text: ^7.4.0
+  speech_to_text: ^7.5.0
   audio_service: ^0.18.17
-  flutter_chrome_cast: ^1.4.8
+  flutter_chrome_cast: ^2.0.0
 
   # Device-to-device sharing (Xender-style). QR for pairing, mobile_scanner to
   # read one, share_plus for the Android share sheet, nearby_connections for the
   # routerless transport behind the same ShareTransport interface as LAN HTTP.
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.1.3
-  share_plus: ^12.0.0
+  share_plus: ^13.3.1
   nearby_connections: ^4.3.0
 
 dev_dependencies:

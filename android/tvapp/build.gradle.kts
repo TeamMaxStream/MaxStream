@@ -3,7 +3,9 @@ import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // No org.jetbrains.kotlin.android here: this project uses AGP 9's built-in
+    // Kotlin, so Flutter's Gradle plugin applies it. The Compose compiler
+    // plugin is the one exception — it still needs an explicit version.
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.20"
 }
 

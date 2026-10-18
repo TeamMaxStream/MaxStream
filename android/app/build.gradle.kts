@@ -3,7 +3,6 @@ import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
-    id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -16,7 +15,9 @@ if (keystoreFile.exists()) {
 android {
     namespace = "com.maxstream.app"
     compileSdk = 36
-    ndkVersion = "27.0.12077973"
+    // Matches the NDK the plugins require (audio_service, firebase_*); the
+    // previous 27.0.12077973 made every build print a mismatch warning.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
@@ -24,9 +25,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "21"
-    }
 
     defaultConfig {
         applicationId = "com.maxstream.app"
@@ -60,6 +58,14 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+}
+
+// Replaces the removed `android.kotlinOptions { jvmTarget = ... }` block:
+// with AGP 9's built-in Kotlin the compiler options live in the kotlin{} DSL.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 
