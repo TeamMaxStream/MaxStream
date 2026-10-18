@@ -65,13 +65,16 @@ class ShareService {
       return PermissionStatus.granted;
     }
     final location = await Permission.locationWhenInUse.request();
-    if (location.isDenied) return PermissionStatus.denied;
+    if (location.isDenied || location.isPermanentlyDenied) {
+      return PermissionStatus.denied;
+    }
     final missing = <String>[];
     if (location.isLimited) {
-      // "Approximate location" is granted, but Nearby Connections needs
-      // precise to discover peers — without this the user was told location was
-      // denied even though they had allowed it.
-      missing.add('precise location');
+      // "Approximate location" is granted, but Nearby Connections needs precise
+      // to discover peers. Reported as a hard prerequisite (see
+      // NearbyNeedsPreciseLocation) because only the system permission screen
+      // can promote it — not the runtime request above.
+      throw const NearbyNeedsPreciseLocation();
     }
     for (final entry in {
       Permission.bluetoothScan: 'Nearby devices',

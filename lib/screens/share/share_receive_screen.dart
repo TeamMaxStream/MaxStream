@@ -6,6 +6,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../services/download_storage_service.dart';
+import '../../services/share/nearby_transport.dart';
 import '../../services/share/share_models.dart';
 import '../../services/share/share_service.dart';
 
@@ -279,6 +280,11 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
         _manifest = manifest;
         _selected.addAll(manifest.items.map((i) => i.downloadKey));
       });
+    } on NearbyNeedsPreciseLocation {
+      setState(() => _error = 'Android is sharing only approximate location '
+          'with MaxStream, which nearby sharing cannot use. Open the MaxStream '
+          'permission screen and choose Precise, or send with the Wi-Fi '
+          'option instead.');
     } catch (error) {
       setState(() => _error = ShareService.describeError(error, descriptor.transportId));
     } finally {

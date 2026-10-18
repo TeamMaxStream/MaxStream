@@ -9,6 +9,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'share_models.dart';
 import 'share_transport.dart';
 
+/// Raised when Android granted only *approximate* location.
+///
+/// play-services-nearby needs precise location for peer discovery, and that
+/// cannot be requested from inside the app — only the system permission screen
+/// can grant it. The share UI catches this to offer "Open settings" or a switch
+/// to the Wi-Fi transport instead of showing a dead end.
+class NearbyNeedsPreciseLocation implements Exception {
+  const NearbyNeedsPreciseLocation();
+
+  @override
+  String toString() =>
+      'Nearby sharing needs precise location (Android: Approximate location)';
+}
+
 /// Routerless transport built on Google's Nearby Connections (the same stack
 /// behind Nearby Share), exposed through the same [ShareTransport] interface as
 /// the LAN transport.
@@ -127,22 +141,29 @@ class NearbyTransport implements ShareTransport {
   /// Play services available. Returns a user-facing reason, or null when fine.
   Future<String?> _blockingReason() async {
     try {
-      // Bluetooth / Wi-Fi switches.
       final bluetooth = await Permission.bluetoothScan.status;
       if (bluetooth.isPermanentlyDenied || bluetooth.isRestricted) {
         return 'Nearby sharing needs Bluetooth permission. Allow "Nearby '
             'devices" for MaxStream in Settings, or use the Wi-Fi option.';
       }
-      final location = await Permission.locationWhenInUse.status;
+      // Ask rather than just read: if the user switched the Android toggle to
+      // Precise while the sheet was closed, this picks it up immediately.
+      var location = await Permission.locationWhenInUse.status;
+      if (location.isDenied || location.isPermanentlyDenied) {
+        location = await Permission.locationWhenInUse.request();
+      }
       if (location.isDenied || location.isPermanentlyDenied) {
         return 'Nearby sharing needs location permission to discover the other '
             'device. Allow it in Settings, or use the Wi-Fi option.';
       }
       if (location.isLimited) {
-        return 'Nearby sharing needs PRECISE location (Settings → Location → '
-            'Permissions → MaxStream), not approximate. Or use the Wi-Fi '
-            'option.';
+        // Android's "Approximate location" cannot be promoted from here: only
+        // the system permission screen can, so this is reported as a
+        // prerequisite the UI can act on (open settings / switch to Wi-Fi).
+        throw const NearbyNeedsPreciseLocation();
       }
+    } on NearbyNeedsPreciseLocation {
+      rethrow;
     } catch (_) {
       // permission_handler can throw on odd OEM builds; let the plugin try.
     }

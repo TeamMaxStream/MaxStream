@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../database/db_helper.dart';
 import '../../services/share/share_models.dart';
+import '../../services/share/nearby_transport.dart';
 import '../../services/share/share_service.dart';
 import 'share_receive_screen.dart';
 
@@ -340,10 +341,55 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
         _manifestBytes = manifest.totalBytes;
         _status = 'Waiting for the other device…';
       });
+    } on NearbyNeedsPreciseLocation {
+      _offerPreciseLocation();
     } catch (error) {
       _toast(ShareService.describeError(error, _transportId));
     } finally {
       if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  /// Android granted "approximate" location, which Nearby Connections cannot
+  /// use. Offer the one place that can fix it, plus the Wi-Fi fallback that
+  /// needs no location at all.
+  Future<void> _offerPreciseLocation() async {
+    if (!mounted) return;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          'Precise location needed',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'Android is sharing only approximate location with MaxStream. '
+          'Nearby Connections needs precise location to find the other '
+          'device.\n\nEither switch to Wi-Fi sharing (no location needed), '
+          'or open MaxStream\'s permission screen and choose "Precise".',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('wifi'),
+            child: const Text('Use Wi-Fi', style: TextStyle(color: Colors.green)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('settings'),
+            child: const Text('Open settings', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'settings') {
+      await openAppSettings();
+      return;
+    }
+    if (choice == 'wifi') {
+      setState(() => _transportId = 'lan');
+      await _start();
     }
   }
 
