@@ -7,6 +7,7 @@ import '../services/download_storage_service.dart';
 import '../services/media_download_manager.dart';
 import '../services/profile_scope.dart';
 import '../screens/downloads_settings_screen.dart';
+import '../screens/share/share_send_sheet.dart';
 import '../widgets/app_network_image.dart';
 import '../widgets/app_shimmer.dart';
 import '../widgets/video_player_screen.dart';
@@ -338,6 +339,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             icon: const Icon(Icons.settings),
           ),
           IconButton(
+            tooltip: 'Receive from another device',
+            onPressed: () => openShareReceiver(context),
+            icon: const Icon(Icons.download_outlined),
+          ),
+          IconButton(
             tooltip: 'Refresh',
             onPressed: _loadDownloads,
             icon: const Icon(Icons.refresh),
@@ -497,6 +503,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         ),
         iconColor: Colors.white,
         collapsedIconColor: Colors.white70,
+        trailing: IconButton(
+          tooltip: 'Send series to another device',
+          onPressed: () => _share(List.of(episodes), title),
+          icon: const Icon(Icons.send_outlined, color: Colors.white70),
+        ),
         children: seasons.entries.map((entry) {
           return ExpansionTile(
             title: Text(
@@ -609,12 +620,27 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         },
       ),
       onTap: () => _play(download),
-      trailing: IconButton(
-        tooltip: 'Delete download',
-        onPressed: () => _delete(download),
-        icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Send to another device',
+            onPressed: () => _share([download], download['title']?.toString()),
+            icon: const Icon(Icons.send_outlined, color: Colors.white70),
+          ),
+          IconButton(
+            tooltip: 'Delete download',
+            onPressed: () => _delete(download),
+            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+          ),
+        ],
       ),
     );
+  }
+
+  /// Opens the device-to-device send sheet for [downloads].
+  void _share(List<Map<String, dynamic>> downloads, String? title) {
+    showShareSendSheet(context, downloads: downloads, title: title);
   }
 
   Widget _thumbnail(String url) {
