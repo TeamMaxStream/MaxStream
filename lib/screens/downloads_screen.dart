@@ -285,6 +285,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               padding: listPadding,
               children: [
                 _buildProfileIndicator(),
+                _buildShareActions(),
                 if (_downloadManager.activeDownloads.isNotEmpty) ...[
                   _sectionTitle(
                     'Downloading${activeTotal.isNotEmpty ? ' • $activeTotal' : ''}',
@@ -519,6 +520,52 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             children: entry.value.map(_downloadTile).toList(),
           );
         }).toList(),
+      ),
+    );
+  }
+
+  /// Send / Receive row.
+  ///
+  /// The Receive action used to live only in this screen's app bar, which the
+  /// embedded copy (a tab inside the Library screen) does not have — so on that
+  /// path there was no way in at all.
+  Widget _buildShareActions() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => openShareReceiver(context),
+              icon: const Icon(Icons.download_outlined, size: 18),
+              label: const Text('Receive'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _downloads.isEmpty
+                  ? null
+                  : () => _share(List.of(_downloads), 'all downloads'),
+              icon: const Icon(Icons.send_outlined, size: 18),
+              label: const Text('Send all'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

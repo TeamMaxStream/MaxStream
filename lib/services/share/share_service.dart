@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../database/db_helper.dart';
 import '../download_storage_service.dart';
@@ -40,6 +41,58 @@ class ShareService {
 
   ShareTransport transportById(String id) =>
       transports.firstWhere((t) => t.id == id, orElse: () => _lan);
+
+  /// Runtime permissions a transport needs before it can run.
+  ///
+  /// Nearby Connections advertises over Bluetooth, which on API 31+ needs
+  /// BLUETOOTH_ADVERTISE at runtime as well as location (for peer discovery).
+  /// Missing ADVERTISE surfaces as Android error 8038
+  /// (MISSING_PERMISSION_BLUETOOTH_ADVERTISE), which is what the app used to
+  /// show verbatim when the user picked the Bluetooth option.
+  static Future<PermissionStatus> ensureTransportPermissions(
+    String transportId,
+  ) async {
+    if (transportId != 'nearby') return PermissionStatus.granted;
+    final results = <PermissionStatus>[
+      await Permission.locationWhenInUse.request(),
+      await Permission.bluetoothScan.request(),
+      await Permission.bluetoothConnect.request(),
+      await Permission.bluetoothAdvertise.request(),
+    ];
+    if (results.every(
+      (status) =>
+          status.isGranted || status.isLimited || status.isProvisional,
+    )) {
+      return PermissionStatus.granted;
+    }
+    return results.firstWhere(
+      (status) => !status.isGranted && !status.isLimited && !status.isProvisional,
+      orElse: () => PermissionStatus.denied,
+    );
+  }
+
+  /// Turns a native failure into something a user can act on.
+  static String describeError(Object error, String transportId) {
+    if (error is PlatformException) {
+      final code = '${error.code} ${error.message ?? ''}';
+      if (code.contains('8038') ||
+          code.contains('MISSING_PERMISSION_BLUETOOTH_ADVERTISE')) {
+        return 'Bluetooth permission for advertising was denied. Allow '
+            '"Nearby devices" for MaxStream in Settings, then try again.';
+      }
+      if (code.contains('BLUETOOTH') || code.contains('8028')) {
+        return 'Bluetooth permission denied. Allow "Nearby devices" for '
+            'MaxStream in Settings, then try again.';
+      }
+      if (code.contains('8029') || code.contains('LOCATION')) {
+        return 'Location permission denied. Nearby sharing needs location to '
+            'discover the other device — allow it in Settings, or use the '
+            'Wi-Fi option.';
+      }
+      return error.message?.toString() ?? error.code;
+    }
+    return error.toString();
+  }
 
   // ── Building a bundle ─────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
@@ -293,26 +294,18 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
-  /// Nearby Connections needs location (to discover peers) and, on Android 12+,
-  /// the Bluetooth/nearby-wifi runtime permissions.
-  Future<bool> _ensureNearbyPermissions() async {
-    final results = <PermissionStatus>[
-      await Permission.locationWhenInUse.request(),
-      await Permission.bluetoothScan.request(),
-    ];
-    return results.every(
-      (status) => status.isGranted || status.isLimited || status.isProvisional,
-    );
-  }
-
   Future<void> _start() async {
     setState(() => _starting = true);
     try {
-      if (_transportId == 'nearby' && !await _ensureNearbyPermissions()) {
-        _toast(
-          'Nearby sharing needs location and nearby-device permission. Enable '
-          'them in Settings, or use the Wi-Fi option instead.',
-        );
+      // Nearby advertises over Bluetooth: location + scan/connect/advertise are
+      // all needed, and ADVERTISE is the one that fails with Android's 8038.
+      final status =
+          await ShareService.ensureTransportPermissions(_transportId);
+      if (status != PermissionStatus.granted) {
+        _toast(ShareService.describeError(
+          PlatformException(code: 'permission', message: 'Nearby permissions were not granted'),
+          _transportId,
+        ));
         return;
       }
       final manifest = await ShareService.instance.buildManifest(_items);
@@ -336,7 +329,7 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
         _status = 'Waiting for the other device…';
       });
     } catch (error) {
-      _toast('$error');
+      _toast(ShareService.describeError(error, _transportId));
     } finally {
       if (mounted) setState(() => _starting = false);
     }

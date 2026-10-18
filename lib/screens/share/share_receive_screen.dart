@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -258,6 +259,20 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
       _error = null;
     });
     try {
+      // Nearby needs the same runtime permissions on this side: it advertises
+      // too (that is how it finds the sender when the sender is quiet).
+      final status =
+          await ShareService.ensureTransportPermissions(descriptor.transportId);
+      if (status != PermissionStatus.granted) {
+        setState(() => _error = ShareService.describeError(
+          PlatformException(
+            code: 'permission',
+            message: 'Nearby permissions were not granted',
+          ),
+          descriptor.transportId,
+        ));
+        return;
+      }
       final manifest = await ShareService.instance.previewShare(descriptor);
       setState(() {
         _descriptor = descriptor;
@@ -265,7 +280,7 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
         _selected.addAll(manifest.items.map((i) => i.downloadKey));
       });
     } catch (error) {
-      setState(() => _error = '$error');
+      setState(() => _error = ShareService.describeError(error, descriptor.transportId));
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
