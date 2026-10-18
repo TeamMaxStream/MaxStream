@@ -40,7 +40,7 @@ dependencies:
   installed_apps: ^2.2.1
   html: ^0.15.4
   package_info_plus: ^10.2.2
-  permission_handler: ^13.0.2
+  permission_handler: ^12.0.1
   image_picker: ^1.0.8
   image: ^4.1.0
   local_auth: ^2.3.0
@@ -51,7 +51,7 @@ dependencies:
   firebase_crashlytics: ^4.3.10
   speech_to_text: ^7.5.0
   audio_service: ^0.18.17
-  flutter_chrome_cast: ^2.0.0
+  flutter_chrome_cast: ^1.4.8
 
   # Device-to-device sharing (Xender-style). QR for pairing, mobile_scanner to
   # read one, share_plus for the Android share sheet, nearby_connections for the

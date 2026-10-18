@@ -19,6 +19,10 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.3.0"
     id("com.android.application") version "9.0.1" apply false
+    // Kotlin Gradle Plugin: required because built-in Kotlin is opted out of
+    // (see gradle.properties). 2.3.20 is past Flutter's 2.2.20 floor and past
+    // the 2.3.20 "support will be dropped" threshold.
+    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
 }
 
 include(":app")

@@ -3,10 +3,9 @@ import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
-    // No org.jetbrains.kotlin.android here: this project uses AGP 9's built-in
-    // Kotlin, so Flutter's Gradle plugin applies it. The Compose compiler
-    // plugin is the one exception — it still needs an explicit version.
-    id("org.jetbrains.kotlin.plugin.compose") version "2.2.20"
+    id("org.jetbrains.kotlin.android")
+    // The Compose compiler plugin tracks the Kotlin version exactly.
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20"
 }
 
 // Keep Kotlin's bytecode target in sync with compileOptions (Java 21), which
@@ -104,7 +103,7 @@ android {
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "2.2.20"
+        kotlinCompilerExtensionVersion = "2.3.20"
     }
 
     packaging {
