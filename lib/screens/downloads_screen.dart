@@ -261,23 +261,35 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             ),
           )
         : _downloads.isEmpty && _downloadManager.activeDownloads.isEmpty
-        ? const Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.download_done, size: 64, color: Colors.white38),
-                SizedBox(height: 16),
-                Text(
-                  'No downloads yet',
-                  style: TextStyle(color: Colors.white, fontSize: 20),
+        // Keep the profile chip and the Receive action on the empty state too:
+        // receiving is exactly what someone with no downloads wants to do, and
+        // the profile shows which library shares would land in.
+        ? ListView(
+            padding: listPadding,
+            children: [
+              _buildProfileIndicator(),
+              _buildShareActions(),
+              const SizedBox(height: 40),
+              const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.download_done, size: 64, color: Colors.white38),
+                    SizedBox(height: 16),
+                    Text(
+                      'No downloads yet',
+                      style: TextStyle(color: Colors.white, fontSize: 20),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Download something, or receive it from another device.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  ],
                 ),
-                SizedBox(height: 6),
-                Text(
-                  'Tap the download button on a movie or series details page.',
-                  style: TextStyle(color: Colors.white54),
-                ),
-              ],
-            ),
+              ),
+            ],
           )
         : RefreshIndicator(
             onRefresh: _loadDownloads,
@@ -524,7 +536,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     );
   }
 
-  /// Send / Receive row.
+  /// Send / Receive row — always visible, including with an empty library and
+  /// regardless of how many profiles exist.
   ///
   /// The Receive action used to live only in this screen's app bar, which the
   /// embedded copy (a tab inside the Library screen) does not have — so on that
