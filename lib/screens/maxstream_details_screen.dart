@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import '../widgets/app_shimmer.dart';
@@ -9,6 +11,7 @@ import '../services/media_download_manager.dart';
 import '../services/miniplayer_service.dart';
 import '../services/server_list_loader.dart';
 import '../services/stream_audio_helper.dart';
+import '../services/stream_size_probe.dart';
 import '../services/tmdb_api_service.dart';
 import '../services/watch_history_service.dart';
 import '../services/watch_reminder_service.dart';
@@ -1331,6 +1334,10 @@ class _QualitySelectionSheet extends StatefulWidget {
 
 class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
   bool _loadingStreams = true;
+  /// Exact (progressive) or estimated (HLS) size per quality URL, filled in
+  /// when the server list arrives so every server row can show it.
+  final Map<String, int?> _qualitySizes = {};
+  bool _sizesLoading = false;
   bool _refreshing = false;
   int _resolveGeneration = 0;
   List<Map<String, dynamic>> _availableStreams = [];
@@ -1369,7 +1376,64 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
             _error = error.toString();
           }
         });
+        unawaited(_probeQualitySizes(available));
       },
+    );
+  }
+
+  /// Asks each server's quality variants how big they are. Progressive files
+  /// report an exact byte count; HLS variants are estimated from their bitrate
+  /// and shown with a "~". Runs in the background so the sheet paints at once.
+  Future<void> _probeQualitySizes(List<Map<String, dynamic>> streams) async {
+    if (_sizesLoading) return;
+    final pending = <String, Map<String, dynamic>>{};
+    for (final stream in streams) {
+      for (final raw in (stream['qualities'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        final q = raw.map((k, v) => MapEntry(k.toString(), v));
+        final url = q['url']?.toString() ?? '';
+        if (url.isEmpty || _qualitySizes.containsKey(url)) continue;
+        pending[url] = q;
+      }
+      final auto = stream['url']?.toString() ?? '';
+      if (auto.isNotEmpty && !_qualitySizes.containsKey(auto)) {
+        pending.putIfAbsent(auto, () => <String, dynamic>{});
+      }
+    }
+    if (pending.isEmpty) return;
+    setState(() => _sizesLoading = true);
+    for (final entry in pending.entries) {
+      final headers = streams
+              .firstWhere(
+                (s) =>
+                    s['url']?.toString() == entry.key ||
+                    (s['qualities'] as List? ?? const []).any(
+                      (q) => q is Map && q['url']?.toString() == entry.key,
+                    ),
+                orElse: () => const <String, dynamic>{},
+              )['headers'] as Map<String, dynamic>? ??
+          const {};
+      final bitrate = int.tryParse('${entry.value['averageBitrate'] ?? ''}');
+      final seconds =
+          int.tryParse('${entry.value['runtime'] ?? entry.value['duration'] ?? ''}');
+      final size = await StreamSizeProbe.probe(
+        entry.key,
+        headers: headers.map((k, v) => MapEntry('$k', '$v')),
+        averageBitrate: bitrate,
+        runtimeSeconds: seconds,
+      );
+      if (!mounted) return;
+      setState(() => _qualitySizes[entry.key] = size);
+    }
+    if (mounted) setState(() => _sizesLoading = false);
+  }
+
+  String _sizeLabel(String url) {
+    final size = _qualitySizes[url];
+    if (size == null) return '';
+    return StreamSizeProbe.format(
+      size,
+      estimated: StreamSizeProbe.isHls(url),
     );
   }
 
@@ -1705,9 +1769,12 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
                                 0;
                             final isQSelected =
                                 (_selectedQualityIndex ?? 0) == qIdx;
-                            final subtitle = height > 0
-                                ? '${height}p'
-                                : 'Adaptive bitrate';
+                            final qualityUrl = q['url']?.toString() ?? '';
+                            final sizeText = _sizeLabel(qualityUrl);
+                            final subtitle = [
+                              if (height > 0) '${height}p' else 'Adaptive bitrate',
+                              if (sizeText.isNotEmpty) sizeText,
+                            ].join(' • ');
 
                             return Padding(
                               padding: const EdgeInsets.only(

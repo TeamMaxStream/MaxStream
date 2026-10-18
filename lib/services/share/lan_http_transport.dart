@@ -149,11 +149,15 @@ class LanHttpTransport implements ShareTransport {
     _emit('progress', 'Sending ${file.name}');
     try {
       final stream = await session.openFile(file, start: start);
-      // A receiver that walks away mid-file makes the next write throw; the
-      // catch below turns that into a transport event instead of a crash.
+      // Backpressure: `add()` only queues into the socket's buffer, so a fast
+      // disk outran the network and a whole multi-GB file piled up in memory —
+      // the transfer then died partway. Flushing every chunk paces the writer to
+      // the receiver, which is what makes big files survive the trip.
       await for (final chunk in stream) {
         request.response.add(chunk);
+        await request.response.flush();
       }
+      await request.response.flush();
     } on Object catch (error) {
       _emit('error', 'Failed to send ${file.name}: $error');
     }

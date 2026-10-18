@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../database/db_helper.dart';
+import '../download_service_bridge.dart';
 import '../download_storage_service.dart';
 import '../notification_service.dart';
 import '../profile_scope.dart';
@@ -85,6 +86,12 @@ class ShareService {
   }
 
   /// Turns a native failure into something a user can act on.
+  ///
+  /// The old version mapped anything mentioning location onto "Location
+  /// permission denied", so unrelated failures (no Play services, Bluetooth
+  /// off, missing nearby-wifi) all showed that one message and the real cause
+  /// was never visible. Known codes get a specific fix; everything else reports
+  /// the plugin's own text.
   static String describeError(Object error, String transportId) {
     if (error is PlatformException) {
       final code = '${error.code} ${error.message ?? ''}';
@@ -105,7 +112,21 @@ class ShareService {
       if (code.contains('8037') || code.contains('BLUETOOTH_DISABLED')) {
         return 'Turn on Bluetooth and Wi-Fi to use nearby sharing.';
       }
-      return error.message?.toString() ?? error.code;
+      if (code.contains('8036') || code.contains('BLUETOOTH_DISCONNECTED')) {
+        return 'Bluetooth turned off while sharing. Turn it back on and retry.';
+      }
+      // Play services/nearby module missing or unavailable.
+      if (code.contains('ApiException') ||
+          code.contains('SERVICE_MISSING') ||
+          code.contains('SERVICE_VERSION_UPDATE_REQUIRED') ||
+          code.contains('SERVICE_DISABLED')) {
+        return 'Nearby sharing needs Google Play services on this device. Use '
+            'the Wi-Fi option instead.';
+      }
+      // Anything we do not recognise: show the plugin's own words.
+      final message = error.message?.toString().trim();
+      if (message == null || message.isEmpty) return error.code;
+      return 'Nearby sharing failed: $message';
     }
     return error.toString();
   }
@@ -202,12 +223,21 @@ class ShareService {
       },
     );
     final descriptor = await transport.publish(session);
+    // A foreground service keeps the process (and its listening socket) alive
+    // when the user leaves the app — the same mechanism downloads already use.
+    await _runForeground(
+      'Sending ${manifest.items.length} item${manifest.items.length == 1 ? '' : 's'}',
+    );
     _watchSendingProgress(transportId, manifest);
     return descriptor;
   }
 
-  Future<void> stopSending(String transportId) =>
-      transportById(transportId).unpublish();
+  Future<void> stopSending(String transportId) async {
+    await transportById(transportId).unpublish();
+    final sub = _sendingSubscribers.remove(transportId);
+    await sub?.cancel();
+    await _stopForeground();
+  }
 
   /// Watches a running share and mirrors it into a notification (bytes sent).
   void _watchSendingProgress(
@@ -307,6 +337,9 @@ class ShareService {
     final root = await DownloadStorageService.root();
     final notifications = NotificationService();
     const notificationId = 0x5A4E; // 'SN'
+    await _runForeground(
+      'Receiving ${items.length} item${items.length == 1 ? '' : 's'}',
+    );
     // Per-file progress from the transport, mapped back to the item it belongs
     // to so the notification can show "3 of 8 episodes • 1.2 GB of 3.4 GB".
     var currentLabel = '';
@@ -401,6 +434,7 @@ class ShareService {
       rethrow;
     } finally {
       await progressSub.cancel();
+      await _stopForeground();
     }
   }
 
@@ -427,8 +461,31 @@ class ShareService {
     }
   }
 
-  Future<void> cancelReceive(String transportId) =>
-      transportById(transportId).closeReceiver();
+  Future<void> cancelReceive(String transportId) async {
+    await transportById(transportId).closeReceiver();
+    await _stopForeground();
+  }
+
+  // ── Foreground service: keeps a transfer alive in the background ─────────
+  static int _foregroundRefs = 0;
+
+  static Future<void> _runForeground(String title) async {
+    _foregroundRefs++;
+    if (_foregroundRefs > 1) return;
+    try {
+      await DownloadServiceBridge.startForegroundService(title: title);
+    } catch (_) {
+      // Best effort: transfers still work while the app is in the foreground.
+    }
+  }
+
+  static Future<void> _stopForeground() async {
+    if (_foregroundRefs == 0) return;
+    _foregroundRefs = 0;
+    try {
+      await DownloadServiceBridge.stopForegroundService();
+    } catch (_) {}
+  }
 
   void dispose() {
     _lan.dispose();

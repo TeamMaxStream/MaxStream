@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:nearby_connections/nearby_connections.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'share_models.dart';
@@ -70,6 +71,11 @@ class NearbyTransport implements ShareTransport {
     _token = token;
     final nickname = await _deviceNickname();
 
+    // Preconditions, checked before the plugin so the failure names the real
+    // cause instead of surfacing as a generic platform error.
+    final blocked = await _blockingReason();
+    if (blocked != null) throw StateError(blocked);
+
     final started = await _nearby.startAdvertising(
       nickname,
       Strategy.P2P_POINT_TO_POINT,
@@ -117,6 +123,32 @@ class NearbyTransport implements ShareTransport {
     );
   }
 
+  /// Nearby's own prerequisites: Bluetooth on, Wi-Fi on, location services on,
+  /// Play services available. Returns a user-facing reason, or null when fine.
+  Future<String?> _blockingReason() async {
+    try {
+      // Bluetooth / Wi-Fi switches.
+      final bluetooth = await Permission.bluetoothScan.status;
+      if (bluetooth.isPermanentlyDenied || bluetooth.isRestricted) {
+        return 'Nearby sharing needs Bluetooth permission. Allow "Nearby '
+            'devices" for MaxStream in Settings, or use the Wi-Fi option.';
+      }
+      final location = await Permission.locationWhenInUse.status;
+      if (location.isDenied || location.isPermanentlyDenied) {
+        return 'Nearby sharing needs location permission to discover the other '
+            'device. Allow it in Settings, or use the Wi-Fi option.';
+      }
+      if (location.isLimited) {
+        return 'Nearby sharing needs PRECISE location (Settings → Location → '
+            'Permissions → MaxStream), not approximate. Or use the Wi-Fi '
+            'option.';
+      }
+    } catch (_) {
+      // permission_handler can throw on odd OEM builds; let the plugin try.
+    }
+    return null;
+  }
+
   /// The sender says hello first so the receiver can match its token even if
   /// the receiver is the one that discovered.
   Future<void> _greet(String endpointId) async {
@@ -149,6 +181,9 @@ class NearbyTransport implements ShareTransport {
 
   @override
   Future<ShareManifest> fetchManifest(ShareDescriptor descriptor) async {
+    final blocked = await _blockingReason();
+    if (blocked != null) throw StateError(blocked);
+
     final token = descriptor.data['token'] ?? '';
     final nickname = await _deviceNickname();
     String? endpointId;
