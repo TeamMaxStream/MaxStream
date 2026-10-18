@@ -216,7 +216,11 @@ class _DownloadsSettingsScreenState extends State<DownloadsSettingsScreen> {
                   _buildStorageLocationCard(),
                   const SizedBox(height: 12),
                   _buildClearAllButton(),
-                  const SizedBox(height: 40),
+                  // Clear the system nav bar too: a fixed spacer left the
+                  // button under it on gesture-nav devices.
+                  SizedBox(
+                    height: 40 + MediaQuery.viewPaddingOf(context).bottom,
+                  ),
                 ],
               ),
             ),

@@ -10,6 +10,7 @@ import 'services/notification_router.dart';
 import 'services/download_storage_service.dart';
 import 'services/media_download_manager.dart';
 import 'services/theme_service.dart';
+import 'services/update_service.dart';
 import 'services/crashlytics_service.dart';
 import 'services/memory_service.dart';
 import 'widgets/cloud_sync_bootstrap.dart';
@@ -76,6 +77,12 @@ class _StartupGateState extends State<_StartupGate> {
       await enableCrashlyticsReporting();
       attachCrashlyticsFatalHandlers();
 
+      if (!kIsWeb) {
+        // Drop updater APKs left over from a previous install. Safe here: an
+        // install restarts the process, so by the time this runs the system
+        // installer has already read the file.
+        await UpdateService.cleanupDownloadedApks();
+      }
       if (!kIsWeb) await NotificationService().initialize();
       if (!kIsWeb) {
         // Downloads now live in app-specific external storage so the space they

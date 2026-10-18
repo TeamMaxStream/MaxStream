@@ -293,14 +293,21 @@ class DBHelper {
     if (kIsWeb) return const [];
     final db = await database;
     final effectiveProfileId = profileId ?? ProfileScope.currentProfileId;
+    // Build the filter from the arguments that were actually supplied. This
+    // used to switch on `profileId` and then AND in `mediaType`, so any caller
+    // that passed a profileId (e.g. Download Settings) queried
+    // `profileId = ? AND mediaType = NULL` and got zero rows — which is why the
+    // storage card read "0 downloads • 0 B" with downloads present.
+    final conditions = <String>['profileId = ?'];
+    final args = <Object?>[effectiveProfileId];
+    if (mediaType != null) {
+      conditions.add('mediaType = ?');
+      args.add(mediaType);
+    }
     final downloads = await db.query(
       'media_downloads',
-      where: profileId == null
-          ? 'profileId = ?'
-          : 'profileId = ? AND mediaType = ?',
-      whereArgs: profileId == null
-          ? [effectiveProfileId]
-          : [effectiveProfileId, mediaType],
+      where: conditions.join(' AND '),
+      whereArgs: args,
       orderBy: 'downloadDate DESC',
     );
     return downloads.map((download) {

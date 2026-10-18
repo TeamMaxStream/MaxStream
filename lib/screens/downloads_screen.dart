@@ -232,13 +232,22 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final downloadedSeriesSize = totalSizeLabel(
       series.values.expand((episodes) => episodes).map(_sizeOf),
     );
+    // The last download tile's delete button was rendering behind the system
+    // nav bar and could not be tapped; pad the list by the raw inset so it can
+    // always be scrolled clear of it.
+    final listPadding = EdgeInsets.fromLTRB(
+      16,
+      16,
+      16,
+      16 + MediaQuery.viewPaddingOf(context).bottom,
+    );
 
     final body = _loading && _downloadManager.activeDownloads.isEmpty
         ? AppShimmer(
             baseColor: Colors.grey[800]!,
             highlightColor: Colors.grey[600]!,
             child: ListView.builder(
-              padding: const EdgeInsets.all(16),
+              padding: listPadding,
               itemCount: 3,
               itemBuilder: (_, __) => Container(
                 height: 88,
@@ -272,7 +281,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         : RefreshIndicator(
             onRefresh: _loadDownloads,
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: listPadding,
               children: [
                 _buildProfileIndicator(),
                 if (_downloadManager.activeDownloads.isNotEmpty) ...[

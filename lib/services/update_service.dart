@@ -304,6 +304,39 @@ class UpdateService {
   static bool reserveUpdateDialog(String version) =>
       _shownDialogVersions.add(version);
 
+  /// Deletes updater APKs left on disk.
+  ///
+  /// An APK is ~60-80 MB and used to survive the install, so every update left
+  /// the previous installer sitting in app storage forever. Called on the FIRST
+  /// launch after an install (i.e. after the process restarted), never right
+  /// after handing the file to the system installer — that installer still has
+  /// to read the file asynchronously and deleting it too early aborts the
+  /// install.
+  static Future<void> cleanupDownloadedApks() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final directories = <Directory>[
+        await getTemporaryDirectory(),
+        await getApplicationCacheDirectory(),
+        await getApplicationSupportDirectory(),
+      ];
+      for (final directory in directories) {
+        if (!await directory.exists()) continue;
+        await for (final entity in directory.list(followLinks: false)) {
+          if (entity is! File) continue;
+          final name = entity.path.split(Platform.pathSeparator).last;
+          if (!name.toLowerCase().endsWith('.apk')) continue;
+          try {
+            await entity.delete();
+            debugPrint('UpdateService: removed stale APK $name');
+          } catch (_) {}
+        }
+      }
+    } catch (_) {
+      // Cleanup is best-effort; never block start-up.
+    }
+  }
+
   /// Check if auto-check for updates is enabled in settings.
   static Future<bool> isAutoCheckEnabled() async {
     try {

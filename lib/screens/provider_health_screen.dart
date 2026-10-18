@@ -521,8 +521,12 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
   }
 
   Widget _buildTestButton(String label, VoidCallback onPressed) {
+    // This button is the last child of a Column in the Scaffold body, so it
+    // renders behind the system nav bar (gesture pill or 3-button bar) and the
+    // bottom of it is unreachable. Lift it by the raw inset.
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(
