@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -83,6 +85,70 @@ class NearbyTransport implements ShareTransport {
   @override
   Stream<Map<int, ShareFileProgress>> get progress => _progress.stream;
 
+  /// Google's nearby status codes for "already in that state".
+  ///
+  /// `stopAdvertising()` is not synchronous with the platform: stopping and
+  /// restarting straight away can lose the race and come back 8001. What matters
+  /// here is the resulting state, not the transition — and the plugin installs
+  /// the new callbacks *before* calling the platform, so an advertiser left
+  /// running by a previous share keeps driving this session correctly.
+  static const Map<String, int> _alreadyBusyCodes = {
+    'STATUS_ALREADY_ADVERTISING': 8001,
+    'STATUS_ALREADY_DISCOVERING': 8002,
+  };
+
+  static bool _isAlreadyBusy(PlatformException error) {
+    final text = '${error.code} ${error.message ?? ''}';
+    for (final entry in _alreadyBusyCodes.entries) {
+      if (text.contains(entry.key) || text.contains('${entry.value}:')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<bool> _startAdvertising({
+    required String nickname,
+    required OnConnectionInitiated onConnectionInitiated,
+    required OnConnectionResult onConnectionResult,
+    required OnDisconnected onDisconnected,
+  }) async {
+    try {
+      return await _nearby.startAdvertising(
+        nickname,
+        Strategy.P2P_POINT_TO_POINT,
+        serviceId: serviceId,
+        onConnectionInitiated: onConnectionInitiated,
+        onConnectionResult: onConnectionResult,
+        onDisconnected: onDisconnected,
+      );
+    } on PlatformException catch (e) {
+      if (!_isAlreadyBusy(e)) rethrow;
+      debugPrint('Nearby: already advertising — reusing the running one');
+      return true;
+    }
+  }
+
+  Future<bool> _startDiscovery({
+    required String nickname,
+    required OnEndpointFound onEndpointFound,
+    required OnEndpointLost onEndpointLost,
+  }) async {
+    try {
+      return await _nearby.startDiscovery(
+        nickname,
+        Strategy.P2P_POINT_TO_POINT,
+        serviceId: serviceId,
+        onEndpointFound: onEndpointFound,
+        onEndpointLost: onEndpointLost,
+      );
+    } on PlatformException catch (e) {
+      if (!_isAlreadyBusy(e)) rethrow;
+      debugPrint('Nearby: already discovering — reusing the running one');
+      return true;
+    }
+  }
+
   // ── Sender ────────────────────────────────────────────────────────────────
 
   @override
@@ -98,10 +164,8 @@ class NearbyTransport implements ShareTransport {
     final blocked = await _blockingReason();
     if (blocked != null) throw StateError(blocked);
 
-    final started = await _nearby.startAdvertising(
-      nickname,
-      Strategy.P2P_POINT_TO_POINT,
-      serviceId: serviceId,
+    final started = await _startAdvertising(
+      nickname: nickname,
       // A random scanner must not be able to pull files, but the share token
       // CANNOT be checked here: this plugin calls Google's legacy
       // requestConnection(name, id, callback) overload, which carries no
@@ -185,10 +249,16 @@ class NearbyTransport implements ShareTransport {
   Future<void> _sendHello(String endpointId) async {
     final token = _token ?? _expectedToken;
     if (token == null || token.isEmpty) return;
-    await _nearby.sendBytesPayload(
-      endpointId,
-      Uint8List.fromList(utf8.encode('{"hello":"$token"}')),
-    );
+    try {
+      await _nearby.sendBytesPayload(
+        endpointId,
+        Uint8List.fromList(utf8.encode('{"hello":"$token"}')),
+      );
+    } catch (e) {
+      // A greeting that fails to send is not worth tearing the session down;
+      // the peer will simply fail to authenticate and disconnect itself.
+      debugPrint('Nearby: hello not delivered: $e');
+    }
   }
 
   /// Drops a peer that did not present the share code. Nothing has been served
@@ -209,8 +279,12 @@ class NearbyTransport implements ShareTransport {
 
   @override
   Future<void> unpublish() async {
+    // Each stop runs on its own: sharing a try block meant a throw from
+    // stopAdvertising skipped stopAllEndpoints and left the peer attached.
     try {
       await _nearby.stopAdvertising();
+    } catch (_) {}
+    try {
       await _nearby.stopAllEndpoints();
     } catch (_) {}
     _session = null;
@@ -316,10 +390,8 @@ class NearbyTransport implements ShareTransport {
     required OnDisconnected onDisconnected,
   }) async {
     final completer = Completer<String?>();
-    final advertising = await _nearby.startAdvertising(
-      nickname,
-      Strategy.P2P_POINT_TO_POINT,
-      serviceId: serviceId,
+    final advertising = await _startAdvertising(
+      nickname: nickname,
       onConnectionInitiated: onConnectionInitiated,
       onConnectionResult: (id, status) {
         onConnectionResult(id, status);
@@ -333,10 +405,8 @@ class NearbyTransport implements ShareTransport {
 
     // Discovery and advertising run together so whichever side hears the other
     // first can connect.
-    await _nearby.startDiscovery(
-      nickname,
-      Strategy.P2P_POINT_TO_POINT,
-      serviceId: serviceId,
+    await _startDiscovery(
+      nickname: nickname,
       onEndpointFound: (id, name, service) async {
         if (completer.isCompleted) return;
         await _nearby.requestConnection(
@@ -400,6 +470,8 @@ class NearbyTransport implements ShareTransport {
   Future<void> closeReceiver() async {
     try {
       await _nearby.stopDiscovery();
+    } catch (_) {}
+    try {
       await _nearby.stopAllEndpoints();
     } catch (_) {}
     _connectedEndpoint = null;

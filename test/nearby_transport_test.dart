@@ -23,18 +23,36 @@ void main() {
 
   late List<MethodCall> calls;
   late List<Map<String, dynamic>> disconnected;
+  /// Statuses the fake platform should reject a start with.
+  late Set<String> busyStatuses;
   const endpoint = 'endpoint-1';
 
   setUp(() {
     calls = [];
     disconnected = [];
+    busyStatuses = <String>{};
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(methodChannel, (call) async {
           calls.add(call);
           switch (call.method) {
             case 'sendPayload':
+              return true;
             case 'startAdvertising':
+              if (busyStatuses.contains('advertising')) {
+                throw PlatformException(
+                  code: 'Failure',
+                  message: '8001: STATUS_ALREADY_ADVERTISING',
+                );
+              }
+              return true;
             case 'startDiscovery':
+              if (busyStatuses.contains('discovering')) {
+                throw PlatformException(
+                  code: 'Failure',
+                  message: '8002: STATUS_ALREADY_DISCOVERING',
+                );
+              }
+              return true;
             case 'requestConnection':
             case 'acceptConnection':
             case 'rejectConnection':
@@ -212,5 +230,54 @@ void main() {
     );
     expect(ShareManifest.decode(manifest.encode(token: 'zz99xx')).senderName,
         'Pixel');
+  });
+
+
+  test('8001 ALREADY_ADVERTISING does not break a fresh share', () async {
+    // The platform can still be advertising when the user starts another
+    // share: stopAdvertising() is not synchronous with it, so the restart can
+    // lose the race. That used to surface as "Nearby sharing failed: 8001".
+    busyStatuses.add('advertising');
+    final transport = NearbyTransport();
+
+    await expectLater(
+      transport.publish(sessionFor()),
+      completes,
+      reason: 'a leftover advertiser must not fail the new share',
+    );
+
+    // And the reused advertiser still drives this session.
+    await emit('ad.onConnectionInitiated', {
+      'endpointId': endpoint,
+      'endpointName': 'Other phone',
+      'authenticationToken': '-1',
+      'isIncomingConnection': true,
+    });
+    await emit('ad.onConnectionResult', {
+      'endpointId': endpoint,
+      'statusCode': Status.CONNECTED.index,
+    });
+    expect(
+      sentBodies().where((b) => b.contains('hello')),
+      isNotEmpty,
+      reason: 'the reused advertiser is not driving this session',
+    );
+  });
+
+  test('an unrelated nearby failure is still surfaced', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(methodChannel, (call) async {
+      calls.add(call);
+      if (call.method == 'startAdvertising') {
+        throw PlatformException(code: 'Failure', message: '8011: no Play services');
+      }
+      return true;
+    });
+    final transport = NearbyTransport();
+    await expectLater(
+      transport.publish(sessionFor()),
+      throwsA(isA<PlatformException>()),
+      reason: 'swallowing every failure would hide real problems',
+    );
   });
 }
