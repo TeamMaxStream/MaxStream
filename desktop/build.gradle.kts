@@ -72,13 +72,30 @@ dependencies {
 val vlcSourceDir = providers.gradleProperty("vlcSource")
     .orElse("C:\\Program Files\\VideoLAN\\VLC")
 val allowMissingVlc = providers.gradleProperty("allowMissingVlc").map { it == "true" }.orElse(false)
+// VLC's plugin tree is the single largest thing in the installer (~120 MB). The
+// full tree ships a GUI, stream-out, visualisations, service discovery, metadata
+// scrapers and hardware backends this app never touches. `-PvlcMinimal=true`
+// keeps only the modules needed to demux/decode HLS, DASH, MP4 and MKV and
+// render audio/video/subtitles. It is opt-in because a missing module fails at
+// playback time, not build time — smoke-test an HLS title and a local MP4 first.
+val vlcMinimal = providers.gradleProperty("vlcMinimal").map { it == "true" }.orElse(false)
 tasks.register<Sync>("syncVlcRuntime") {
     group = "maxstream"
     description = "Bundles the local VLC runtime (libvlc + plugins) into app resources."
     val src = File(vlcSourceDir.get())
     from(src) {
         include("libvlc.dll", "libvlccore.dll")
-        include("plugins/**", "lua/**", "hrtfs/**")
+        if (vlcMinimal.get()) {
+            listOf(
+                "access", "audio_filter", "audio_output", "codec", "demux",
+                "keystore", "misc", "packetizer", "spu", "stream_filter",
+                "text_renderer", "video_chroma", "video_filter", "video_output",
+            ).forEach { include("plugins/$it/**") }
+        } else {
+            include("plugins/**")
+        }
+        // Never needed: HRTF impulse responses and Lua playlist/metadata scripts.
+        // HLS/DASH/MP4/MKV playback is entirely native.
     }
     into(layout.projectDirectory.dir("src/main/resources/vlc"))
     doFirst {
@@ -115,8 +132,9 @@ tasks.register<Sync>("syncVlcRuntime") {
 // Ensure the bundle is refreshed before resources are packaged into the JAR/MSI.
 tasks.named("processResources") { dependsOn("syncVlcRuntime") }
 
-// ProGuard: shrinks + obfuscates the JVM code on the release build type. Build
-// with `packageReleaseMsi` (not `packageMsi`) to get the minified installer.
+// ProGuard: shrinks + obfuscates the JVM code on the release build type.
+// CI must use `packageReleaseMsi` (not `packageMsi`): the default build type
+// skips this block and ships the whole ~37 MB material-icons-extended jar.
 compose.desktop {
     application {
         buildTypes {

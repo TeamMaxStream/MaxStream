@@ -231,12 +231,18 @@ jobs:
       - name: Compile + test desktop app
         run: cd desktop; ./gradlew.bat build --no-daemon
 
+      # Must be packageReleaseMsi: packageMsi uses the default build type and
+      # skips ProGuard entirely, shipping the full ~37 MB material-icons-extended
+      # jar plus every unused class. The release task shrinks it to what Main.kt
+      # actually references.
       - name: Package Windows installer (MSI)
-        run: cd desktop; ./gradlew.bat packageMsi --no-daemon
+        run: cd desktop; ./gradlew.bat packageReleaseMsi --no-daemon
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
           name: maxstream-desktop
-          path: desktop/build/compose/binaries/main/msi/*.msi
+          # main/ for packageMsi, main-release/ for packageReleaseMsi; glob so a
+          # future Compose layout change cannot silently upload nothing.
+          path: desktop/build/compose/binaries/**/*.msi
           retention-days: 7
