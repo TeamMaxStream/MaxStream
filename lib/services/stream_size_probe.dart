@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'stream_security.dart';
@@ -28,13 +29,14 @@ import 'stream_security.dart';
 class StreamSizeProbe {
   StreamSizeProbe._();
 
-  static final Map<String, int> _cache = {};
+  static final Map<String, ProbeResult> _cache = {};
   /// URLs that failed, with the time, so a transient network hiccup does not
   /// blank the row for the rest of the session — but a dead server is not
   /// re-probed on every keystroke either.
-  static final Map<String, DateTime> _failed = {};
+  static final Map<String, ProbeResult> _failed = {};
+  static final Map<String, DateTime> _failedAt = {};
   static const Duration _failureCooldown = Duration(seconds: 60);
-  static final Map<String, Future<int?>> _inFlight = {};
+  static final Map<String, Future<ProbeResult>> _inFlight = {};
   static const Duration _timeout = Duration(seconds: 6);
 
   /// How many segments to measure when a playlist publishes no bitrate. Three
@@ -49,6 +51,18 @@ class StreamSizeProbe {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+  /// Test seam: replaces the playlist fetch, so classification and estimation
+  /// can be exercised without a socket. StreamSecurity (correctly) refuses
+  /// loopback hosts, so a local test server cannot be used.
+  @visibleForTesting
+  static Future<String?> Function(String url, Map<String, String> headers)?
+      debugFetchTextOverride;
+
+  /// Test seam: replaces the progressive-file size probe. See above.
+  @visibleForTesting
+  static Future<int?> Function(String url, Map<String, String> headers)?
+      debugContentLengthOverride;
+
   static Map<String, String> _withUserAgent(Map<String, String> headers) {
     final hasUa = headers.keys.any((k) => k.toLowerCase() == 'user-agent');
     return hasUa ? headers : {'User-Agent': _defaultUserAgent, ...headers};
@@ -58,6 +72,33 @@ class StreamSizeProbe {
     final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
     return path.endsWith('.m3u8') || path.endsWith('.m3u');
   }
+
+  /// Extensions that are unambiguously a whole media file.
+  static const List<String> _mediaExtensions = [
+    '.mp4',
+    '.mkv',
+    '.webm',
+    '.mov',
+    '.m4v',
+    '.avi',
+    '.flv',
+    '.ts',
+    '.mpeg',
+    '.mpg',
+  ];
+
+  static bool _isDirectMediaPath(String url) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    return _mediaExtensions.any(path.endsWith);
+  }
+
+  /// Anything smaller than this, served from a URL with no media extension, is a
+  /// manifest rather than a movie. Reporting a playlist's own 12 KB as the
+  /// file size is worse than reporting nothing.
+  static const int _manifestCeiling = 32 * 1024;
+
+  /// Bytes to read when classifying a URL whose extension says nothing.
+  static const int _peekBytes = 4096;
 
   /// Size in bytes, or null when it cannot be determined.
   ///
@@ -70,16 +111,38 @@ class StreamSizeProbe {
     int? averageBitrate,
     int? runtimeSeconds,
     int? height,
+  }) async =>
+      (await probeSize(
+        url,
+        headers: headers,
+        averageBitrate: averageBitrate,
+        runtimeSeconds: runtimeSeconds,
+        height: height,
+      ))
+          .bytes;
+
+  /// Size in bytes plus whether it is an estimate, so the UI can label it.
+  ///
+  /// Use this rather than [probe] wherever the result is displayed: a row that
+  /// shows "~155 MB" for a playlist estimate must not drop the "~" just because
+  /// the stream URL happened to have no .m3u8 on it.
+  static Future<ProbeResult> probeSize(
+    String url, {
+    Map<String, String> headers = const {},
+    int? averageBitrate,
+    int? runtimeSeconds,
+    int? height,
   }) {
     final key = keyFor(url, headers);
     final cached = _cache[key];
     if (cached != null) return Future.value(cached);
-    final failedAt = _failed[key];
-    if (failedAt != null &&
-        DateTime.now().difference(failedAt) < _failureCooldown) {
-      return Future.value(null);
+    final failed = _failed[key];
+    if (failed != null &&
+        DateTime.now().difference(_failedAt[key] ?? DateTime(0)) <
+            _failureCooldown) {
+      return Future.value(failed);
     }
-    return _inFlight[key] ??= _probe(
+    return _inFlight[key] ??= _probeSize(
       url,
       headers,
       averageBitrate,
@@ -93,30 +156,121 @@ class StreamSizeProbe {
     });
   }
 
-  static Future<int?> _probe(
+  static Future<ProbeResult> _probeSize(
     String url,
     Map<String, String> headers,
     int? averageBitrate,
     int? runtimeSeconds,
     int? height,
   ) async {
-    if (url.isEmpty || !StreamSecurity.isSafeNetworkUrl(url)) return null;
-    final int? value = isHls(url)
-        ? await _estimateHls(
+    if (url.isEmpty || !StreamSecurity.isSafeNetworkUrl(url)) {
+      return (bytes: null, estimated: false);
+    }
+
+    int? bytes;
+    var estimated = true;
+
+    if (isHls(url)) {
+      bytes = await _estimateHls(
+        url,
+        headers,
+        averageBitrate,
+        runtimeSeconds,
+        height: height,
+      );
+    } else if (_isDirectMediaPath(url)) {
+      estimated = false;
+      bytes = await _exactContentLength(url, headers);
+    } else {
+      // The extension says nothing. VixSrc serves its master playlist at
+      // "/playlist/<id>?token=…&expires=…" with no .m3u8 anywhere, so deciding
+      // by extension sent it down the progressive path and reported the
+      // playlist's own few kilobytes as the size of the movie.
+      final kind = await _classify(url, headers);
+      switch (kind) {
+        case _Kind.hls:
+          final playlist = await _fetchText(url, headers);
+          bytes = await _estimateHls(
             url,
             headers,
             averageBitrate,
             runtimeSeconds,
             height: height,
-          )
-        : await _exactContentLength(url, headers);
-    if (value != null && value > 0) {
-      _cache[keyFor(url, headers)] = value;
+            playlistOverride: playlist,
+          );
+        case _Kind.dash:
+          estimated = false;
+          final manifest = await _fetchText(url, headers);
+          bytes = manifest == null ? null : _estimateDash(manifest, height);
+        case _Kind.media:
+          estimated = false;
+          bytes = await _exactContentLength(url, headers);
+          if (bytes != null && bytes < _manifestCeiling) bytes = null;
+        case _Kind.unknown:
+          // Never guess: a manifest's own byte count must not be presented as
+          // the size of the video.
+          bytes = null;
+      }
+    }
+
+    final result = (bytes: (bytes != null && bytes > 0) ? bytes : null, estimated: estimated);
+    if (result.bytes != null) {
+      _cache[keyFor(url, headers)] = result;
       _failed.remove(keyFor(url, headers));
     } else {
-      _failed[keyFor(url, headers)] = DateTime.now();
+      _failed[keyFor(url, headers)] = result;
+      _failedAt[keyFor(url, headers)] = DateTime.now();
     }
-    return value;
+    return result;
+  }
+
+  /// What a URL without a telling extension actually serves.
+  static Future<_Kind> _classify(
+    String url,
+    Map<String, String> headers,
+  ) async {
+    final override = debugFetchTextOverride;
+    if (override != null) {
+      return _classifyText((await override(url, headers)) ?? '');
+    }
+    if (!StreamSecurity.isSafeNetworkUrl(url)) return _Kind.unknown;
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', Uri.parse(url))
+        ..headers.addAll(_withUserAgent(headers))
+        ..followRedirects = true
+        ..headers['Range'] = 'bytes=0-${_peekBytes - 1}';
+      final response = await client.send(request).timeout(_timeout);
+      final bytes = <int>[];
+      final done = Completer<void>();
+      late final StreamSubscription<List<int>> subscription;
+      subscription = response.stream.listen(
+        (chunk) {
+          bytes.addAll(chunk);
+          if (bytes.length >= _peekBytes && !done.isCompleted) {
+            subscription.cancel();
+            done.complete();
+          }
+        },
+        onDone: () {
+          if (!done.isCompleted) done.complete();
+        },
+        onError: (_) {
+          if (!done.isCompleted) done.complete();
+        },
+        cancelOnError: true,
+      );
+      await done.future.timeout(_timeout, onTimeout: () {});
+
+      final text =
+          utf8.decode(bytes.take(_peekBytes).toList(), allowMalformed: true)
+              .trimLeft();
+      return _classifyText(text);
+    } catch (_) {
+      return _Kind.unknown;
+    } finally {
+      client.close();
+    }
   }
 
   static String keyFor(String url, Map<String, String> headers) =>
@@ -127,6 +281,8 @@ class StreamSizeProbe {
     String url,
     Map<String, String> headers,
   ) async {
+    final override = debugContentLengthOverride;
+    if (override != null) return override(url, headers);
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(url))
@@ -164,13 +320,14 @@ class StreamSizeProbe {
     int? averageBitrate,
     int? runtimeSeconds, {
     int? height,
+    String? playlistOverride,
   }) async {
     var bitrate = averageBitrate;
     var seconds = runtimeSeconds;
     var mediaUrl = url;
 
     if (bitrate == null || seconds == null) {
-      final playlist = await _fetchText(url, headers);
+      final playlist = playlistOverride ?? await _fetchText(url, headers);
       if (playlist != null) {
         if (_isMaster(playlist)) {
           final variant = _variantForHeight(playlist, url, height);
@@ -253,6 +410,56 @@ class StreamSizeProbe {
     return {0, count ~/ 2, count - 1}.toList()..sort();
   }
 
+  /// Size from a DASH manifest: runtime × the representation's bandwidth.
+  ///
+  /// The extractor answers "dash" for `.mpd` sources, and those used to be
+  /// measured like progressive files — which returned the manifest's own few
+  /// kilobytes.
+  static int? _estimateDash(String manifest, int? height) {
+    final duration = RegExp(
+      r'mediaPresentationDuration="PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?"',
+    ).firstMatch(manifest);
+    if (duration == null) return null;
+    final hours = int.tryParse(duration.group(1) ?? '') ?? 0;
+    final minutes = int.tryParse(duration.group(2) ?? '') ?? 0;
+    final seconds = double.tryParse(duration.group(3) ?? '') ?? 0;
+    final total = hours * 3600 + minutes * 60 + seconds.round();
+    if (total <= 0) return null;
+
+    final representations = RegExp(
+      r'<Representation\b[^>]*>',
+    ).allMatches(manifest).map((m) => m.group(0)!).toList();
+    if (representations.isEmpty) return null;
+
+    ({int bandwidth, int height})? best;
+    for (final tag in representations) {
+      final bandwidth =
+          int.tryParse(
+            RegExp(r'bandwidth="(\d+)"').firstMatch(tag)?.group(1) ?? '',
+          ) ??
+          0;
+      if (bandwidth <= 0) continue;
+      final resolution =
+          RegExp(r'(?:^|\s)height="(\d+)"').firstMatch(tag)?.group(1);
+      final entry = (bandwidth: bandwidth, height: int.tryParse(resolution ?? '') ?? 0);
+      if (best == null || entry.bandwidth > best.bandwidth) best = entry;
+    }
+    // Prefer the ceiling the caller asked for when the manifest lists it.
+    if (height != null && height > 0) {
+      for (final tag in representations) {
+        final entryHeight =
+            int.tryParse(RegExp(r'(?:^|\s)height="(\d+)"').firstMatch(tag)?.group(1) ?? '') ?? 0;
+        if (entryHeight != height) continue;
+        final bandwidth =
+            int.tryParse(RegExp(r'bandwidth="(\d+)"').firstMatch(tag)?.group(1) ?? '') ?? 0;
+        if (bandwidth > 0) return (bandwidth * total) ~/ 8;
+      }
+    }
+    final chosen = best;
+    if (chosen == null) return null;
+    return (chosen.bandwidth * total) ~/ 8;
+  }
+
   static bool _isMaster(String playlist) =>
       playlist.contains('#EXT-X-STREAM-INF:');
 
@@ -267,6 +474,8 @@ class StreamSizeProbe {
     int? start,
     int? end,
   }) async {
+    final override = debugContentLengthOverride;
+    if (override != null) return override(url, headers);
     if (url.isEmpty || !StreamSecurity.isSafeNetworkUrl(url)) return null;
     final client = http.Client();
     try {
@@ -458,6 +667,8 @@ class StreamSizeProbe {
     String url,
     Map<String, String> headers,
   ) async {
+    final override = debugFetchTextOverride;
+    if (override != null) return override(url, headers);
     if (url.isEmpty || !StreamSecurity.isSafeNetworkUrl(url)) return null;
     final client = http.Client();
     try {
@@ -476,6 +687,7 @@ class StreamSizeProbe {
   static void clear() {
     _cache.clear();
     _failed.clear();
+    _failedAt.clear();
   }
 
   /// Human-readable, with `~` marking an estimate.
@@ -489,3 +701,35 @@ class StreamSizeProbe {
     return '$prefix${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 }
+
+/// Size of a stream, and whether that size is an estimate.
+typedef ProbeResult = ({int? bytes, bool estimated});
+
+/// What a URL with no telling extension actually serves.
+enum _Kind { hls, dash, media, unknown }
+
+_Kind _classifyText(String text) {
+  if (text.startsWith('#EXTM3U')) return _Kind.hls;
+  if (text.contains('<MPD')) return _Kind.dash;
+  // A whole media file announces itself with an ISO-BMFF box ("ftyp") or a
+  // Matroska / WebM EBML header.
+  if (text.contains('ftyp') || text.contains('matroska')) return _Kind.media;
+  return _Kind.unknown;
+}
+
+/// Decides what a fetched body actually is, from its first bytes.
+///
+/// This is the decision that stops a playlist's own byte count from being
+/// presented as the size of the video — the bug that made VixSrc, whose playlist
+/// URL carries no extension at all, report "12 KB" for a whole film.
+@visibleForTesting
+StreamSizeKind classifyStreamBody(String text) =>
+    switch (_classifyText(text.trimLeft())) {
+      _Kind.hls => StreamSizeKind.hls,
+      _Kind.dash => StreamSizeKind.dash,
+      _Kind.media => StreamSizeKind.media,
+      _Kind.unknown => StreamSizeKind.unknown,
+    };
+
+/// What a stream URL turned out to serve.
+enum StreamSizeKind { hls, dash, media, unknown }

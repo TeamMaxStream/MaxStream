@@ -1688,8 +1688,11 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
     );
   }
 
-  /// Sizes probed per quality URL. A null value means "probed, unknown".
-  final Map<String, int?> _qualitySizes = {};
+  /// Sizes probed per quality URL. A null bytes value means "probed, unknown";
+  /// [ProbeResult.estimated] is carried alongside because a playlist served
+  /// from an extension-less URL (VixSrc) is still an estimate even though
+  /// `isHls()` cannot tell.
+  final Map<String, ProbeResult> _qualitySizes = {};
   /// URLs currently being probed, so a slow probe shows "sizing…" rather than
   /// an empty cell — and a stalled one can't pin the sheet in that state
   /// forever (see _probeQualitySizes' per-URL deadline).
@@ -1776,11 +1779,11 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
         final seconds = int.tryParse(
           '${slot.quality['runtime'] ?? slot.quality['duration'] ?? ''}',
         );
-        int? size;
+        ProbeResult size = (bytes: null, estimated: false);
         try {
           // Deadline per URL: a server that never answers must not leave its
           // row saying "sizing…" for the rest of the session.
-          size = await StreamSizeProbe.probe(
+          size = await StreamSizeProbe.probeSize(
             slot.url,
             headers: headers,
             averageBitrate: bitrate,
@@ -1788,7 +1791,7 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
             height: height,
           ).timeout(const Duration(seconds: 12));
         } catch (_) {
-          size = null;
+          size = (bytes: null, estimated: false);
         }
         if (!mounted) return;
         setState(() {
@@ -1818,12 +1821,10 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
   }
 
   String _sizeLabel(String url) {
-    final size = _qualitySizes[url];
+    final result = _qualitySizes[url];
+    final size = result?.bytes;
     if (size == null || size <= 0) return '';
-    return StreamSizeProbe.format(
-      size,
-      estimated: StreamSizeProbe.isHls(url),
-    );
+    return StreamSizeProbe.format(size, estimated: result?.estimated ?? false);
   }
 
   /// Text shown on the right of a quality row: the size once known, "sizing…"
