@@ -12,6 +12,7 @@ import '../database/db_helper.dart';
 import 'direct_m3u8_service.dart';
 import 'download_service_bridge.dart';
 import 'downloads_settings_service.dart';
+import 'stream_size_probe.dart';
 import 'media_download_service.dart';
 import 'notification_service.dart';
 import 'profile_scope.dart';
@@ -27,6 +28,7 @@ class ActiveMediaDownload {
     required this.downloadedBytes,
     required this.totalBytes,
     required this.isPaused,
+    this.expectedTotalBytes,
     this.service,
     this.url,
     this.headers = const {},
@@ -47,6 +49,12 @@ class ActiveMediaDownload {
   final double progress;
   final int downloadedBytes;
   final int? totalBytes;
+
+  /// Size measured before the download started, for streams whose length is not
+  /// knowable up front (every HLS master). Without it the progress line could
+  /// only ever say "10.0 MB downloaded" — the "10 MB / 170 MB" form needs a
+  /// total, and HLS only reveals one after the fact.
+  final int? expectedTotalBytes;
   final bool isPaused;
   final MediaDownloadService? service;
   final String? url;
@@ -64,6 +72,7 @@ class ActiveMediaDownload {
     double? progress,
     int? downloadedBytes,
     int? totalBytes,
+    int? expectedTotalBytes,
     MediaDownloadService? service,
     bool clearService = false,
     bool? isPaused,
@@ -79,6 +88,7 @@ class ActiveMediaDownload {
     progress: progress ?? this.progress,
     downloadedBytes: downloadedBytes ?? this.downloadedBytes,
     totalBytes: totalBytes ?? this.totalBytes,
+    expectedTotalBytes: expectedTotalBytes ?? this.expectedTotalBytes,
     service: clearService ? null : service ?? this.service,
     isPaused: isPaused ?? this.isPaused,
     url: url ?? this.url,
@@ -93,11 +103,14 @@ class ActiveMediaDownload {
     subtitles: subtitles ?? this.subtitles,
   );
 
+  /// "10.0 MB / 170.0 MB", falling back to the size measured before the
+  /// download started when the server never reports a total.
   String get sizeLabel {
     final downloaded = _formatBytes(downloadedBytes);
-    return totalBytes == null
+    final total = totalBytes ?? expectedTotalBytes;
+    return total == null
         ? '$downloaded downloaded'
-        : '$downloaded / ${_formatBytes(totalBytes!)}';
+        : '$downloaded / ${_formatBytes(total)}';
   }
 
   static String _formatBytes(int bytes) {
@@ -115,6 +128,7 @@ class ActiveMediaDownload {
     'progress': progress,
     'downloadedBytes': downloadedBytes,
     'totalBytes': totalBytes,
+    'expectedTotalBytes': expectedTotalBytes,
     'url': url,
     'headers': headers,
     'isHls': isHls,
@@ -136,6 +150,7 @@ class ActiveMediaDownload {
       progress: (json['progress'] as num?)?.toDouble() ?? 0,
       downloadedBytes: (json['downloadedBytes'] as num?)?.toInt() ?? 0,
       totalBytes: (json['totalBytes'] as num?)?.toInt(),
+      expectedTotalBytes: (json['expectedTotalBytes'] as num?)?.toInt(),
       isPaused: true,
       url: json['url']?.toString(),
       headers: StreamSecurity.sanitizeHeaders(json['headers'] as Map?),
@@ -489,13 +504,18 @@ class MediaDownloadManager extends ChangeNotifier {
         headers[key.toString()] = value.toString();
       });
     }
+    final isHlsUrl =
+        stream['type'] == 'direct_m3u8' || url.toLowerCase().contains('.m3u8');
+    final expectedTotal = await _measureExpectedTotal(
+      url,
+      headers,
+      height: effectiveMaxHeight,
+    );
     await start(
       downloadKey: downloadKey,
       url: url,
       headers: headers,
-      isHls:
-          stream['type'] == 'direct_m3u8' ||
-          url.toLowerCase().contains('.m3u8'),
+      isHls: isHlsUrl,
       mediaId: mediaId,
       isMovie: isMovie,
       title: title,
@@ -505,6 +525,7 @@ class MediaDownloadManager extends ChangeNotifier {
       seasonNumber: isMovie ? null : seasonNumber,
       episodeNumber: isMovie ? null : episodeNumber,
       maxVariantHeightPixels: effectiveMaxHeight,
+      expectedTotalBytes: expectedTotal,
       subtitles: (stream['subtitles'] as List? ?? const [])
           .whereType<Map>()
           .map(
@@ -665,6 +686,10 @@ class MediaDownloadManager extends ChangeNotifier {
         final maxHeight = lowestQuality
             ? _lowestVariantHeight(selected['qualities'])
             : null;
+        final expectedTotal = await _measureExpectedTotal(
+          masterUrl,
+          headers,
+        );
         await start(
           downloadKey: downloadKey,
           url: masterUrl,
@@ -681,6 +706,7 @@ class MediaDownloadManager extends ChangeNotifier {
           seasonNumber: seasonNumber,
           episodeNumber: episodeNumber,
           maxVariantHeightPixels: maxHeight,
+          expectedTotalBytes: expectedTotal,
           subtitles: (selected['subtitles'] as List? ?? const [])
               .whereType<Map>()
               .map(
@@ -724,6 +750,22 @@ class MediaDownloadManager extends ChangeNotifier {
       }
     }
     return available.first;
+  }
+
+  /// Measures the chosen stream up front so the progress line can read
+  /// "10.0 MB / 170.0 MB" from the first tick instead of only ever reporting
+  /// bytes downloaded. Best-effort: a host that will not answer just leaves the
+  /// total unknown.
+  Future<int?> _measureExpectedTotal(
+    String url,
+    Map<String, String> headers, {
+    int? height,
+  }) async {
+    try {
+      return await StreamSizeProbe.probe(url, headers: headers, height: height);
+    } catch (_) {
+      return null;
+    }
   }
 
   int? _lowestVariantHeight(dynamic qualities) {
@@ -777,6 +819,7 @@ class MediaDownloadManager extends ChangeNotifier {
     int? episodeNumber,
     List<Map<String, dynamic>> subtitles = const [],
     int? maxVariantHeightPixels,
+    int? expectedTotalBytes,
   }) async {
     if (_active.containsKey(downloadKey)) return;
     if (!StreamSecurity.isSafeNetworkUrl(url)) {
@@ -794,6 +837,11 @@ class MediaDownloadManager extends ChangeNotifier {
     subtitles = subtitles
         .where((track) => StreamSecurity.isSafeNetworkUrl(track['url']))
         .toList();
+    // "Auto" in the download sheet means "the Quality chosen in Download
+    // Settings", not "the highest variant available" — resolveAndStart already
+    // applied this, but the sheet starts downloads through start() directly.
+    final effectiveMaxHeight =
+        maxVariantHeightPixels ?? DownloadsSettingsService.maxVariantHeightPixels;
     final label = title;
     final notificationId = downloadKey.hashCode & 0x7fffffff;
     var lastNotificationProgress = -1;
@@ -806,6 +854,7 @@ class MediaDownloadManager extends ChangeNotifier {
       progress: 0,
       downloadedBytes: 0,
       totalBytes: null,
+      expectedTotalBytes: expectedTotalBytes,
       service: service,
       isPaused: false,
       url: url,
@@ -837,7 +886,7 @@ class MediaDownloadManager extends ChangeNotifier {
         headers: headers,
         downloadId: downloadKey,
         hls: isHls,
-        maxVariantHeightPixels: maxVariantHeightPixels,
+        maxVariantHeightPixels: effectiveMaxHeight,
         onProgress: (progress) {
           _active[downloadKey] = _active[downloadKey]!.copyWith(
             progress: progress,

@@ -12,12 +12,19 @@ import 'stream_security.dart';
 ///  * **Progressive MP4/MKV** (non-HLS): exact. A one-byte ranged GET returns a
 ///    `Content-Range: bytes 0-0/<total>`, which is the real byte count the
 ///    server is willing to serve.
-///  * **HLS**: the playlist itself does not carry file sizes, so the estimate
-///    comes from the variant's average bitrate and the runtime. It is labelled
-///    with `~` in the UI so nobody reads it as exact.
+///  * **HLS**: the playlist itself does not carry file sizes, so the size is
+///    derived from the variant's average bitrate and the runtime, or — when no
+///    bitrate is published — by measuring a few segments and extrapolating from
+///    their real byte counts. It is labelled with `~` in the UI so nobody reads
+///    it as exact.
+///
+/// The segment path matters: extractors hand back **per-quality media
+/// playlists** (`{label, url, height}` with no bitrate), and a media playlist
+/// publishes no `BANDWIDTH` at all — measuring bitrate alone left every one of
+/// those rows showing "—".
 ///
 /// Results are cached per URL for the life of the process: the download sheet
-/// opens repeatedly and each probe costs a network round trip.
+/// opens repeatedly and each probe costs network round trips.
 class StreamSizeProbe {
   StreamSizeProbe._();
 
@@ -29,6 +36,11 @@ class StreamSizeProbe {
   static const Duration _failureCooldown = Duration(seconds: 60);
   static final Map<String, Future<int?>> _inFlight = {};
   static const Duration _timeout = Duration(seconds: 6);
+
+  /// How many segments to measure when a playlist publishes no bitrate. Three
+  /// (first / middle / last) catches the VOD hosts that ship an intro or an
+  /// ad break at a different bitrate, without opening a request per segment.
+  static const int _sampleCount = 3;
 
   /// Stream CDNs frequently reject requests without a browser User-Agent, which
   /// made a probe return nothing while the real download (which sets one)
@@ -48,11 +60,16 @@ class StreamSizeProbe {
   }
 
   /// Size in bytes, or null when it cannot be determined.
+  ///
+  /// [height] picks the matching variant when [url] is a master playlist, so a
+  /// quality row asking about 1080p is measured at 1080p rather than at
+  /// whatever variant happens to be listed first.
   static Future<int?> probe(
     String url, {
     Map<String, String> headers = const {},
     int? averageBitrate,
     int? runtimeSeconds,
+    int? height,
   }) {
     final key = keyFor(url, headers);
     final cached = _cache[key];
@@ -62,8 +79,18 @@ class StreamSizeProbe {
         DateTime.now().difference(failedAt) < _failureCooldown) {
       return Future.value(null);
     }
-    return _inFlight[key] ??= _probe(url, headers, averageBitrate, runtimeSeconds)
-        .whenComplete(() => _inFlight.remove(key));
+    return _inFlight[key] ??= _probe(
+      url,
+      headers,
+      averageBitrate,
+      runtimeSeconds,
+      height,
+    ).whenComplete(() {
+      // Must be a void body: `() => _inFlight.remove(key)` returns the in-flight
+      // future itself, and whenComplete awaits futures its callback returns —
+      // so every probe waited on itself forever and no size ever appeared.
+      _inFlight.remove(key);
+    });
   }
 
   static Future<int?> _probe(
@@ -71,10 +98,17 @@ class StreamSizeProbe {
     Map<String, String> headers,
     int? averageBitrate,
     int? runtimeSeconds,
+    int? height,
   ) async {
     if (url.isEmpty || !StreamSecurity.isSafeNetworkUrl(url)) return null;
     final int? value = isHls(url)
-        ? await _estimateHls(url, headers, averageBitrate, runtimeSeconds)
+        ? await _estimateHls(
+            url,
+            headers,
+            averageBitrate,
+            runtimeSeconds,
+            height: height,
+          )
         : await _exactContentLength(url, headers);
     if (value != null && value > 0) {
       _cache[keyFor(url, headers)] = value;
@@ -101,9 +135,9 @@ class StreamSizeProbe {
         ..headers['Range'] = 'bytes=0-0';
       final response = await client.send(request).timeout(_timeout);
       await response.stream.drain<void>().timeout(
-            _timeout,
-            onTimeout: () => null,
-          );
+        _timeout,
+        onTimeout: () => null,
+      );
       final range = response.headers['content-range'];
       if (range != null) {
         final total = int.tryParse(range.split('/').last.trim());
@@ -120,54 +154,233 @@ class StreamSizeProbe {
 
   /// Estimated size for an HLS variant.
   ///
-  /// HLS playlists carry no byte counts, so this builds the estimate from the
-  /// two things that ARE published: the variant's BANDWIDTH (from the master
-  /// playlist, or from the resolver when it supplies one) and the real runtime
-  /// (summed from the media playlist's EXTINF entries). Both requests are tiny
-  /// text files and the results are cached per URL.
+  /// HLS playlists carry no byte counts, so this uses the two things that ARE
+  /// published — the variant's average bitrate and the runtime (the sum of the
+  /// media playlist's EXTINF entries) — and falls back to measuring actual
+  /// segment byte counts when no bitrate is published.
   static Future<int?> _estimateHls(
     String url,
     Map<String, String> headers,
     int? averageBitrate,
-    int? runtimeSeconds,
-  ) async {
+    int? runtimeSeconds, {
+    int? height,
+  }) async {
     var bitrate = averageBitrate;
     var seconds = runtimeSeconds;
+    var mediaUrl = url;
 
     if (bitrate == null || seconds == null) {
       final playlist = await _fetchText(url, headers);
       if (playlist != null) {
-        final isMaster = _isMaster(playlist);
-        // BANDWIDTH lives on the master; the runtime lives on the media
-        // playlist, so a master URL costs one extra tiny request.
-        bitrate ??= _bandwidthOf(playlist, isMaster: isMaster);
-        final media =
-            isMaster ? _firstVariantUrl(playlist, url) : playlist;
-        if (media != null) {
-          seconds ??= _durationOf(await _fetchText(media, headers) ?? media);
+        if (_isMaster(playlist)) {
+          final variant = _variantForHeight(playlist, url, height);
+          if (variant != null) {
+            bitrate ??= variant.bandwidth;
+            mediaUrl = variant.uri;
+          }
+        }
+        if (seconds == null) {
+          final mediaText = mediaUrl == url
+              ? playlist
+              : await _fetchText(mediaUrl, headers);
+          if (mediaText != null) seconds = _durationOf(mediaText);
         }
       }
     }
-    if (bitrate == null || bitrate <= 0 || seconds == null || seconds <= 0) {
-      return null;
+
+    if (seconds == null || seconds <= 0) return null;
+    // BANDWIDTH/AVERAGE-BANDWIDTH are bits per SECOND (RFC 8216), so this is
+    // bits/s × seconds ÷ 8 — no thousand, or every size reads 1000× too big.
+    if (bitrate != null && bitrate > 0) return (bitrate * seconds) ~/ 8;
+
+    // No published bitrate — the normal case for the per-quality media
+    // playlists extractors return. Measure real segments instead of giving up,
+    // which is what left every one of those rows showing "—".
+    return _estimateFromSegments(mediaUrl, headers, seconds);
+  }
+
+  /// Measures a few segments and scales their real byte counts to the runtime.
+  static Future<int?> _estimateFromSegments(
+    String mediaUrl,
+    Map<String, String> headers,
+    int seconds,
+  ) async {
+    final text = await _fetchText(mediaUrl, headers);
+    if (text == null) return null;
+    // Group by what a single request would actually fetch. fMP4 playlists can
+    // list the same file for every segment, and byte-range playlists share one
+    // file across slices — counting those as separate samples would multiply
+    // the same bytes by the number of times they appear.
+    final byKey = <String, ({String uri, double seconds, int? start, int? end})>{};
+    for (final segment in _segmentsOf(text, mediaUrl)) {
+      final key = segment.start == null
+          ? segment.uri
+          : '${segment.uri}#${segment.start}-${segment.end}';
+      final existing = byKey[key];
+      byKey[key] = (
+        uri: segment.uri,
+        seconds: (existing?.seconds ?? 0) + segment.seconds,
+        start: segment.start,
+        end: segment.end,
+      );
     }
-    return (bitrate * 1000 * seconds) ~/ 8;
+    final segments = byKey.values.toList();
+    if (segments.isEmpty) return null;
+
+    var sampledBytes = 0;
+    var sampledSeconds = 0.0;
+    for (final index in _sampleIndexes(segments.length)) {
+      final segment = segments[index];
+      final length = await _contentLength(
+        segment.uri,
+        headers,
+        start: segment.start,
+        end: segment.end,
+      );
+      if (length == null || length <= 0) continue;
+      sampledBytes += length;
+      sampledSeconds += segment.seconds;
+    }
+    if (sampledBytes <= 0 || sampledSeconds <= 0) return null;
+    return ((sampledBytes / sampledSeconds) * seconds).round();
+  }
+
+  /// First, middle and last segment (fewer when the playlist is short).
+  static List<int> _sampleIndexes(int count) {
+    if (count <= _sampleCount) {
+      return List<int>.generate(count, (i) => i);
+    }
+    return {0, count ~/ 2, count - 1}.toList()..sort();
   }
 
   static bool _isMaster(String playlist) =>
       playlist.contains('#EXT-X-STREAM-INF:');
 
-  static int? _bandwidthOf(String playlist, {required bool isMaster}) {
-    if (!isMaster) return null;
-    for (final line in const LineSplitter().convert(playlist)) {
-      if (!line.startsWith('#EXT-X-STREAM-INF:')) continue;
-      final match =
-          RegExp(r'BANDWIDTH=(\d+)').firstMatch(line) ??
-          RegExp(r'AVERAGE-BANDWIDTH=(\d+)').firstMatch(line);
-      final value = int.tryParse(match?.group(1) ?? '');
-      if (value != null && value > 0) return value;
+  /// Byte count of one segment, for a whole file or a byte-range slice.
+  ///
+  /// A byte-range segment is requested with exactly its own range, so the
+  /// response's `Content-Length` is that segment's size rather than the size of
+  /// the file they all share.
+  static Future<int?> _contentLength(
+    String url,
+    Map<String, String> headers, {
+    int? start,
+    int? end,
+  }) async {
+    if (url.isEmpty || !StreamSecurity.isSafeNetworkUrl(url)) return null;
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', Uri.parse(url))
+        ..headers.addAll(_withUserAgent(headers))
+        ..followRedirects = true
+        ..headers['Range'] = start != null && end != null
+            ? 'bytes=$start-$end'
+            : 'bytes=0-0';
+      final response = await client.send(request).timeout(_timeout);
+      await response.stream.drain<void>().timeout(
+        _timeout,
+        onTimeout: () => null,
+      );
+      final range = response.headers['content-range'];
+      if (start == null && range != null) {
+        final total = int.tryParse(range.split('/').last.trim());
+        if (total != null && total > 0) return total;
+      }
+      final length = response.contentLength;
+      return (length != null && length > 0) ? length : null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
     }
-    return null;
+  }
+
+  /// One master-playlist variant.
+  static ({String uri, int bandwidth, int height})? _variantForHeight(
+    String master,
+    String playlistUrl,
+    int? height,
+  ) {
+    final variants = _variantsOf(master, playlistUrl);
+    if (variants.isEmpty) return null;
+    if (height != null && height > 0) {
+      final exact = variants.where((v) => v.height == height).toList();
+      if (exact.isNotEmpty) return exact.first;
+      final under = variants
+          .where((v) => v.height > 0 && v.height <= height)
+          .toList();
+      if (under.isNotEmpty) {
+        under.sort((a, b) => a.height.compareTo(b.height));
+        return under.last;
+      }
+    }
+    return variants.first;
+  }
+
+  /// Every `#EXT-X-STREAM-INF` variant, with URIs resolved against the master.
+  ///
+  /// Variant lines are almost always RELATIVE (`720p/index.m3u8`); accepting
+  /// absolute ones only meant the runtime was never found and HLS sizes came
+  /// back empty.
+  static List<({String uri, int bandwidth, int height})> _variantsOf(
+    String master,
+    String playlistUrl,
+  ) {
+    final Uri? base = Uri.tryParse(playlistUrl);
+    final variants =
+        <({String uri, int bandwidth, int height})>[];
+    String? pendingUri;
+    var pendingBandwidth = 0;
+    var pendingHeight = 0;
+
+    void flush() {
+      final raw = pendingUri;
+      if (raw == null) return;
+      final uri = Uri.tryParse(raw);
+      if (uri == null) return;
+      final resolved = uri.hasScheme
+          ? raw
+          : (base == null ? null : base.resolveUri(uri).toString());
+      if (resolved == null) return;
+      variants.add((
+        uri: resolved,
+        bandwidth: pendingBandwidth,
+        height: pendingHeight,
+      ));
+    }
+
+    for (final line in const LineSplitter().convert(master)) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.startsWith('#EXT-X-STREAM-INF:')) {
+        flush();
+        pendingUri = null;
+        // AVERAGE-BANDWIDTH is the honest figure for a size estimate;
+        // BANDWIDTH is a peak and would overstate the file.
+        pendingBandwidth =
+            int.tryParse(_attribute(trimmed, 'AVERAGE-BANDWIDTH') ?? '') ??
+                int.tryParse(_attribute(trimmed, 'BANDWIDTH') ?? '') ??
+                0;
+        pendingHeight = _heightOf(trimmed);
+        continue;
+      }
+      if (trimmed.startsWith('#')) continue;
+      pendingUri = trimmed;
+      flush();
+      pendingUri = null;
+    }
+    flush();
+    return variants;
+  }
+
+  static String? _attribute(String line, String name) {
+    final match = RegExp('$name=(\\d+)').firstMatch(line);
+    return match?.group(1);
+  }
+
+  static int _heightOf(String line) {
+    final match = RegExp(r'RESOLUTION=(\d+)x(\d+)').firstMatch(line);
+    return int.tryParse(match?.group(2) ?? '') ?? 0;
   }
 
   /// Sum of EXTINF durations, in seconds.
@@ -185,29 +398,60 @@ class StreamSizeProbe {
     return found ? seconds.round() : null;
   }
 
-  /// First variant URI of a master playlist, resolved against the playlist's own
-  /// URL. Variant lines are almost always RELATIVE ("720p/index.m3u8"); only
-  /// accepting absolute ones meant the runtime was never found and every HLS
-  /// size came back empty.
-  static String? _firstVariantUrl(String master, String playlistUrl) {
+  /// One media-playlist segment with its duration and resolved URI.
+  static List<({String uri, double seconds, int? start, int? end})> _segmentsOf(
+    String playlist,
+    String playlistUrl,
+  ) {
     final Uri? base = Uri.tryParse(playlistUrl);
-    final lines = const LineSplitter().convert(master);
-    var sawVariantTag = false;
-    for (final line in lines) {
-      final trimmed = line.trim();
-      if (trimmed.startsWith('#EXT-X-STREAM-INF:')) {
-        sawVariantTag = true;
+    final segments =
+        <({String uri, double seconds, int? start, int? end})>[];
+    var pendingSeconds = 0.0;
+    var pendingLength = 0;
+    var nextOffset = 0;
+    var sawByteRange = false;
+
+    for (final raw in const LineSplitter().convert(playlist)) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      if (line.startsWith('#EXTINF:')) {
+        final value = line.split(':').last.split(',').first.trim();
+        pendingSeconds = double.tryParse(value) ?? 0;
         continue;
       }
-      if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
-      if (!sawVariantTag) continue;
-      final uri = Uri.tryParse(trimmed);
-      if (uri == null) continue;
-      if (uri.hasScheme) return trimmed;
-      if (base == null) return null;
-      return base.resolveUri(uri).toString();
+      if (line.startsWith('#EXT-X-BYTERANGE:')) {
+        sawByteRange = true;
+        final parts = line.substring('#EXT-X-BYTERANGE:'.length).split('@');
+        final length = int.tryParse(parts.first.trim());
+        if (length == null) continue;
+        pendingLength = length;
+        if (parts.length > 1) {
+          nextOffset = int.tryParse(parts[1].trim()) ?? nextOffset;
+        }
+        continue;
+      }
+      if (line.startsWith('#')) continue;
+
+      final uri = Uri.tryParse(line);
+      if (uri != null) {
+        final resolved = uri.hasScheme
+            ? line
+            : (base == null ? null : base.resolveUri(uri).toString());
+        if (resolved != null && pendingSeconds > 0) {
+          segments.add((
+            uri: resolved,
+            seconds: pendingSeconds,
+            // Only meaningful when the segments genuinely share one file.
+            start: sawByteRange ? nextOffset : null,
+            end: sawByteRange ? nextOffset + pendingLength - 1 : null,
+          ));
+        }
+      }
+      if (pendingLength > 0) nextOffset += pendingLength;
+      pendingSeconds = 0;
+      pendingLength = 0;
     }
-    return null;
+    return segments;
   }
 
   static Future<String?> _fetchText(

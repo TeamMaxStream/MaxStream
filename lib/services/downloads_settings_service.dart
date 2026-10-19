@@ -20,6 +20,11 @@ class DownloadsSettingsService {
   static Future<void> setQuality(String quality) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key('quality'), quality);
+    // Update the cache the quality ceiling is read from. Without this the
+    // preference was written but `maxVariantHeightPixels` kept returning the
+    // value from app start, so "Auto" in the download sheet ignored the
+    // Quality setting until the app was restarted.
+    _cachedQuality = quality;
   }
 
   /// Returns the max variant height in pixels for the selected quality,

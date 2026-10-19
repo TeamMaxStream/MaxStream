@@ -11,6 +11,7 @@ import '../screens/share/share_picker_sheet.dart';
 import '../screens/share/share_send_sheet.dart';
 import '../widgets/app_network_image.dart';
 import '../widgets/app_shimmer.dart';
+import '../widgets/floating_nav_metrics.dart';
 import '../widgets/video_player_screen.dart';
 
 class DownloadsScreen extends StatefulWidget {
@@ -234,14 +235,16 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final downloadedSeriesSize = totalSizeLabel(
       series.values.expand((episodes) => episodes).map(_sizeOf),
     );
-    // The last download tile's delete button was rendering behind the system
-    // nav bar and could not be tapped; pad the list by the raw inset so it can
-    // always be scrolled clear of it.
+    // The last download tile's delete button was rendering behind the app's
+    // floating bottom nav bar and could not be tapped, and expanding a series
+    // did not help because the list could not scroll past it. That bar is an
+    // overlay (the shell uses extendBody: true), so the system inset alone does
+    // not describe the space it covers — reserve the bar's own height too.
     final listPadding = EdgeInsets.fromLTRB(
       16,
       16,
       16,
-      16 + MediaQuery.viewPaddingOf(context).bottom,
+      16 + FloatingNavBar.clearance(context),
     );
 
     final body = _loading && _downloadManager.activeDownloads.isEmpty

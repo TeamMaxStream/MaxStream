@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../widgets/floating_nav_metrics.dart';
 import '../database/db_helper.dart';
 import '../models/movie.dart';
 import '../services/cloud_sync_service.dart';
@@ -117,7 +119,12 @@ class _MaxStreamWatchlistScreenState extends State<MaxStreamWatchlistScreen>
             baseColor: Colors.grey[800]!,
             highlightColor: Colors.grey[600]!,
             child: GridView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                16 + FloatingNavBar.clearance(context),
+              ),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
                 childAspectRatio: 0.6,
@@ -225,7 +232,12 @@ class _MaxStreamWatchlistScreenState extends State<MaxStreamWatchlistScreen>
 
   Widget _buildWatchlistGrid(List<Movie> items) {
     return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+      padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                16 + FloatingNavBar.clearance(context),
+              ),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
         childAspectRatio: 0.6,

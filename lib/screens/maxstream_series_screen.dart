@@ -9,6 +9,7 @@ import '../services/direct_m3u8_service.dart';
 import '../services/miniplayer_service.dart';
 import '../services/server_list_loader.dart';
 import '../services/stream_audio_helper.dart';
+import '../services/downloads_settings_service.dart';
 import '../services/stream_size_probe.dart';
 import '../services/tmdb_api_service.dart';
 import '../services/watch_history_service.dart';
@@ -327,6 +328,25 @@ class _MaxStreamSeriesScreenState extends State<MaxStreamSeriesScreen> {
     );
   }
 
+  /// Size this download is expected to reach, so progress can read
+  /// "10.0 MB / 170.0 MB". Best-effort: a host that will not answer simply
+  /// leaves the total unknown, exactly as before.
+  Future<int?> _expectedTotalBytes(
+    String url,
+    Map<String, String> headers,
+    int? height,
+  ) async {
+    try {
+      return await StreamSizeProbe.probe(
+        url,
+        headers: headers,
+        height: height,
+      ).timeout(const Duration(seconds: 12));
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<bool> _downloadEpisode(
     Episode episode, {
     bool showResult = true,
@@ -377,6 +397,15 @@ class _MaxStreamSeriesScreenState extends State<MaxStreamSeriesScreen> {
             episodeNumber: episode.episodeNumber,
             maxVariantHeightPixels: int.tryParse(
               selectedStream['maxVariantHeight']?.toString() ?? '',
+            ),
+            // HLS never reports its own length, so hand over the size measured
+            // for this quality: the progress line then reads "10 MB / 170 MB"
+            // instead of only ever "10 MB downloaded". Cheap when the sheet
+            // already measured it — StreamSizeProbe caches per URL.
+            expectedTotalBytes: await _expectedTotalBytes(
+              url,
+              headers,
+              int.tryParse(selectedStream['maxVariantHeight']?.toString() ?? ''),
             ),
             subtitles: (selectedStream['subtitles'] as List? ?? const [])
                 .whereType<Map>()
@@ -1743,6 +1772,7 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
       batch.map((slot) async {
         final headers = _headersFor(stream0: streams, url: slot.url);
         final bitrate = int.tryParse('${slot.quality['averageBitrate'] ?? ''}');
+        final height = int.tryParse('${slot.quality['height'] ?? ''}');
         final seconds = int.tryParse(
           '${slot.quality['runtime'] ?? slot.quality['duration'] ?? ''}',
         );
@@ -1755,6 +1785,7 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
             headers: headers,
             averageBitrate: bitrate,
             runtimeSeconds: seconds,
+            height: height,
           ).timeout(const Duration(seconds: 12));
         } catch (_) {
           size = null;
@@ -1889,7 +1920,16 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
         );
       }
     }
-    return base(url: serverUrl, label: 'Auto');
+    // Auto is not "the highest variant available": it is the quality chosen in
+    // Download Settings, so the sheet's Auto row and the Settings screen mean
+    // the same thing.
+    return base(
+      url: serverUrl,
+      label: 'Auto',
+      maxVariantHeight: isM3u8
+          ? DownloadsSettingsService.maxVariantHeightPixels
+          : null,
+    );
   }
 
   @override

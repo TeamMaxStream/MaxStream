@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../widgets/floating_nav_metrics.dart';
 import '../services/watch_history_service.dart';
 
 import 'package:maxstream/widgets/video_player_screen.dart';
@@ -178,7 +180,12 @@ class _WatchHistoryScreenState extends State<WatchHistoryScreen> {
 
   Widget _buildHistoryList() {
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        16 + FloatingNavBar.clearance(context),
+      ),
       itemCount: _watchHistory.length,
       itemBuilder: (context, index) {
         final item = _watchHistory[index];
