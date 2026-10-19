@@ -67,6 +67,15 @@ class NearbyTransport implements ShareTransport {
   Completer<String> _manifestReply = Completer<String>();
   Completer<void> _peerHello = Completer<void>();
 
+  /// How many advertisers discovery actually surfaced this attempt.
+  ///
+  /// "Found 0" and "found some but could not connect" are completely different
+  /// problems — the first means discovery itself is not working (Play services,
+  /// location services, Bluetooth), the second means the radio link worked and
+  /// the handshake or transfer did not. Reporting which one it was turns
+  /// "Nearby did not work" into something actionable.
+  int _endpointsSeen = 0;
+
   @override
   String get id => 'nearby';
 
@@ -202,7 +211,17 @@ class NearbyTransport implements ShareTransport {
         'nearby devices.',
       );
     }
-    _emit('waiting', 'Looking for the other device nearby…');
+    _emit('waiting', 'Advertising nearby — open the same code on the other phone');
+    // If nobody ever arrives, say so instead of waiting silently forever.
+    Timer(const Duration(seconds: 30), () {
+      if (_connectedEndpoint == null && _session != null) {
+        _emit(
+          'waiting',
+          'Still advertising after 30s. Nearby pairs two Android phones in '
+              'range with Bluetooth and location on — or use the Wi-Fi option.',
+        );
+      }
+    });
     return ShareDescriptor(
       transportId: id,
       code: 'maxstream:nearby:$token',
@@ -346,7 +365,7 @@ class NearbyTransport implements ShareTransport {
     );
     if (peer == null) {
       await _nearby.stopDiscovery();
-      throw StateError('No nearby device is sharing with that code.');
+      throw StateError(_noPeerReason());
     }
     _connectedEndpoint = peer;
     await _nearby.stopDiscovery();
@@ -390,6 +409,7 @@ class NearbyTransport implements ShareTransport {
     required OnDisconnected onDisconnected,
   }) async {
     final completer = Completer<String?>();
+    _endpointsSeen = 0;
     final advertising = await _startAdvertising(
       nickname: nickname,
       onConnectionInitiated: onConnectionInitiated,
@@ -408,6 +428,7 @@ class NearbyTransport implements ShareTransport {
     await _startDiscovery(
       nickname: nickname,
       onEndpointFound: (id, name, service) async {
+        _endpointsSeen++;
         if (completer.isCompleted) return;
         await _nearby.requestConnection(
           nickname,
@@ -429,6 +450,19 @@ class NearbyTransport implements ShareTransport {
     } on TimeoutException {
       return null;
     }
+  }
+
+  /// Explains a failed connect in terms the user can act on.
+  String _noPeerReason() {
+    if (_endpointsSeen == 0) {
+      return 'Nearby could not see the other device at all. Discovery itself '
+          'did not work — check that Bluetooth and Wi-Fi are on, that Play '
+          'services is up to date, and that location is set to Precise for '
+          'MaxStream. Sharing over Wi-Fi works regardless.';
+    }
+    return 'Nearby found $_endpointsSeen nearby device(s) but never connected '
+        'to one carrying this code. Both phones need Android, and the other '
+        'device must have this share open. Sharing over Wi-Fi works regardless.';
   }
 
   /// Serialises the manifest and sends it with the share code, so the receiver
