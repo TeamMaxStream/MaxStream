@@ -123,14 +123,18 @@ class ShareManifest {
   int get totalBytes => items.fold(0, (sum, item) => sum + item.totalBytes);
   int get fileCount => items.fold(0, (sum, item) => sum + item.files.length);
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({String? token}) => {
         'v': version,
         'from': senderName,
         'at': createdAt.toIso8601String(),
         'items': items.map((i) => i.toJson()).toList(),
+        // Echoed back so the receiver can authenticate the sender. Nearby
+        // cannot carry a token in the connection handshake, so the code is
+        // proved here instead — before any file is served.
+        if (token != null && token.isNotEmpty) 'hello': token,
       };
 
-  String encode() => jsonEncode(toJson());
+  String encode({String? token}) => jsonEncode(toJson(token: token));
 
   static ShareManifest decode(String raw) {
     final decoded = jsonDecode(raw);

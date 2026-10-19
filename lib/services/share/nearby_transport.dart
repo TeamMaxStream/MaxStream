@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:nearby_connections/nearby_connections.dart';
@@ -54,8 +55,15 @@ class NearbyTransport implements ShareTransport {
 
   final Map<int, Completer<void>> _payloadWaiters = {};
   final Map<int, String> _incomingFiles = {};
-  final Completer<String> _manifestReply = Completer<String>();
-  final Completer<String> _peerHello = Completer<String>();
+
+  /// Token the receiver expects the sender to present. Set while resolving.
+  String? _expectedToken;
+
+  /// True once the connected peer proved it knows the share code.
+  bool _peerAuthenticated = false;
+
+  Completer<String> _manifestReply = Completer<String>();
+  Completer<void> _peerHello = Completer<void>();
 
   @override
   String get id => 'nearby';
@@ -94,13 +102,14 @@ class NearbyTransport implements ShareTransport {
       nickname,
       Strategy.P2P_POINT_TO_POINT,
       serviceId: serviceId,
+      // A random scanner must not be able to pull files, but the share token
+      // CANNOT be checked here: this plugin calls Google's legacy
+      // requestConnection(name, id, callback) overload, which carries no
+      // authentication token, so `info.authenticationToken` is always '-1'.
+      // Gating on it rejected every connection on both sides, so Nearby could
+      // never connect at all. The token is enforced one layer up instead, in
+      // the hello handshake below, before any file is served.
       onConnectionInitiated: (endpointId, info) async {
-        // Only accept peers that present the share token; a random scanner
-        // request must not be able to pull files.
-        if (info.authenticationToken != token) {
-          await _nearby.rejectConnection(endpointId);
-          return;
-        }
         await _nearby.acceptConnection(
           endpointId,
           onPayLoadRecieved: _onPayloadReceived,
@@ -110,8 +119,9 @@ class NearbyTransport implements ShareTransport {
       onConnectionResult: (endpointId, status) {
         if (status == Status.CONNECTED) {
           _connectedEndpoint = endpointId;
+          _peerAuthenticated = false;
           _emit('connected', 'Device connected');
-          unawaited(_greet(endpointId));
+          unawaited(_sendHello(endpointId));
         } else {
           _connectedEndpoint = null;
           _emit('disconnected', 'Device disconnected');
@@ -170,15 +180,31 @@ class NearbyTransport implements ShareTransport {
     return null;
   }
 
-  /// The sender says hello first so the receiver can match its token even if
-  /// the receiver is the one that discovered.
-  Future<void> _greet(String endpointId) async {
-    final token = _token;
-    if (token == null) return;
+  /// Both sides greet with their token once connected, so each can decide
+  /// whether the other actually knows the code.
+  Future<void> _sendHello(String endpointId) async {
+    final token = _token ?? _expectedToken;
+    if (token == null || token.isEmpty) return;
     await _nearby.sendBytesPayload(
       endpointId,
       Uint8List.fromList(utf8.encode('{"hello":"$token"}')),
     );
+  }
+
+  /// Drops a peer that did not present the share code. Nothing has been served
+  /// to it at this point, so disconnecting is enough.
+  Future<void> _rejectPeer(String endpointId, String reason) async {
+    _peerAuthenticated = false;
+    if (_connectedEndpoint == endpointId) _connectedEndpoint = null;
+    try {
+      await _nearby.disconnectFromEndpoint(endpointId);
+    } catch (_) {}
+    // Only the receiving side awaits this completer; failing it anywhere else
+    // would surface as an unhandled async error.
+    if (_expectedToken != null && !_peerHello.isCompleted) {
+      _peerHello.completeError(StateError(reason));
+    }
+    _emit('error', reason);
   }
 
   @override
@@ -190,6 +216,7 @@ class NearbyTransport implements ShareTransport {
     _session = null;
     _token = null;
     _connectedEndpoint = null;
+    _peerAuthenticated = false;
     _emit('disconnected', 'Stopped sharing');
   }
 
@@ -205,44 +232,40 @@ class NearbyTransport implements ShareTransport {
     final blocked = await _blockingReason();
     if (blocked != null) throw StateError(blocked);
 
-    final token = descriptor.data['token'] ?? '';
+    final token = descriptor.data['token']?.toString() ?? '';
+    if (token.isEmpty) throw StateError('That share code is not a nearby code.');
     final nickname = await _deviceNickname();
-    String? endpointId;
-    final started = await _nearby.startDiscovery(
-      nickname,
-      Strategy.P2P_POINT_TO_POINT,
-      serviceId: serviceId,
-      onEndpointFound: (id, name, service) {
-        // The token arrives with the connection handshake; remember every
-        // candidate and let acceptConnection filter by token.
-        endpointId ??= id;
-      },
-      onEndpointLost: (_) {},
-    );
-    if (!started) {
-      throw StateError(
-        'Nearby sharing is unavailable. Turn on Bluetooth and Wi-Fi, and allow '
-        'nearby devices.',
+
+    // Per-session state: the transport is long-lived, so the completers from a
+    // previous share would otherwise still be holding that share's result.
+    _expectedToken = token;
+    _peerAuthenticated = false;
+    _manifestReply = Completer<String>();
+    _peerHello = Completer<void>();
+
+    Future<bool> accept(String id, ConnectionInfo info) async {
+      // No token check is possible here (see the sender side); the hello
+      // handshake below is what decides whether this peer is the right one.
+      await _nearby.acceptConnection(
+        id,
+        onPayLoadRecieved: _onPayloadReceived,
+        onPayloadTransferUpdate: _onTransferUpdate,
       );
+      return true;
     }
 
-    final peer = await _findPeerWithToken(
-      token,
+    void onResult(String id, Status status) {
+      if (status == Status.CONNECTED) {
+        _connectedEndpoint = id;
+        _peerAuthenticated = false;
+        unawaited(_sendHello(id));
+      }
+    }
+
+    final peer = await _connectToPeer(
       nickname,
-      onConnectionInitiated: (id, info) async {
-        if (info.authenticationToken == token) {
-          await _nearby.acceptConnection(
-            id,
-            onPayLoadRecieved: _onPayloadReceived,
-            onPayloadTransferUpdate: _onTransferUpdate,
-          );
-        } else {
-          await _nearby.rejectConnection(id);
-        }
-      },
-      onConnectionResult: (id, status) {
-        if (status == Status.CONNECTED) _connectedEndpoint = id;
-      },
+      onConnectionInitiated: (id, info) => accept(id, info),
+      onConnectionResult: onResult,
       onDisconnected: (id) {
         if (_connectedEndpoint == id) _connectedEndpoint = null;
       },
@@ -254,10 +277,25 @@ class NearbyTransport implements ShareTransport {
     _connectedEndpoint = peer;
     await _nearby.stopDiscovery();
 
-    // Ask for the manifest; the sender answers with a bytes payload.
+    // Prove the sender knows the code before asking it for anything.
+    try {
+      await _peerHello.future.timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => throw StateError(
+          'That device did not confirm the share code.',
+        ),
+      );
+    } catch (_) {
+      await _nearby.disconnectFromEndpoint(peer).catchError((_) {});
+      rethrow;
+    }
+    _peerAuthenticated = true;
+
+    // Ask for the manifest; the sender answers with a bytes payload that
+    // echoes this code back.
     await _nearby.sendBytesPayload(
       peer,
-      Uint8List.fromList(utf8.encode('{"manifest":"?"}')),
+      Uint8List.fromList(utf8.encode('{"manifest":"?","hello":"$token"}')),
     );
     final raw = await _manifestReply.future.timeout(
       const Duration(seconds: 30),
@@ -266,9 +304,12 @@ class NearbyTransport implements ShareTransport {
     return ShareManifest.decode(raw);
   }
 
-  /// Connects to whichever advertiser presents [token].
-  Future<String?> _findPeerWithToken(
-    String token,
+  /// Connects to the first advertiser we hear.
+  ///
+  /// Advertising and discovery run together so whichever side hears the other
+  /// first can connect; the share code is then confirmed by the hello payload,
+  /// which is the only place it can actually be checked.
+  Future<String?> _connectToPeer(
     String nickname, {
     required OnConnectionInitiated onConnectionInitiated,
     required OnConnectionResult onConnectionResult,
@@ -320,6 +361,18 @@ class NearbyTransport implements ShareTransport {
     }
   }
 
+  /// Serialises the manifest and sends it with the share code, so the receiver
+  /// can verify it before trusting the file list.
+  Future<void> _sendManifest(String endpointId) async {
+    final session = _session;
+    if (session == null) return;
+    final raw = session.manifest.encode(token: _token);
+    await _nearby.sendBytesPayload(
+      endpointId,
+      Uint8List.fromList(utf8.encode(raw)),
+    );
+  }
+
   @override
   Stream<Uint8List> fetchFile(
     ShareDescriptor descriptor,
@@ -350,6 +403,11 @@ class NearbyTransport implements ShareTransport {
       await _nearby.stopAllEndpoints();
     } catch (_) {}
     _connectedEndpoint = null;
+    _expectedToken = null;
+    _peerAuthenticated = false;
+    if (!_manifestReply.isCompleted) {
+      _manifestReply.completeError(StateError('Receive cancelled'));
+    }
   }
 
   // ── Payload plumbing ──────────────────────────────────────────────────────
@@ -363,10 +421,36 @@ class NearbyTransport implements ShareTransport {
       } catch (_) {
         return;
       }
+      // Hello is checked FIRST: the receiver sends
+      // {"manifest":"?","hello":token} in a single payload, so testing
+      // `manifest` first would reject a peer whose hello was right there.
+      if (decoded.containsKey('hello')) {
+        final expected = _token ?? _expectedToken;
+        if (expected == null || decoded['hello']?.toString() != expected) {
+          unawaited(
+            _rejectPeer(endpointId, 'That device does not have this code.'),
+          );
+          return;
+        }
+        _peerAuthenticated = true;
+        if (!_peerHello.isCompleted) _peerHello.complete();
+      }
       if (decoded.containsKey('manifest')) {
-        if (!_manifestReply.isCompleted) _manifestReply.complete(text);
-      } else if (decoded.containsKey('hello')) {
-        if (!_peerHello.isCompleted) _peerHello.complete(text);
+        // Only a peer that proved it knows the code gets the file list.
+        if (!_peerAuthenticated) {
+          unawaited(
+            _rejectPeer(endpointId, 'That device did not present the code.'),
+          );
+          return;
+        }
+        // A non-null token means this side is the sender, so answer the
+        // request. (It previously just stashed the request itself and tried to
+        // decode '{"manifest":"?"}' as a manifest.)
+        if (_token != null) {
+          unawaited(_sendManifest(endpointId));
+        } else if (!_manifestReply.isCompleted) {
+          _manifestReply.complete(text);
+        }
       }
       return;
     }
@@ -416,12 +500,15 @@ class NearbyTransport implements ShareTransport {
     return nickname;
   }
 
+  /// Share code. Previously eight characters picked from a clock value, which
+  /// is guessable; this one is a real random draw and is the only thing
+  /// standing between a stranger and someone's downloads.
   static String _randomToken() {
     const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
-    final random = DateTime.now().microsecondsSinceEpoch;
+    final random = Random.secure();
     return List.generate(
-      8,
-      (i) => alphabet[(random ~/ (i + 1) + i * 7) % alphabet.length],
+      10,
+      (_) => alphabet[random.nextInt(alphabet.length)],
     ).join();
   }
 
