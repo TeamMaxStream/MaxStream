@@ -34,67 +34,8 @@ A Flutter streaming app for movies and TV series with native Kotlin stream extra
 - **Firebase Auth** — Email/password and Google Sign-In
 - **TMDB Integration** — Movie/series metadata, posters, backdrops, episode info
 - **TV Mode** — Dedicated Android TV interface with D-pad navigation
-- **Auto-Update** — Checks GitHub Releases for new versions, shows changelog, downloads and installs APK
+- **Auto-Update** — One GitHub release updates the phone, TV, and desktop apps
 - **Push Notifications** — Content availability alerts via Firebase
-
-## Architecture
-
-### Stream Extraction Pipeline
-
-```
-User selects content
-    ↓
-DirectM3u8Service.fetchMovieStreamUrl() / fetchSeriesStreamUrl()
-    ↓
-NativeStreamExtractor.resolveStream()  [Platform Channel]
-    ↓
-StreamExtractor.resolveStream()  [Kotlin, OkHttp]
-    ↓
-┌─────────────────────────────────────────┐
-│  Server Providers (parallel discovery)  │
-│  StaticTmdbProvider, VidrockProvider,   │
-│  VidzeeProvider, PrimeSrcProvider,      │
-│  FrembedProvider                        │
-└─────────────────────────────────────────┘
-    ↓  (20+ servers per movie)
-┌─────────────────────────────────────────┐
-│  Host Extractors (per-URL matching)     │
-│  VidLink (WebView), RPM (AES-CBC),     │
-│  VixSrc (signed URLs), VidsrcNet       │
-│  (10 decryption algos), Vidrock,       │
-│  Vidzee (AES-GCM), VOE, GenericMedia   │
-└─────────────────────────────────────────┘
-    ↓
-Parallel HLS Validation (coroutineScope + async)
-    ↓
-video_player + Chewie (ExoPlayer on Android)
-    ↓
-Video plays with subtitles, quality switching, episode autoplay
-```
-
-### How Stream Extraction Works
-
-1. **Server Discovery** — Multiple `ServerProvider`s run in parallel, each generating server URLs from TMDB IDs
-2. **Extractor Dispatch** — Each server URL is matched to a `HostExtractor` by domain
-3. **Stream Resolution** — Extractors resolve embed pages, decrypt payloads, follow redirects
-4. **Redirect Chaining** — Up to 5 redirect hops with cycle detection
-5. **HLS Validation** — Master playlist parsed, variants validated in parallel, subtitles extracted
-6. **Playback** — URL handed to ExoPlayer with headers, back buffer configured
-
-### Key Extractors
-
-| Extractor | Technique |
-|-----------|-----------|
-| **VidLink** | WebView JS injection intercepts `/api/b/` fetch responses |
-| **RPM** | AES-CBC decryption of hex payload, 5 route candidates (HLS, TikTok, Cloudflare) |
-| **VixSrc** | Signed URL construction with token expiry, 410 retry |
-| **VidsrcNet** | 3-level iframe chain, 10 per-ID decryption algorithms (XOR, Base64, ROT13) |
-| **Vidrock** | AES-encrypted TMDB ID, tries all servers from API response |
-| **Vidzee** | AES-GCM master key from remote API, AES-CBC link decryption |
-| **VidsrcRu** | WebView network interception of `/file2/*.m3u8` URLs |
-| **VidsrcTo** | RC4 decryption with GitHub-hosted keys, multi-source fallback |
-| **Frembed** | API-based server list with HTTP redirect resolution |
-| **GenericMedia** | Catch-all regex scan for `.m3u8`/`.mp4` URLs in page HTML |
 
 ## Tech Stack
 
@@ -107,47 +48,6 @@ Video plays with subtitles, quality switching, episode autoplay
 - **API**: TMDB API (movie/series metadata)
 - **State**: Provider
 - **UI**: Material Design, Glassmorphism, Shimmer, Lottie
-
-## Project Structure
-
-```
-lib/
-├── main.dart / main_phone.dart     # App entry points
-├── screens/                         # UI screens
-│   ├── m3u8_video_player_screen.dart  # Main video player with subtitles, quality, autoplay
-│   ├── maxstream_main_screen.dart     # Bottom nav (Home, Search, Series, Watchlist, More)
-│   ├── maxstream_home_screen.dart     # Home with hero banners, sliders
-│   ├── maxstream_search_screen.dart   # Search with All/Movies/TV/Actors tabs
-│   ├── maxstream_details_screen.dart  # Movie/series detail pages
-│   ├── maxstream_series_list_screen.dart
-│   ├── maxstream_watchlist_screen.dart
-│   ├── profile_settings_screen.dart   # Profile, name, picture, password
-│   └── streaming_provider_settings_screen.dart
-├── services/
-│   ├── native_stream_extractor.dart   # Platform channel bridge to Kotlin
-│   ├── direct_m3u8_service.dart       # Stream URL resolution service
-│   ├── tmdb_api_service.dart          # TMDB API client
-│   ├── profile_service.dart           # Firebase profile picture upload
-│   ├── watch_history_service.dart     # SQLite watch history
-│   ├── update_service.dart            # GitHub Releases auto-updater
-│   ├── notification_service.dart      # Local notifications
-│   ├── auth_service.dart              # Firebase authentication
-│   └── user_service.dart              # User profile management
-├── tv/                               # Android TV interface
-│   ├── screens/                       # TV-optimized screens
-│   ├── widgets/                       # TV focus, navigation, keyboard
-│   ├── services/                      # TV scraper service
-│   └── providers/                     # TV state management
-├── widgets/                          # Reusable UI components
-├── models/                           # Data models (Movie, Series)
-├── database/                         # SQLite helpers
-├── config/                           # API configuration
-└── utils/                            # Utilities, responsive helpers
-
-android/app/src/main/kotlin/com/maxstream/app/
-├── MainActivity.kt                   # Platform channel handler
-└── StreamExtractor.kt                # ~1500 lines: 4 server providers, 17 host extractors, HLS validation
-```
 
 ## Getting Started
 
@@ -173,33 +73,51 @@ flutter run
 
 ## Auto-Update System
 
-The app checks GitHub Releases on startup for newer versions:
+The phone, TV, and desktop apps share one product version and one GitHub
+release. Each app checks `TeamMaxStream/MaxStream` for a newer tag and updates
+itself from that release:
 
-1. Hits `https://api.github.com/repos/TeamMaxStream/MaxStream/releases/latest`
-2. Compares release tag (e.g. `v1.0.1`) with installed version
-3. Shows local notification + in-app dialog with changelog from release body
-4. Downloads `MaxStream.apk` from the release asset
-5. Prompts Android package installer
+1. Reads `TeamMaxStream/MaxStream` releases (phone/TV use `/releases/latest`,
+   desktop scans recent releases for an installer asset)
+2. Compares the release tag (e.g. `v1.7.1`) with the installed version
+3. Shows the changelog from the release body
+4. Downloads the matching asset:
+   - phone: `maxstream-<abi>.apk` for the device CPU
+   - TV: `maxstream-tv.apk`
+   - desktop: `MaxStream-Dex.exe` or `MaxStream-Desktop.msi`
+5. Installs it (Android package installer / Windows installer)
 
-To release an update:
-1. Build APK: `flutter build apk --release`
-2. Create GitHub release with tag `v1.0.1`, title `v1.0.1`
-3. Attach `MaxStream.apk` as a release asset
-4. Write changelog in the release body
+Releases are built and published by `.github/workflows/build.yml`. Push a tag,
+do not create the release by hand:
+
+1. Bump the version in all four places:
+   - `pubspec.yaml`
+   - `android/tvapp/build.gradle.kts` (`versionName`, `versionCode`)
+   - `desktop/build.gradle.kts` (`version` and `packageVersion`)
+   - `desktop/src/main/kotlin/com/maxstream/app/core/AppConfig.kt`
+2. Commit, then push a tag such as `v1.7.1`
+3. CI builds the phone APKs, TV APK, desktop EXE/MSI, verifies every version
+   matches the tag, and attaches all assets to one release
 
 ## Build
 
 ```bash
-# Android APK
+# Android APK / App Bundle
 flutter build apk --release
-
-# Android App Bundle
 flutter build appbundle --release
+
+# Android TV APK
+cd android && ./gradlew assembleFossUniversalRelease
+
+# Desktop (Windows installer + portable app image)
+cd desktop
+./gradlew packageReleaseMsi
+./gradlew packageReleaseExe
 ```
 
 ## Version
 
-- **Current**: 1.5.0+7
+- **Current**: 1.7.0 (mobile `1.7.0+9`)
 - **Min SDK**: 3.8.0
 
 ## Contributing

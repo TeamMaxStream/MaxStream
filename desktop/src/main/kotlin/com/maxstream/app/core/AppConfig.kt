@@ -8,7 +8,8 @@ package com.maxstream.app.core
  */
 object AppConfig {
     // Keep in sync with build.gradle.kts (version + nativeDistributions.packageVersion).
-    const val APP_VERSION = "1.0.1"
+    // All three apps share this product version and GitHub release tag.
+    const val APP_VERSION = "1.7.0"
 
     // TMDB (same key as mobile lib/config/api_config.dart and TV core/Constants.kt)
     const val TMDB_API_KEY = "3b65c5fdee212a85a4e4ef208d31d74e"

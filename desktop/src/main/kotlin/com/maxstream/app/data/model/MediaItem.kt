@@ -14,6 +14,8 @@ data class MediaItem(
     val overview: String,
     val year: Int? = null,
     val genres: List<String> = emptyList(),
+    /** TMDB numeric genre IDs (16 animation, 10751 family = kid-safe). */
+    val genreIds: List<Int> = emptyList(),
     val rating: Double = 0.0,
     /** 0.0..1.0 — how much the user has watched (Continue Watching). */
     val progress: Float = 0f,

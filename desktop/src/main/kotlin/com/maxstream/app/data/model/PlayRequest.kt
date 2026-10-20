@@ -7,4 +7,8 @@ data class PlayRequest(
     val title: String,
     val season: Int = 1,
     val episode: Int = 1,
+    /** TMDB poster path, used by the mini-player and progress metadata. */
+    val posterPath: String? = null,
+    /** Set for offline playback: skip stream resolution and play this file. */
+    val localPath: String? = null,
 )

@@ -190,6 +190,52 @@ object AppSpacing {
     val xxl = 32.dp
 }
 
+// Kids profiles get a brighter, more playful palette (same emerald/cyan/amber
+// accents as the phone and TV apps) while keeping the same layout.
+private val KidsDarkColors = darkColorScheme(
+    primary = Color(0xFF10B981),
+    onPrimary = Color(0xFF04140D),
+    primaryContainer = Color(0xFF064E3B),
+    onPrimaryContainer = Color(0xFFD1FAE5),
+    secondary = Color(0xFF06B6D4),
+    onSecondary = Color(0xFF00202A),
+    secondaryContainer = Color(0xFF164E63),
+    onSecondaryContainer = Color(0xFFCFFAFE),
+    tertiary = Color(0xFFF59E0B),
+    background = Color(0xFF071826),
+    onBackground = Color.White,
+    surface = Color(0xFF0D2437),
+    onSurface = Color.White,
+    surfaceVariant = Color(0xFF14344C),
+    onSurfaceVariant = Color(0xFFB7E4DA),
+    outline = Color(0xFF4A7C6F),
+    outlineVariant = Color(0xFF1E4A5F),
+    error = Color(0xFFFF8A80),
+    onError = Color(0xFF3B0908),
+)
+
+private val KidsLightColors = lightColorScheme(
+    primary = Color(0xFF047857),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFA7F3D0),
+    onPrimaryContainer = Color(0xFF002117),
+    secondary = Color(0xFF0E7490),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFCFFAFE),
+    onSecondaryContainer = Color(0xFF00363F),
+    tertiary = Color(0xFFB45309),
+    background = Color(0xFFF0FDF9),
+    onBackground = Color(0xFF0B1F1A),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF0B1F1A),
+    surfaceVariant = Color(0xFFD9F4EC),
+    onSurfaceVariant = Color(0xFF365C53),
+    outline = Color(0xFF5E8B80),
+    outlineVariant = Color(0xFFB9DDD4),
+    error = Color(0xFFB3261E),
+    onError = Color.White,
+)
+
 /** Extra brand/data colors that don't belong in the Material color scheme. */
 object AppColors {
     val ratingGold = Color(0xFFF5C518)
@@ -205,10 +251,17 @@ object AppColors {
 @Composable
 fun DesktopTheme(
     useDarkTheme: Boolean = isSystemInDarkTheme(),
+    kids: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val colors = when {
+        kids && useDarkTheme -> KidsDarkColors
+        kids -> KidsLightColors
+        useDarkTheme -> DarkColors
+        else -> LightColors
+    }
     MaterialTheme(
-        colorScheme = if (useDarkTheme) DarkColors else LightColors,
+        colorScheme = colors,
         typography = MaxStreamTypography,
         shapes = MaxStreamShapes,
         content = content,

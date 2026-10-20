@@ -9,6 +9,7 @@ data class ResolvedStream(
     val subtitles: List<ResolvedSubtitle> = emptyList(),
     val audioTracks: List<ResolvedAudioTrack> = emptyList(),
     val separateAudio: Boolean = false,
+    val type: String = "",
 ) {
     val referer: String? get() = headers["Referer"]
     val userAgent: String? get() = headers["User-Agent"]
@@ -95,6 +96,7 @@ fun parseStreams(raw: Any?): List<ResolvedStream> {
             subtitles = subtitles,
             audioTracks = audioTracks,
             separateAudio = m["separateAudio"] as? Boolean ?: false,
+            type = m["type"] as? String ?: "",
         )
     }
 }

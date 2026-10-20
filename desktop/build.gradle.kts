@@ -1,5 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import java.io.File
+import java.net.URI
+import java.util.zip.ZipFile
 
 plugins {
     kotlin("jvm") version "2.2.20"
@@ -8,9 +10,10 @@ plugins {
 }
 
 group = "com.maxstream"
-// Keep in sync with nativeDistributions.packageVersion below (they drifted:
-// gradle said 0.1.0 while the installer said 1.0.1).
-version = "1.0.1"
+// Shared product version across the phone, TV, and desktop apps. Keep the tag,
+// pubspec.yaml, android/tvapp/build.gradle.kts, and AppConfig.APP_VERSION in
+// sync; the release job in .github/workflows/build.yml enforces it.
+version = "1.7.0"
 
 // Windows laptop app — its own desktop UX. Shares the com.maxstream.app package
 // with the TV/mobile clients but does NOT use Google services (unavailable on
@@ -52,8 +55,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
 
-    // Playback engine (VLCJ — requires libvlc from the VLC desktop install).
-    implementation("uk.co.caprica:vlcj:4.8.3")
+    // Playback engine: libmpv via a tiny JNA binding (MpvLibrary /
+    // PlayerController). The native library is bundled by syncMpvRuntime.
+    implementation("net.java.dev.jna:jna:5.14.0")
 
     // Async image loading for TMDB posters/backdrops (Coil 3 = KMP/desktop).
     // Pin to 3.2.x: newer Coil ships kotlin-stdlib 2.4+ metadata, which the
@@ -65,72 +69,88 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
-// Copies the local VLC runtime (libvlc + plugins) into the app resources so the
-// packaged app plays video without a separate VLC install. Overridable with
-//   gradlew :desktop:syncVlcRuntime -PvlcSource="D:\path\to\VLC"
-// Skips locale/skins/exes (translations & GUI — irrelevant to embedded playback).
-val vlcSourceDir = providers.gradleProperty("vlcSource")
-    .orElse("C:\\Program Files\\VideoLAN\\VLC")
-val allowMissingVlc = providers.gradleProperty("allowMissingVlc").map { it == "true" }.orElse(false)
-// VLC's plugin tree is the single largest thing in the installer (~120 MB). The
-// full tree ships a GUI, stream-out, visualisations, service discovery, metadata
-// scrapers and hardware backends this app never touches. `-PvlcMinimal=true`
-// keeps only the modules needed to demux/decode HLS, DASH, MP4 and MKV and
-// render audio/video/subtitles. It is opt-in because a missing module fails at
-// playback time, not build time — smoke-test an HLS title and a local MP4 first.
-val vlcMinimal = providers.gradleProperty("vlcMinimal").map { it == "true" }.orElse(false)
-tasks.register<Sync>("syncVlcRuntime") {
+// libmpv is a single self-contained native library with all demuxers, codecs,
+// HLS/DASH support and the GPU renderer compiled in. The official LGPL Windows
+// build is pinned so installers are reproducible; CI downloads it once and
+// Gradle caches the archive under ~/.gradle/caches.
+//
+// Override for a local build:
+//   gradlew :desktop:syncMpvRuntime -PmpvLib="D:\path\to\libmpv-2.dll"
+// On Linux/macOS development builds the task is skipped and MpvRuntime falls
+// back to the system libmpv; package with -PmpvLib=... to ship it.
+val mpvVersion = "0.41.0-dev-g6a262d11f"
+val mpvArchiveUrl =
+    "https://github.com/mpv-player/mpv/releases/download/git-release/" +
+        "libmpv-v0.41.0-dev-g6a262d11f-39135297726-x86_64-w64-mingw32-lgpl.zip"
+val mpvSource = providers.gradleProperty("mpvLib")
+val mpvResourceRoot = layout.buildDirectory.dir("generated/mpv-resources")
+val mpvResourceDir = mpvResourceRoot.map { it.dir("mpv") }
+
+sourceSets["main"].resources.srcDir(mpvResourceRoot)
+
+tasks.register("syncMpvRuntime") {
     group = "maxstream"
-    description = "Bundles the local VLC runtime (libvlc + plugins) into app resources."
-    val src = File(vlcSourceDir.get())
-    from(src) {
-        include("libvlc.dll", "libvlccore.dll")
-        if (vlcMinimal.get()) {
-            listOf(
-                "access", "audio_filter", "audio_output", "codec", "demux",
-                "keystore", "misc", "packetizer", "spu", "stream_filter",
-                "text_renderer", "video_chroma", "video_filter", "video_output",
-            ).forEach { include("plugins/$it/**") }
-        } else {
-            include("plugins/**")
-        }
-        // Never needed: HRTF impulse responses and Lua playlist/metadata scripts.
-        // HLS/DASH/MP4/MKV playback is entirely native.
-    }
-    into(layout.projectDirectory.dir("src/main/resources/vlc"))
-    doFirst {
-        if (!src.exists()) {
-            val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
-            if (isWindows && !allowMissingVlc.get()) {
-                // Previously a silent `logger.warn` — the MSI then shipped with an
-                // empty player and no VLC installed on the target machine.
-                throw GradleException(
-                    "VLC not found at $src — refusing to build without a bundled player. " +
-                        "Install VLC, set -PvlcSource=\"D:\\path\\to\\VLC\", or pass " +
-                        "-PallowMissingVlc=true to package deliberately without it.",
-                )
-            }
-            logger.warn("VLC source not found at $src — bundled player will be empty (non-Windows host; app falls back to installed VLC).")
-        }
-    }
+    description = "Bundles libmpv into the desktop app resources."
+    inputs.property("mpvVersion", mpvVersion)
+    inputs.property("mpvLib", mpvSource.orElse(""))
+    outputs.dir(mpvResourceRoot)
+
     doLast {
-        val outDir = layout.projectDirectory.dir("src/main/resources/vlc").asFile
-        val core = File(src, "libvlc.dll")
-        File(outDir, "VERSION.txt").writeText(if (core.exists()) "${core.length()}:${core.lastModified()}" else "missing")
-        // Manifest of every bundled file so VlcRuntime can extract them from the JAR.
-        val names = outDir.walkTopDown()
-            .filter { it.isFile && it.name != "FILES.txt" }
-            .map { it.relativeTo(outDir).invariantSeparatorsPath }
-            .sorted()
-            .toList()
-        File(outDir, "FILES.txt").writeText(names.joinToString("\n"))
-        val pluginsMb = names.filter { it.startsWith("plugins/") }
-            .sumOf { File(outDir, it).length() } / (1024.0 * 1024.0)
-        println("syncVlcRuntime: bundled ${names.size} files (${ "%.1f".format(pluginsMb) } MB plugins) into resources/vlc")
+        val out = mpvResourceDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+
+        val custom = mpvSource.orNull?.takeIf { it.isNotBlank() }?.let(::File)
+        val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        val copied = mutableListOf<String>()
+
+        if (custom != null) {
+            require(custom.isFile) { "mpvLib does not point at a file: $custom" }
+            val name = if (isWindows) "libmpv-2.dll" else custom.name
+            custom.copyTo(File(out, name), overwrite = true)
+            copied.add(name)
+        } else if (isWindows) {
+            val cacheDir = File(gradle.gradleUserHomeDir, "caches/maxstream-mpv/$mpvVersion")
+            val archive = File(cacheDir, "libmpv.zip")
+            if (!archive.isFile || archive.length() < 1_000_000L) {
+                cacheDir.mkdirs()
+                println("syncMpvRuntime: downloading $mpvArchiveUrl")
+                URI(mpvArchiveUrl).toURL().openStream().use { input ->
+                    archive.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            ZipFile(archive).use { zip ->
+                for (entryName in listOf("libmpv-2.dll", "LICENSE.LGPL")) {
+                    val entry = zip.getEntry(entryName)
+                        ?: throw GradleException("$archive is missing $entryName")
+                    zip.getInputStream(entry).use { input ->
+                        File(out, entryName).outputStream().use { output -> input.copyTo(output) }
+                    }
+                    copied.add(entryName)
+                }
+            }
+        } else {
+            logger.lifecycle(
+                "syncMpvRuntime: skipped on non-Windows host (system libmpv is used for " +
+                    "development). Pass -PmpvLib=/path/to/libmpv.so.2 to bundle one.",
+            )
+            return@doLast
+        }
+
+        val dll = copied.firstOrNull { it.endsWith(".dll") || it.contains(".so") || it.endsWith(".dylib") }
+        val version = if (dll != null) "$mpvVersion:${File(out, dll).length()}" else mpvVersion
+        File(out, "VERSION.txt").writeText(version)
+        val names = copied.sorted()
+        File(out, "FILES.txt").writeText(names.joinToString("\n"))
+        val mb = names.sumOf { File(out, it).length() } / (1024.0 * 1024.0)
+        println(
+            "syncMpvRuntime: bundled ${names.size} files (${"%.1f".format(mb)} MB) " +
+                "into resources/mpv",
+        )
     }
 }
-// Ensure the bundle is refreshed before resources are packaged into the JAR/MSI.
-tasks.named("processResources") { dependsOn("syncVlcRuntime") }
+// Ensure the native library is in place before resources are packaged.
+tasks.named("processResources") { dependsOn("syncMpvRuntime") }
 
 // ProGuard: shrinks + obfuscates the JVM code on the release build type.
 // CI must use `packageReleaseMsi` (not `packageMsi`): the default build type
@@ -143,7 +163,7 @@ compose.desktop {
                     isEnabled.set(true)
                     obfuscate.set(true)
                     // Shrink (drop unused code) is on by default; code *optimization*
-                    // is off because vlcj/JNA/OkHttp rely on reflection.
+                    // is off because JNA/OkHttp rely on reflection.
                     optimize.set(false)
                     version.set("7.4.2")
                     configurationFiles.from(project.files("proguard-rules.pro"))
@@ -186,10 +206,13 @@ compose.desktop {
     application {
         mainClass = "com.maxstream.app.MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
+            // MSI is the reliable silent-update payload; EXE gives the manually
+            // uploaded MaxStream-Dex.exe an installer to run. Both package the
+            // full app image (launcher + runtime + jars + libmpv).
+            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "MaxStream"
             // Must be MAJOR>0 for the macOS Dmg packager (0.1.0 is rejected).
-            packageVersion = "1.0.1"
+            packageVersion = "1.7.0"
             description = "MaxStream for Windows — desktop catalog & playback client"
             vendor = "MaxStream"
             // Compose only auto-detects JDK modules from *dependencies*; our own

@@ -8,18 +8,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -43,6 +48,7 @@ import com.maxstream.app.core.AppConfig
 import com.maxstream.app.ui.components.ScrollableColumn
 import com.maxstream.app.ui.components.appFocusRing
 import com.maxstream.app.ui.theme.AppSpacing
+import com.maxstream.app.update.UpdateService
 import kotlinx.coroutines.launch
 
 /**
@@ -150,6 +156,12 @@ fun SettingsScreen(
                     Text("Manage profiles", color = MaterialTheme.colorScheme.onSurface)
                 }
             }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        SettingRow("Updates") {
+            UpdateSection()
         }
 
         Spacer(Modifier.height(16.dp))
@@ -270,6 +282,141 @@ private fun AccountSection(onSignOut: () -> Unit) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 13.sp,
     )
+}
+
+/** Version status, release notes, download progress, and MSI install action. */
+@Composable
+private fun UpdateSection() {
+    val info = UpdateService.available
+    val file = UpdateService.downloadedFile
+    val checking = UpdateService.checking
+    val downloading = UpdateService.downloading
+    val done = UpdateService.downloadedBytes
+    val total = UpdateService.downloadTotalBytes
+    val error = UpdateService.downloadError ?: UpdateService.checkError
+
+    Column {
+        when {
+            downloading -> {
+                Text(
+                    "Downloading ${formatBytes(done)}${if (total > 0) " of ${formatBytes(total)}" else ""}",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                val ratio = if (total > 0L) (done.toDouble() / total).toFloat().coerceIn(0f, 1f) else 0f
+                LinearProgressIndicator(
+                    progress = { ratio },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            file != null && info != null -> {
+                Text(
+                    "Version ${info.version} downloaded",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "MaxStream closes so the installer can finish. Open it again when the installer completes.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { UpdateService.installAndExit(file) },
+                        modifier = Modifier.appFocusRing(cornerRadius = 8.dp),
+                    ) {
+                        Text("Install update")
+                    }
+                    TextButton(onClick = { UpdateService.clearDownload() }) {
+                        Text("Discard", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            info != null -> {
+                Text(
+                    "Version ${info.version} is available",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Installed: ${AppConfig.APP_VERSION}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    info.notes,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    maxLines = 6,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = { UpdateService.download(info) },
+                        modifier = Modifier.appFocusRing(cornerRadius = 8.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = null,
+                            modifier = Modifier.width(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (info.assetSize > 0) {
+                                "Download (${formatBytes(info.assetSize)})"
+                            } else {
+                                "Download update"
+                            },
+                        )
+                    }
+                }
+            }
+            checking -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("Checking for updates…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+            error != null -> Text(
+                error,
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 12.sp,
+            )
+            UpdateService.checkedOnce -> Text(
+                "MaxStream Desktop is up to date.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+            )
+            else -> Text(
+                "Automatic check runs at launch.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+            )
+        }
+
+        if (!downloading && !checking) {
+            Spacer(Modifier.height(10.dp))
+            TextButton(
+                onClick = { UpdateService.checkNow() },
+                enabled = !checking && !downloading,
+            ) {
+                Text("Check for updates", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0L) return "0 MB"
+    val mb = bytes / (1024.0 * 1024.0)
+    return if (mb >= 1024.0) "%.2f GB".format(mb / 1024.0) else "%.1f MB".format(mb)
 }
 
 @Composable

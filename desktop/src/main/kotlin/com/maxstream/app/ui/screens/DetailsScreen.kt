@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -64,6 +66,7 @@ import com.maxstream.app.data.model.MediaDetails
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.data.model.PlayRequest
 import com.maxstream.app.data.repository.MediaRepository
+import com.maxstream.app.download.DownloadPickerDialog
 import com.maxstream.app.ui.components.ErrorState
 import com.maxstream.app.ui.components.SkeletonBox
 import com.maxstream.app.ui.components.appClickable
@@ -116,6 +119,7 @@ fun DetailsScreen(
         }
     }
     var seasonNumber by remember { mutableIntStateOf(1) }
+    var downloadRequest by remember { mutableStateOf<PlayRequest?>(null) }
     // `details` must be a key: on first render it's still null, and without
     // it in the keys the episodes block never re-ran after details loaded.
     var episodesLoading by remember { mutableStateOf(false) }
@@ -257,9 +261,21 @@ fun DetailsScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 val resume = WatchStateStore.resumeFor(item.id, seasonNumber, 1)
+                val selectedResume = resume?.takeIf { it.season == seasonNumber }
 
                 TextButton(
-                    onClick = { onPlay(PlayRequest(item.id, item.mediaType, item.title, seasonNumber, 1)) },
+                    onClick = {
+                        onPlay(
+                            PlayRequest(
+                                item.id,
+                                item.mediaType,
+                                item.title,
+                                seasonNumber,
+                                if (item.mediaType == "tv") selectedResume?.episode ?: 1 else 1,
+                                posterPath = item.posterPath,
+                            ),
+                        )
+                    },
                     modifier = Modifier
                         .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
                         .appFocusRing(cornerRadius = 8.dp, ringColor = Color.White),
@@ -271,12 +287,38 @@ fun DetailsScreen(
 
                 if (resume != null && resume.positionMs > 30_000L) {
                     OutlinedButton(
-                        onClick = { onPlay(PlayRequest(item.id, item.mediaType, item.title, resume.season, resume.episode)) },
+                        onClick = {
+                            onPlay(
+                                PlayRequest(
+                                    item.id,
+                                    item.mediaType,
+                                    item.title,
+                                    resume.season,
+                                    resume.episode,
+                                    posterPath = item.posterPath,
+                                ),
+                            )
+                        },
                     ) {
                         Icon(Icons.AutoMirrored.Filled.PlaylistPlay, null)
                         Spacer(Modifier.width(5.dp))
                         Text("Resume ${fmtTime(resume.positionMs)}")
                     }
+                }
+
+                OutlinedButton(onClick = {
+                    downloadRequest = PlayRequest(
+                        itemId = item.id,
+                        mediaType = item.mediaType,
+                        title = item.title,
+                        season = seasonNumber,
+                        episode = if (item.mediaType == "tv") selectedResume?.episode ?: 1 else 1,
+                        posterPath = item.posterPath,
+                    )
+                }) {
+                    Icon(Icons.Default.Download, null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("Download")
                 }
 
                 current.trailers.firstOrNull()?.let { trailer ->
@@ -494,7 +536,16 @@ fun DetailsScreen(
                                         .fillMaxWidth()
                                         .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
                                         .clickable {
-                                            onPlay(PlayRequest(item.id, item.mediaType, item.title, seasonNumber, ep.number))
+                                            onPlay(
+                                                PlayRequest(
+                                                    item.id,
+                                                    item.mediaType,
+                                                    item.title,
+                                                    seasonNumber,
+                                                    ep.number,
+                                                    posterPath = item.posterPath,
+                                                ),
+                                            )
                                         }
                                         .appFocusRing(cornerRadius = 14.dp)
                                         .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -572,6 +623,24 @@ fun DetailsScreen(
                                 }
                             }
                             Spacer(Modifier.width(12.dp))
+                            IconButton(
+                                onClick = {
+                                    downloadRequest = PlayRequest(
+                                        itemId = item.id,
+                                        mediaType = item.mediaType,
+                                        title = item.title,
+                                        season = seasonNumber,
+                                        episode = ep.number,
+                                        posterPath = item.posterPath,
+                                    )
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = "Download episode ${ep.number}",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             Box(
                                 Modifier
                                     .size(48.dp)
@@ -619,6 +688,18 @@ fun DetailsScreen(
 
             Spacer(Modifier.height(20.dp))
         }
+    }
+
+    downloadRequest?.let { pending ->
+        DownloadPickerDialog(
+            request = pending,
+            subtitleLabel = if (pending.mediaType == "tv") {
+                "S${pending.season} E${pending.episode}"
+            } else {
+                null
+            },
+            onDismiss = { downloadRequest = null },
+        )
     }
 }
 

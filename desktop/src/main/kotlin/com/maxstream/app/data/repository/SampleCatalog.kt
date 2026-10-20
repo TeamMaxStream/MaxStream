@@ -13,22 +13,47 @@ import com.maxstream.app.data.model.MediaItem
 object SampleCatalog : MediaRepository {
 
     private val catalog = listOf(
-        MediaItem("1", "Neon Horizon", "movie", "A data courier is chased across a rain-soaked megacity after stealing the algorithm that runs it.",
-            2026, listOf("Sci-Fi", "Thriller"), 8.2, 0f, null, null),
-        MediaItem("2", "The Last Lighthouse", "movie", "Two rivals guard the final lighthouse guarding a flooded coastal nation.",
-            2025, listOf("Drama"), 7.6, 0f, null, null),
-        MediaItem("3", "Static Bloom", "tv", "A detective who sees static everywhere untangles a city-wide signal conspiracy.",
-            2026, listOf("Crime", "Mystery"), 8.8, 0f, null, null),
-        MediaItem("4", "Garden of Machines", "movie", "An AI gardener inherits a dead colony's botanical vault and must resurrect it.",
-            2024, listOf("Sci-Fi", "Family"), 7.1, 0f, null, null),
-        MediaItem("5", "Tidewater", "tv", "Siblings fight over the family fishing empire on a shrinking boyhood island.",
-            2025, listOf("Drama"), 8.0, 0f, null, null),
-        MediaItem("6", "Carbon Copy", "movie", "A memoir ghost-writer discovers her subject is writing the same book about her.",
-            2026, listOf("Comedy", "Drama"), 6.9, 0f, null, null),
-        MediaItem("7", "No Signal Above", "tv", "Astronauts lose Earth after a solar storm and must steer a drifting station home.",
-            2024, listOf("Sci-Fi"), 8.5, 0f, null, null),
-        MediaItem("8", "Paper Lanterns", "movie", "A quiet romance in a city that turns off its lights one night a year.",
-            2023, listOf("Romance"), 7.4, 0f, null, null),
+        MediaItem(
+            id = "1", title = "Neon Horizon", mediaType = "movie",
+            overview = "A data courier is chased across a rain-soaked megacity after stealing the algorithm that runs it.",
+            year = 2026, genres = listOf("Sci-Fi", "Thriller"), rating = 8.2,
+        ),
+        MediaItem(
+            id = "2", title = "The Last Lighthouse", mediaType = "movie",
+            overview = "Two rivals guard the final lighthouse guarding a flooded coastal nation.",
+            year = 2025, genres = listOf("Drama"), rating = 7.6,
+        ),
+        MediaItem(
+            id = "3", title = "Static Bloom", mediaType = "tv",
+            overview = "A detective who sees static everywhere untangles a city-wide signal conspiracy.",
+            year = 2026, genres = listOf("Crime", "Mystery"), rating = 8.8,
+        ),
+        MediaItem(
+            id = "4", title = "Garden of Machines", mediaType = "movie",
+            overview = "An AI gardener inherits a dead colony's botanical vault and must resurrect it.",
+            year = 2024, genres = listOf("Sci-Fi", "Family"), genreIds = listOf(878, 10751),
+            rating = 7.1,
+        ),
+        MediaItem(
+            id = "5", title = "Tidewater", mediaType = "tv",
+            overview = "Siblings fight over the family fishing empire on a shrinking boyhood island.",
+            year = 2025, genres = listOf("Drama"), rating = 8.0,
+        ),
+        MediaItem(
+            id = "6", title = "Carbon Copy", mediaType = "movie",
+            overview = "A memoir ghost-writer discovers her subject is writing the same book about her.",
+            year = 2026, genres = listOf("Comedy", "Drama"), rating = 6.9,
+        ),
+        MediaItem(
+            id = "7", title = "No Signal Above", mediaType = "tv",
+            overview = "Astronauts lose Earth after a solar storm and must steer a drifting station home.",
+            year = 2024, genres = listOf("Sci-Fi"), rating = 8.5,
+        ),
+        MediaItem(
+            id = "8", title = "Paper Lanterns", mediaType = "movie",
+            overview = "A quiet romance in a city that turns off its lights one night a year.",
+            year = 2023, genres = listOf("Romance"), rating = 7.4,
+        ),
     )
 
     override suspend fun homeSections(): List<HomeSection> = listOf(

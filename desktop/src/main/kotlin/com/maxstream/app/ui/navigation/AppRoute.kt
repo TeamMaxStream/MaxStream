@@ -12,6 +12,8 @@ sealed interface AppRoute {
     data class Movies(val initialSection: MovieSection = MovieSection.POPULAR) : AppRoute
     data class Series(val initialSection: SeriesSection = SeriesSection.POPULAR) : AppRoute
     data object Watchlist : AppRoute
+    data object Downloads : AppRoute
+    data object History : AppRoute
     data object Settings : AppRoute
     data class Detail(val itemId: String, val mediaType: String? = null, val key: String = itemId) : AppRoute
     data class Player(val request: PlayRequest, val key: String = "${request.itemId}-${request.season}-${request.episode}") : AppRoute

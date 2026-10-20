@@ -48,7 +48,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -72,7 +71,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowState
 import com.maxstream.app.data.AppPrefs
@@ -80,13 +78,14 @@ import com.maxstream.app.data.WatchStateStore
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.data.model.PlayRequest
 import com.maxstream.app.data.repository.MediaRepository
-import com.maxstream.app.player.PlayerController
+import com.maxstream.app.player.PlaybackSession
 import com.maxstream.app.stream.FailedServer
 import com.maxstream.app.stream.ResolvedAudioTrack
 import com.maxstream.app.stream.ResolvedStream
 import com.maxstream.app.stream.StreamResolver
 import com.maxstream.app.stream.parseFailedServers
 import com.maxstream.app.stream.parseStreams
+import com.maxstream.app.ui.components.PlayerSurface
 import com.maxstream.app.ui.components.appFocusRing
 import java.net.URI
 import java.net.http.HttpClient
@@ -112,11 +111,11 @@ import kotlinx.coroutines.withContext
 private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 /**
- * Desktop player with VLC-style overlay controls:
- * - Space / Backspace toggle play-pause (focus stays on Compose, not AWT).
+ * Desktop player with auto-hiding overlay controls:
+ * - Space / Backspace toggle play-pause (focus stays on Compose, not native UI).
  * - F toggles window fullscreen; Esc leaves fullscreen first, then goes back.
  * - Controls stay visible while paused or while a menu is open; auto-hide
- *   ~1s while playing (VLC fullscreen-controller timeout).
+ *   ~1s while playing.
  * - Entering maximizes the window (unless already fullscreen); leaving
  *   restores the previous placement via Shell.
  */
@@ -128,9 +127,10 @@ fun PlayerScreen(
     onBack: () -> Unit,
     windowState: WindowState? = null,
 ) {
-    val controller = remember { PlayerController() }
+    val controller = PlaybackSession.controller
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
+    val offline = request.localPath != null
 
     var streams by remember { mutableStateOf<List<ResolvedStream>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -139,7 +139,6 @@ fun PlayerScreen(
     var failedServers by remember { mutableStateOf<List<FailedServer>>(emptyList()) }
     var resolvingAll by remember { mutableStateOf(false) }
     var selectedAudioLabel by remember { mutableStateOf<String?>(null) }
-    val subtitleFiles = remember { mutableStateListOf<Path>() }
 
     var positionMs by remember { mutableLongStateOf(0L) }
     var lengthMs by remember { mutableLongStateOf(0L) }
@@ -147,8 +146,8 @@ fun PlayerScreen(
     var playing by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
     var seeking by remember { mutableStateOf(false) }
-    var volume by remember { mutableIntStateOf(80) }
-    var muted by remember { mutableStateOf(false) }
+    var volume by remember { mutableIntStateOf(PlaybackSession.volume) }
+    var muted by remember { mutableStateOf(PlaybackSession.muted) }
     var lastSaved by remember { mutableLongStateOf(0L) }
     // One menu at a time, tracked by id in the parent: independent per-menu
     // booleans raced on close/open ordering and could leave menuOpen=false
@@ -188,11 +187,32 @@ fun PlayerScreen(
     // Bumped by the error overlay's Retry to re-run stream resolution.
     var errorAttempt by remember { mutableIntStateOf(0) }
 
-    val playUrl: (String, ResolvedStream) -> Unit = { url, stream ->
+    val playUrl: (String, ResolvedStream) -> Unit = playUrl@{ url, stream ->
         // Quality/server switches keep the live position; only a fresh start
         // (no meaningful position yet) falls through to the resume checkpoint.
         val keepMs = if (lengthMs > 0L && positionMs > 3_000L) positionMs else -1L
-        controller.play(url, stream.referer, stream.userAgent, stream.origin)
+        val quality = stream.qualities.firstOrNull { it.url == url }
+            ?.label?.takeIf { it.isNotBlank() } ?: "Auto"
+        val started = runCatching {
+            PlaybackSession.play(
+                request = request,
+                url = url,
+                referer = stream.referer,
+                userAgent = stream.userAgent,
+                origin = stream.origin,
+                server = stream.server,
+                quality = quality,
+                streamList = streams,
+                selected = selectedIndex,
+                local = false,
+            )
+        }
+        if (started.isFailure) {
+            error = "Playback engine could not start: " +
+                (started.exceptionOrNull()?.message ?: "unknown libmpv error")
+            loading = false
+            return@playUrl
+        }
         positionMs = 0L
         lengthMs = 0L
         sliderFrac = 0f
@@ -204,7 +224,7 @@ fun PlayerScreen(
             scope.launch {
                 val file = downloadSubtitle(s.url)
                 if (file != null) {
-                    subtitleFiles.add(Path.of(file))
+                    PlaybackSession.trackSubtitle(file)
                     controller.setSubtitleFile(file)
                 }
             }
@@ -259,9 +279,10 @@ fun PlayerScreen(
         } else if (selectedIndex < 0 && merged.isNotEmpty()) {
             selectedIndex = 0
         }
+        PlaybackSession.updateStreams(merged, selectedIndex)
     }
 
-    /** Picks a VLC audio ES track matching the chosen HLS rendition. */
+    /** Picks an mpv audio track matching the chosen HLS rendition. */
     fun selectAudioTrack(track: ResolvedAudioTrack) {
         val wanted = track.language.lowercase()
         val labelWanted = track.label.lowercase()
@@ -313,6 +334,8 @@ fun PlayerScreen(
     fun adjustVolume(delta: Int) {
         volume = (volume + delta).coerceIn(0, 100)
         muted = volume == 0
+        PlaybackSession.volume = volume
+        PlaybackSession.muted = muted
         controller.setVolume(volume)
         controller.setMute(muted)
         revealControls()
@@ -320,6 +343,7 @@ fun PlayerScreen(
 
     fun toggleMute() {
         muted = !muted
+        PlaybackSession.muted = muted
         controller.setMute(muted)
         revealControls()
     }
@@ -329,7 +353,7 @@ fun PlayerScreen(
         revealControls()
     }
 
-    LaunchedEffect(request.itemId, request.season, request.episode, errorAttempt) {
+    LaunchedEffect(request.itemId, request.season, request.episode, request.mediaType, request.localPath, errorAttempt) {
         loading = true
         error = null
         controlsVisible = true
@@ -343,6 +367,54 @@ fun PlayerScreen(
         // Focus now (not just after the first stream lands) so Space/F work
         // while the "Finding streams…" overlay is up.
         runCatching { focusRequester.requestFocus() }
+
+        // Returning from the mini-player: reattach to the live mpv media and
+        // source list instead of resolving and starting from zero.
+        if (errorAttempt == 0 && PlaybackSession.isActiveFor(request)) {
+            streams = PlaybackSession.streams
+            selectedIndex = PlaybackSession.selectedIndex
+            volume = PlaybackSession.volume
+            muted = PlaybackSession.muted
+            positionMs = runCatching { controller.time() }.getOrDefault(0L)
+            lengthMs = runCatching { controller.length() }.getOrDefault(0L)
+            playing = runCatching { controller.isPlaying }.getOrDefault(false)
+            if (lengthMs > 0L) sliderFrac = (positionMs.toFloat() / lengthMs).coerceIn(0f, 1f)
+            resumeApplied = true
+            pendingSeekMs = -1L
+            resolvingAll = false
+            loading = false
+            PlaybackSession.expand()
+            return@LaunchedEffect
+        }
+
+        // Offline playback bypasses the extractor entirely: the download's
+        // local playlist/file is handed straight to mpv.
+        request.localPath?.let { path ->
+            val started = runCatching {
+                PlaybackSession.play(
+                    request = request,
+                    url = path,
+                    referer = null,
+                    userAgent = null,
+                    origin = null,
+                    server = "Download",
+                    quality = "Offline",
+                    streamList = emptyList(),
+                    selected = -1,
+                    local = true,
+                )
+            }
+            if (started.isFailure) {
+                error = "Could not play the downloaded file: " +
+                    (started.exceptionOrNull()?.message ?: "unknown libmpv error")
+            }
+            streams = emptyList()
+            selectedIndex = -1
+            failedServers = emptyList()
+            resolvingAll = false
+            loading = false
+            return@LaunchedEffect
+        }
 
         val id = request.itemId
         val isMovie = request.mediaType == "movie"
@@ -443,7 +515,7 @@ fun PlayerScreen(
         }
     }
 
-    // Auto-hide only while playing and no menu/seek is open (VLC: ~1s).
+    // Auto-hide only while playing and no menu/seek is open (~1s).
     LaunchedEffect(controlsVisible, playing, loading, menuOpen, seeking) {
         if (!controlsVisible || loading || menuOpen || seeking) return@LaunchedEffect
         while (controlsVisible && !loading && !menuOpen && !seeking) {
@@ -470,15 +542,15 @@ fun PlayerScreen(
                     }.onFailure { e -> println("PlayerScreen: final progress save failed: $e") }
                 }
             }
-            subtitleFiles.forEach { f -> runCatching { Files.deleteIfExists(f) } }
-            controller.release()
+            // Keep mpv alive: Shell shows the mini-player while this screen is
+            // unmounted. Session disposal (sign-out/close) calls release().
+            PlaybackSession.onScreenDetached()
         }
     }
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black)
             .focusRequester(focusRequester)
             .focusable()
             .onKeyEvent { event ->
@@ -535,12 +607,9 @@ fun PlayerScreen(
                 }
             },
     ) {
-        Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {}
-        SwingPanel(
-            factory = { controller.component },
-            modifier = Modifier.fillMaxSize(),
-            update = {},
-        )
+        // The video is an ordinary Compose layer; controls and overlays paint
+        // over it without any platform interop complexity.
+        PlayerSurface(Modifier.fillMaxSize())
 
         // Pointer layer: reveal on move; click toggles controls (not play).
         Box(
@@ -612,7 +681,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Bottom chrome: seek + transport + menus (VLC order) ─────────────
+        // ── Bottom chrome: seek + transport + menus ─────────────────────────
         AnimatedVisibility(visible = controlsVisible, modifier = Modifier.align(Alignment.BottomCenter)) {
             Column(
                 Modifier
@@ -669,6 +738,8 @@ fun PlayerScreen(
                         onValueChange = { volume = it.toInt(); revealControls() },
                         onValueChangeFinished = {
                             muted = volume == 0
+                            PlaybackSession.volume = volume
+                            PlaybackSession.muted = muted
                             controller.setVolume(volume)
                             controller.setMute(muted)
                         },
@@ -707,8 +778,12 @@ fun PlayerScreen(
 
                     PlayerMenu(
                         icon = Icons.Default.Dns,
-                        label = if (streams.size > 1) "Server (${selectedIndex + 1}/${streams.size})" else "Server",
-                        enabled = streams.isNotEmpty() || failedServers.isNotEmpty(),
+                        label = when {
+                            offline -> "Offline"
+                            streams.size > 1 -> "Server (${selectedIndex + 1}/${streams.size})"
+                            else -> "Server"
+                        },
+                        enabled = !offline && (streams.isNotEmpty() || failedServers.isNotEmpty()),
                         open = openMenu == "server",
                         onOpenChange = { setMenu("server", it) },
                         onInteract = { revealControls() },
@@ -756,11 +831,12 @@ fun PlayerScreen(
                     PlayerMenu(
                         icon = Icons.Default.HighQuality,
                         label = when {
+                            offline -> "Downloaded"
                             currentStream?.separateAudio == true -> "Quality (adaptive)"
                             qualities.size > 1 -> "Quality (${qualities.size})"
                             else -> "Quality"
                         },
-                        enabled = qualities.isNotEmpty() && currentStream?.separateAudio != true,
+                        enabled = !offline && qualities.isNotEmpty() && currentStream?.separateAudio != true,
                         open = openMenu == "quality",
                         onOpenChange = { setMenu("quality", it) },
                         onInteract = { revealControls() },
@@ -838,7 +914,7 @@ fun PlayerScreen(
                                     scope.launch {
                                         val f = downloadSubtitle(sub.url)
                                         if (f != null) {
-                                            subtitleFiles.add(Path.of(f))
+                                            PlaybackSession.trackSubtitle(f)
                                             controller.setSubtitleFile(f)
                                         }
                                     }
@@ -1010,7 +1086,7 @@ private val subHttp: HttpClient by lazy {
         .build()
 }
 
-/** Downloads a subtitle to a temp file (VLC peels them off URLs we control only). */
+/** Downloads a subtitle to a temp file (only from URLs this app controls). */
 private suspend fun downloadSubtitle(url: String): String? = withContext(Dispatchers.IO) {
     runCatching {
         val req = HttpRequest.newBuilder(URI(url)).GET()

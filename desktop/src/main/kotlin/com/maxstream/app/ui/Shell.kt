@@ -33,6 +33,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.LiveTv
@@ -78,19 +80,25 @@ import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import com.maxstream.app.data.AppPrefs
+import com.maxstream.app.data.KidsMode
 import com.maxstream.app.data.WatchStateStore
 import com.maxstream.app.data.cloud.AppSession
 import com.maxstream.app.data.cloud.CloudSync
 import com.maxstream.app.data.cloud.ProfileStore
 import com.maxstream.app.data.model.PlayRequest
 import com.maxstream.app.data.repository.TmdbRepository
+import com.maxstream.app.player.PlaybackSession
 import com.maxstream.app.resources.Res
 import com.maxstream.app.resources.app_icon
 import com.maxstream.app.ui.components.LocalSearchActive
+import com.maxstream.app.ui.components.MiniPlayer
+import com.maxstream.app.ui.components.UpdateBanner
 import com.maxstream.app.ui.components.appClickable
 import com.maxstream.app.ui.navigation.AppRoute
 import com.maxstream.app.ui.screens.AuthScreen
 import com.maxstream.app.ui.screens.DetailsScreen
+import com.maxstream.app.ui.screens.DownloadsScreen
+import com.maxstream.app.ui.screens.HistoryScreen
 import com.maxstream.app.ui.screens.HomeScreen
 import com.maxstream.app.ui.screens.MoviesScreen
 import com.maxstream.app.ui.screens.PlayerScreen
@@ -108,6 +116,8 @@ private val topLevels = listOf<AppRoute>(
     AppRoute.Movies(),
     AppRoute.Series(),
     AppRoute.Watchlist,
+    AppRoute.Downloads,
+    AppRoute.History,
     AppRoute.Settings,
 )
 
@@ -120,7 +130,8 @@ private sealed interface AppPhase {
 
 /** Coarse depth for push vs pop slide direction (Details/Player deeper). */
 private fun AppRoute.depth(): Int = when (this) {
-    AppRoute.Home, is AppRoute.Movies, is AppRoute.Series, AppRoute.Watchlist, AppRoute.Settings -> 0
+    AppRoute.Home, is AppRoute.Movies, is AppRoute.Series, AppRoute.Watchlist,
+    AppRoute.Downloads, AppRoute.History, AppRoute.Settings -> 0
     is AppRoute.Detail -> 1
     is AppRoute.Player -> 2
 }
@@ -212,7 +223,7 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
         }
     }
 
-    DesktopTheme(useDarkTheme = useDark) {
+    DesktopTheme(useDarkTheme = useDark, kids = KidsMode.isActive) {
         when (phase) {
             AppPhase.Splash -> SplashScreen(
                 onDone = {
@@ -248,6 +259,7 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
                         // Back to the auth gate; clear local CW/watch states so the
                         // next signed-in user doesn't inherit the previous profile's
                         // progress (cloud pull only replaces our data when signed in).
+                        PlaybackSession.stop()
                         WatchStateStore.clearAll()
                         phase = AppPhase.Auth
                         replaceRoot(AppRoute.Home)
@@ -255,6 +267,7 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
                         syncRevision = CloudSync.dataRevision
                     },
                     onManageProfiles = {
+                        PlaybackSession.stop()
                         phase = AppPhase.Profile
                         priorPlacement.value = WindowPlacement.Floating
                         if (windowState.placement != WindowPlacement.Fullscreen) {
@@ -262,6 +275,7 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
                         }
                     },
                     onSwitchProfile = {
+                        PlaybackSession.stop()
                         phase = AppPhase.Profile
                         priorPlacement.value = WindowPlacement.Floating
                         if (windowState.placement != WindowPlacement.Fullscreen) {
@@ -377,6 +391,7 @@ private fun MainShell(
                 },
                 )
                 Spacer(Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outlineVariant))
+                UpdateBanner(onOpenSettings = { replaceRoot(AppRoute.Settings) })
                 AnimatedContent(
                     targetState = route,
                     transitionSpec = {
@@ -405,7 +420,16 @@ private fun MainShell(
                             syncRevision = syncRevision,
                             onOpen = { push(AppRoute.Detail(it.id, it.mediaType, it.id)) },
                             onPlay = { m ->
-                                push(AppRoute.Player(PlayRequest(m.id, m.mediaType, m.title)))
+                                push(
+                                    AppRoute.Player(
+                                        PlayRequest(
+                                            m.id,
+                                            m.mediaType,
+                                            m.title,
+                                            posterPath = m.posterPath,
+                                        ),
+                                    ),
+                                )
                             },
                             onSeeAllMovies = { section -> push(AppRoute.Movies(section)) },
                             onSeeAllSeries = { section -> push(AppRoute.Series(section)) },
@@ -425,6 +449,13 @@ private fun MainShell(
                             isSignedIn = AppSession.isSignedIn,
                             syncRevision = syncRevision,
                             onOpen = { push(AppRoute.Detail(it.id, it.mediaType, it.id)) },
+                        )
+                        is AppRoute.Downloads -> DownloadsScreen(
+                            onPlay = { req -> push(AppRoute.Player(req)) },
+                        )
+                        is AppRoute.History -> HistoryScreen(
+                            revision = syncRevision,
+                            onPlay = { req -> push(AppRoute.Player(req)) },
                         )
                         is AppRoute.Settings -> SettingsScreen(
                             useDarkTheme = darkOverride,
@@ -449,6 +480,15 @@ private fun MainShell(
                     }
                 }
             }
+        }
+
+        if (PlaybackSession.nowPlaying != null) {
+            MiniPlayer(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 24.dp, bottom = 24.dp),
+                onExpand = { req -> push(AppRoute.Player(req)) },
+            )
         }
     }
 }
@@ -477,6 +517,8 @@ private fun NavRail(
         RailItem("Movies", Icons.Default.Movie, AppRoute.Movies()),
         RailItem("Series", Icons.Default.LiveTv, AppRoute.Series()),
         RailItem("Watchlist", Icons.Default.Bookmark, AppRoute.Watchlist),
+        RailItem("Downloads", Icons.Default.Download, AppRoute.Downloads),
+        RailItem("History", Icons.Default.History, AppRoute.History),
         RailItem("Settings", Icons.Default.Settings, AppRoute.Settings),
     )
     // Hover expands labels; chevron can pin the expanded state open.
@@ -524,15 +566,31 @@ private fun NavRail(
             )
             if (expanded) {
                 Spacer(Modifier.width(10.dp))
-                Text(
-                    "MaxStream",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "MaxStream",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (KidsMode.isActive) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "KIDS",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .background(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                    RoundedCornerShape(4.dp),
+                                )
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
+                }
                 IconButton(
                     onClick = { pinnedExpanded = false },
                     modifier = Modifier.size(32.dp),
@@ -691,6 +749,8 @@ private fun TitleBar(
         is AppRoute.Movies -> "Movies"
         is AppRoute.Series -> "Series"
         is AppRoute.Watchlist -> "Watchlist"
+        is AppRoute.Downloads -> "Downloads"
+        is AppRoute.History -> "History"
         is AppRoute.Settings -> "Settings"
         is AppRoute.Detail -> "Details"
         is AppRoute.Player -> "Player"

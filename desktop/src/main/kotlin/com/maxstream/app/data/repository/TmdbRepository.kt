@@ -1,6 +1,8 @@
 package com.maxstream.app.data.repository
 
+import com.maxstream.app.data.KidsMode
 import com.maxstream.app.data.WatchStateStore
+import com.maxstream.app.data.visibleForActiveProfile
 import com.maxstream.app.data.cloud.CloudSync
 import com.maxstream.app.data.model.ContinueWatch
 import com.maxstream.app.data.model.Episode
@@ -34,7 +36,9 @@ object TmdbRepository : MediaRepository {
                     client.array("/tv/top_rated").map(client::parseMedia)).distinctBy { it.id },
             ),
         ).filter { it.items.isNotEmpty() }
-    }.getOrElse { SampleCatalog.homeSections() }
+            .map { section -> section.copy(items = section.items.visibleForActiveProfile()) }
+            .filter { it.items.isNotEmpty() }
+    }.getOrElse { SampleCatalog.homeSections().map { section -> section.copy(items = section.items.visibleForActiveProfile()) } }
 
     override suspend fun continueWatching(): List<ContinueWatch> =
         WatchStateStore.all().map { s ->
@@ -45,6 +49,7 @@ object TmdbRepository : MediaRepository {
                 overview = "",
                 year = s.year,
                 rating = s.rating,
+                genreIds = s.genreIds,
                 posterPath = s.posterPath,
                 backdropPath = s.backdropPath,
             )
@@ -62,6 +67,7 @@ object TmdbRepository : MediaRepository {
                             posterPath = fresh.posterPath ?: stored.posterPath,
                             backdropPath = fresh.backdropPath ?: stored.backdropPath,
                             genres = fresh.genres,
+                            genreIds = fresh.genreIds,
                         )
                     } ?: stored
             } else stored
@@ -89,17 +95,19 @@ object TmdbRepository : MediaRepository {
                 season = s.season,
                 episode = s.episode,
             )
-        }
+        }.filter { !KidsMode.isActive || KidsMode.isKidFriendly(it.item) }
 
     override suspend fun movies(section: MovieSection, page: Int): List<MediaItem> = runCatching {
         client.genres("movie")
         client.array(section.endpoint, "page" to page.toString()).map(client::parseMedia)
-    }.getOrElse { SampleCatalog.movies(section, page) }
+            .visibleForActiveProfile()
+    }.getOrElse { SampleCatalog.movies(section, page).visibleForActiveProfile() }
 
     override suspend fun series(section: SeriesSection, page: Int): List<MediaItem> = runCatching {
         client.genres("tv")
         client.array(section.endpoint, "page" to page.toString()).map(client::parseMedia)
-    }.getOrElse { SampleCatalog.series(section, page) }
+            .visibleForActiveProfile()
+    }.getOrElse { SampleCatalog.series(section, page).visibleForActiveProfile() }
 
     override suspend fun search(query: String, page: Int): List<MediaItem> =
         if (query.isBlank()) emptyList()
@@ -109,7 +117,8 @@ object TmdbRepository : MediaRepository {
             client.array("/search/multi", "query" to query, "page" to page.toString())
                 .filter { it.optString("media_type") == "movie" || it.optString("media_type") == "tv" }
                 .map(client::parseMedia)
-        }.getOrElse { SampleCatalog.search(query, page) }
+                .visibleForActiveProfile()
+        }.getOrElse { SampleCatalog.search(query, page).visibleForActiveProfile() }
 
     override suspend fun details(id: String, mediaType: String?): MediaDetails? {
         val type = mediaType ?: resolveType(id)
@@ -137,6 +146,7 @@ object TmdbRepository : MediaRepository {
             val path = if (type == "tv") "/tv/$id/recommendations" else "/movie/$id/recommendations"
             client.genres(type)
             client.array(path).map(client::parseMedia).filter { it.posterUrl != null }
+                .visibleForActiveProfile()
         }.getOrElse { emptyList() }
 
     override suspend fun episodes(seriesId: String, season: Int): List<Episode> = runCatching {
@@ -147,7 +157,7 @@ object TmdbRepository : MediaRepository {
 
     // ── watchlist ────────────────────────────────────────────────────────────
 
-    override suspend fun watchlist(): List<MediaItem> = CloudSync.watchlist()
+    override suspend fun watchlist(): List<MediaItem> = CloudSync.watchlist().visibleForActiveProfile()
 
     override suspend fun isInWatchlist(id: String): Boolean = CloudSync.isInWatchlist(id)
 
@@ -178,6 +188,7 @@ object TmdbRepository : MediaRepository {
             backdropPath = item.backdropPath ?: existing?.backdropPath,
             year = item.year ?: existing?.year,
             rating = item.rating.takeIf { it > 0.0 } ?: existing?.rating ?: 0.0,
+            genreIds = item.genreIds.ifEmpty { existing?.genreIds ?: emptyList() },
         )
         if (nearEnd) {
             WatchStateStore.clear(item.id, season, episode)

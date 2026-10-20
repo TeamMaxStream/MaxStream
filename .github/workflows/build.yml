@@ -3,6 +3,7 @@ name: Build MaxStream (Mobile + TV + Desktop)
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -222,27 +223,99 @@ jobs:
             ~/.gradle/compose-compiler
           key: ${{ runner.os }}-gradle-desktop-${{ hashFiles('desktop/**/*.gradle*') }}
 
-      # Bundles libvlc + plugins into the MSI (syncVlcRuntime). The runner has
-      # no VLC by default, and since the guard change a Windows build fails
-      # loudly when the VLC source is missing.
-      - name: Install VLC (bundled into the installer)
-        run: choco install vlc -y --no-progress
-
+      # libmpv is downloaded by the syncMpvRuntime Gradle task during packaging.
+      # The archive is cached under ~/.gradle/caches/maxstream-mpv, which the
+      # Gradle cache step above restores on subsequent runs.
       - name: Compile + test desktop app
         run: cd desktop; ./gradlew.bat build --no-daemon
 
-      # Must be packageReleaseMsi: packageMsi uses the default build type and
-      # skips ProGuard entirely, shipping the full ~37 MB material-icons-extended
-      # jar plus every unused class. The release task shrinks it to what Main.kt
+      # Must be packageReleaseMsi/Exe: the default build type skips ProGuard
+      # entirely, shipping the full ~37 MB material-icons-extended jar plus
+      # every unused class. The release tasks shrink it to what Main.kt
       # actually references.
-      - name: Package Windows installer (MSI)
+      - name: Package Windows MSI
         run: cd desktop; ./gradlew.bat packageReleaseMsi --no-daemon
 
-      - name: Upload MSI
+      # EXE is the manually distributable MaxStream-Dex.exe installer. Keep it
+      # non-fatal so a WiX/EXE packaging hiccup never hides a good MSI.
+      - name: Package Windows EXE installer
+        continue-on-error: true
+        run: cd desktop; ./gradlew.bat packageReleaseExe --no-daemon
+
+      # Normalise both installers into the names users see in the release.
+      - name: Stage desktop installers
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $msi = Get-ChildItem desktop/build/compose/binaries -Recurse -Filter *.msi |
+            Select-Object -First 1
+          if ($msi) {
+            Copy-Item $msi.FullName "dist/MaxStream-Desktop.msi"
+          } else {
+            throw "No MSI was produced"
+          }
+          $exe = Get-ChildItem desktop/build/compose/binaries -Recurse -Filter *.exe |
+            Where-Object { $_.Directory.Name -eq 'exe' } |
+            Select-Object -First 1
+          if ($exe) {
+            Copy-Item $exe.FullName "dist/MaxStream-Dex.exe"
+            Write-Host "Staged $($exe.Name) as MaxStream-Dex.exe"
+          } else {
+            Write-Warning "No EXE installer produced; MSI will still be released"
+          }
+
+      - name: Upload desktop installers
         uses: actions/upload-artifact@v4
         with:
           name: maxstream-desktop
-          # main/ for packageMsi, main-release/ for packageReleaseMsi; glob so a
-          # future Compose layout change cannot silently upload nothing.
-          path: desktop/build/compose/binaries/**/*.msi
+          path: dist/*
           retention-days: 7
+
+  # One tag publishes all three apps to one release. This is what the phone,
+  # TV, and desktop updaters read: the same vX.Y.Z tag, with one asset per
+  # platform. Run it only for tags; normal branch/PR builds stay as artifacts.
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-mobile, build-tv, build-desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # All three apps must report the same version before anything is
+      # published. This catches a forgotten pubspec/TV/desktop bump.
+      - name: Verify shared version
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          PUB="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -1 | cut -d+ -f1)"
+          TV="$(sed -n 's/.*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' android/tvapp/build.gradle.kts | head -1)"
+          DESKTOP="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' desktop/build.gradle.kts | head -1)"
+          PACKAGE="$(sed -n 's/.*packageVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' desktop/build.gradle.kts | head -1)"
+          APP="$(sed -n 's/.*APP_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' desktop/src/main/kotlin/com/maxstream/app/core/AppConfig.kt | head -1)"
+          echo "tag=$VERSION pubspec=$PUB tv=$TV desktop=$DESKTOP package=$PACKAGE app=$APP"
+          for pair in "pubspec:$PUB" "tvapp:$TV" "desktop:$DESKTOP" "packageVersion:$PACKAGE" "AppConfig:$APP"; do
+            name="${pair%%:*}"
+            value="${pair#*:}"
+            if [ "$value" != "$VERSION" ]; then
+              echo "::error::$name is $value but the tag is $VERSION"
+              exit 1
+            fi
+          done
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: find release-assets -maxdepth 2 -type f -printf '%f %s bytes\n' | sort
+
+      - name: Create/update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true

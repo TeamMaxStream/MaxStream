@@ -12,20 +12,21 @@
     public static void main(java.lang.String[]);
 }
 
-# --- ServiceLoader-discovered classes (name must survive obfuscation) ---------
-# vlcj discovers its libvlc directory providers through META-INF/services; if the
-# class names are renamed the ServiceLoader lookup fails and VLC is never found.
--keep class * implements uk.co.caprica.vlcj.factory.discovery.provider.DiscoveryDirectoryProvider { *; }
--keep class com.maxstream.app.player.BundledVlcDirectoryProvider { *; }
+# --- libmpv JNA bindings (native method names must survive obfuscation) -------
+# JNA resolves interface methods and Structure field names by reflection.
+-keep interface com.maxstream.app.player.MpvLibrary { *; }
+-keep class com.maxstream.app.player.MpvLibrary { *; }
+-keep interface com.maxstream.app.player.MpvRenderUpdateCallback { *; }
+-keep class com.maxstream.app.player.MpvRenderParam { *; }
+-keep class com.maxstream.app.player.MpvVideoRenderer { *; }
+-keep class com.maxstream.app.player.PlayerController { *; }
+-keep class com.maxstream.app.player.MpvRuntime { *; }
+-keep class com.sun.jna.** { *; }
+-keepclassmembers class * extends com.sun.jna.* { *; }
+-dontwarn com.sun.jna.**
+
 # OkHttp picks its platform (Conscrypt/BouncyCastle/OpenJSSE) via Class.forName.
 -keep class okhttp3.internal.platform.** { *; }
-
-# --- vlcj + JNA (native bindings, heavy reflection) ---------------------------
--keep class uk.co.caprica.vlcj.** { *; }
--keep class com.sun.jna.** { *; }
--keep class uk.co.caprica.vlcj.loader.** { *; }
--dontwarn com.sun.jna.**
--dontwarn uk.co.caprica.vlcj.**
 
 # --- OkHttp / Okio (network stack) -------------------------------------------
 -keep class okhttp3.** { *; }
