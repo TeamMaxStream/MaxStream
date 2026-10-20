@@ -45,6 +45,11 @@ object CloudSyncRepository {
      * instead of only ever adding remote items. */
     @Volatile
     private var previousCloudKeys: Set<String> = emptySet()
+/
+    /** Cloud watch-history keys from the previous poll. Used to mirror
+     * deletions made on the phone/desktop into the TV's local history. */
+    @Volatile
+    private var previousCloudHistoryKeys: Set<String>? = null
 
     private fun auth(context: Context): String {
         val token = SessionManager.idToken(context)
@@ -167,6 +172,31 @@ object CloudSyncRepository {
     private fun watchHistoryKey(tmdbId: String, isMovie: Boolean, season: Int, episode: Int): String =
         if (isMovie) "movie_$tmdbId" else "tv_${tmdbId}_${season}_$episode"
 
+    private data class ParsedHistoryKey(
+        val tmdbId: String,
+        val isMovie: Boolean,
+        val season: Int,
+        val episode: Int,
+    )
+
+    /** Inverse of [watchHistoryKey] for reconciling cloud deletions. */
+    private fun parseHistoryKey(key: String): ParsedHistoryKey? {
+        if (key.startsWith("movie_")) {
+            val id = key.removePrefix("movie_")
+            return id.takeIf { it.isNotEmpty() }?.let { ParsedHistoryKey(it, true, 1, 1) }
+        }
+        if (key.startsWith("tv_")) {
+            val parts = key.split("_")
+            if (parts.size >= 4) {
+                val id = parts[1]
+                val season = parts[2].toIntOrNull() ?: 1
+                val episode = parts[3].toIntOrNull() ?: 1
+                if (id.isNotEmpty()) return ParsedHistoryKey(id, false, season, episode)
+            }
+        }
+        return null
+    }
+
     /** Pushes watch progress to RTDB (upsert). */
     suspend fun pushWatchProgress(
         context: Context,
@@ -223,6 +253,33 @@ object CloudSyncRepository {
         deleteJson("/users/$uid/profiles/$profileId/watch_history/$key", context)
     }
 
+    /** Removes every episode of a series from RTDB so the phone/desktop
+     * history screens drop it too. */
+    suspend fun deleteSeriesWatchProgress(context: Context, tmdbId: String) {
+        val uid = SessionManager.uid(context)
+        val profileId = ProfileScope.activeProfileId(context)
+        if (uid.isEmpty() || tmdbId.isEmpty()) return
+        val path = "/users/$uid/profiles/$profileId/watch_history"
+        runCatching {
+            val history = getJson(path, context) ?: return
+            val prefix = "tv_${tmdbId}_"
+            val keys = history.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (key.startsWith(prefix)) deleteJson("$path/$key", context)
+            }
+        }
+    }
+
+    /** Deletes the whole per-profile history node. Used by Clear History so
+     * the removal propagates to phone and desktop in one write. */
+    suspend fun deleteAllWatchProgress(context: Context) {
+        val uid = SessionManager.uid(context)
+        val profileId = ProfileScope.activeProfileId(context)
+        if (uid.isEmpty()) return
+        deleteJson("/users/$uid/profiles/$profileId/watch_history", context)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Pull (cloud → local)
     // ─────────────────────────────────────────────────────────────────────────
@@ -240,6 +297,8 @@ object CloudSyncRepository {
         var watchlistChanged = false
 
         runCatching {
+            val pullStartedAt = System.currentTimeMillis()
+            val cloudHistoryKeys = mutableSetOf<String>()
             val historyJson = getJson("/users/$uid/profiles/$profileId/watch_history", context)
             if (historyJson != null) {
                 val keys = historyJson.keys()
@@ -247,14 +306,38 @@ object CloudSyncRepository {
                     val key = keys.next()
                     val entry = historyJson.optJSONObject(key) ?: continue
                     val tmdbId = entry.optString("tmdbId", "")
+                        .ifBlank { entry.optString("itemId", "") }
                     if (tmdbId.isEmpty()) continue
-                    val isMovie = entry.optBoolean("isMovie", false)
+                    cloudHistoryKeys += key
+                    val isMovie = if (entry.has("isMovie")) {
+                        entry.optBoolean("isMovie", true)
+                    } else {
+                        entry.optString("mediaType", "movie") != "tv"
+                    }
                     val season = entry.optInt("season", 1).takeIf { it > 0 } ?: 1
                     val episode = entry.optInt("episode", 1).takeIf { it > 0 } ?: 1
-                    val position = entry.optLong("position", 0)
-                    val duration = entry.optLong("duration", 0)
-                    if (position <= 0L) continue
-                    val title = entry.optString("title", tmdbId)
+                    val position = if (entry.has("position")) {
+                        entry.optLong("position", 0)
+                    } else {
+                        entry.optLong("positionMs", 0) / 1000L
+                    }
+                    val duration = if (entry.has("duration")) {
+                        entry.optLong("duration", 0)
+                    } else {
+                        entry.optLong("lengthMs", 0) / 1000L
+                    }
+                    val watchPercentage = entry.optDouble("watchPercentage", 0.0)
+                    val isWatched = entry.optBoolean("isWatched", false) ||
+                        watchPercentage >= 90.0
+                    if (position <= 0L && !isWatched) continue
+                    val rawTitle = entry.optString("title", tmdbId)
+                    val title = if (!isMovie) {
+                        entry.optString("seriesTitle").ifBlank { rawTitle }
+                    } else {
+                        rawTitle
+                    }
+                    val timestamp = entry.optLong("timestamp", 0L).takeIf { it > 0L }
+                        ?: entry.optLong("updatedAt", 0L)
                     historyChanged = WatchProgressRepository.importCloudEntry(
                         context,
                         tmdbId = tmdbId,
@@ -264,15 +347,45 @@ object CloudSyncRepository {
                         episode = episode,
                         positionSeconds = position,
                         durationSeconds = duration,
-                        posterPath = entry.optString("posterUrl", ""),
-                        backdropPath = "",
-                        timestamp = entry.optLong("timestamp", 0),
+                        posterPath = entry.optString("posterUrl")
+                            .ifBlank { entry.optString("thumbnail") }
+                            .ifBlank { entry.optString("posterPath") },
+                        backdropPath = entry.optString("backdropUrl")
+                            .ifBlank { entry.optString("backdrop") }
+                            .ifBlank { entry.optString("backdropPath") },
+                        timestamp = timestamp,
                         seriesTitle = entry.optString("seriesTitle", ""),
                         episodeName = entry.optString("episodeName", ""),
-                        isWatched = entry.optBoolean("isWatched", false),
+                        isWatched = isWatched,
                     ) || historyChanged
                 }
             }
+
+            // Mirror deletions: anything present in the previous cloud snapshot
+            // but gone now was removed on the phone or desktop. Do not delete a
+            // fresh local save that raced this pull.
+            previousCloudHistoryKeys?.let { previous ->
+                for (staleKey in previous - cloudHistoryKeys) {
+                    val parsed = parseHistoryKey(staleKey) ?: continue
+                    val local = WatchProgressRepository.find(
+                        context,
+                        parsed.tmdbId,
+                        parsed.isMovie,
+                        parsed.season,
+                        parsed.episode,
+                    ) ?: continue
+                    if (local.timestamp > pullStartedAt) continue
+                    WatchProgressRepository.removeEntry(
+                        context,
+                        parsed.tmdbId,
+                        parsed.isMovie,
+                        parsed.season,
+                        parsed.episode,
+                    )
+                    historyChanged = true
+                }
+            }
+            previousCloudHistoryKeys = cloudHistoryKeys
         }
 
         runCatching {

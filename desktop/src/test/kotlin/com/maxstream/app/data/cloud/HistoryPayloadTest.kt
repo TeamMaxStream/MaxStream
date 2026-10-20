@@ -7,9 +7,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * database.rules.json only allows watch_history writes when `isWatched` is
- * present and false — a regression here means every cloud progress push is
- * silently denied while the UI looks like it synced.
+ * Watch history is shared by the phone, TV, and desktop. These assertions pin
+ * the mobile/TV schema (`tmdbId` / `isMovie` / seconds) while making sure the
+ * legacy desktop fields stay present for older clients.
  */
 class HistoryPayloadTest {
 
@@ -19,6 +19,7 @@ class HistoryPayloadTest {
         episode: Int = 1,
         poster: String? = null,
         year: Int? = null,
+        isWatched: Boolean = false,
     ) = WatchStateStore.WatchState(
         itemId = "tt42",
         mediaType = mediaType,
@@ -32,17 +33,31 @@ class HistoryPayloadTest {
         backdropPath = "/bd.jpg",
         year = year,
         rating = 8.2,
+        isWatched = isWatched,
     )
 
     @Test
-    fun payloadAlwaysCarriesIsWatchedFalse() {
-        val payload = CloudSync.historyPayload(state())
-        assertTrue(payload.has("isWatched"))
+    fun payloadUsesMobileTvSchema() {
+        val payload = CloudSync.historyPayload(state(mediaType = "tv", season = 2, episode = 7))
+        assertEquals("tt42", payload.getString("tmdbId"))
+        assertFalse(payload.getBoolean("isMovie"))
+        assertEquals("Some Title", payload.getString("seriesTitle"))
+        assertEquals(5L, payload.getLong("position"))
+        assertEquals(20L, payload.getLong("duration"))
+        assertEquals(25.0, payload.getDouble("watchPercentage"), 1e-6)
+        assertEquals(1_700_000_000_000L, payload.getLong("timestamp"))
         assertFalse(payload.getBoolean("isWatched"))
     }
 
     @Test
-    fun payloadMapsProgressFields() {
+    fun completedEntryCarriesIsWatchedTrue() {
+        val payload = CloudSync.historyPayload(state(isWatched = true))
+        assertTrue(payload.getBoolean("isWatched"))
+        assertEquals(100.0, payload.getDouble("watchPercentage"), 1e-6)
+    }
+
+    @Test
+    fun payloadKeepsLegacyProgressFields() {
         val payload = CloudSync.historyPayload(state(mediaType = "tv", season = 2, episode = 7))
         assertEquals("tt42", payload.getString("itemId"))
         assertEquals("tv", payload.getString("mediaType"))
@@ -59,6 +74,7 @@ class HistoryPayloadTest {
     fun optionalMetadataNeverWritesJsonNull() {
         val payload = CloudSync.historyPayload(state(poster = null, year = null))
         assertEquals("", payload.getString("posterPath"))
+        assertEquals("", payload.getString("posterUrl"))
         assertEquals(0, payload.getInt("year"))
         assertFalse(payload.isNull("posterPath"))
         assertFalse(payload.isNull("year"))

@@ -23,6 +23,7 @@ class CloudSyncService {
   static bool _pullInProgress = false;
   static bool _listening = false;
   static Set<String>? _lastCloudKeys;
+  static Set<String>? _lastCloudHistoryKeys;
   static StreamSubscription<DatabaseEvent>? _historySub;
   static StreamSubscription<DatabaseEvent>? _watchlistSub;
   static StreamSubscription<DatabaseEvent>? _prefsSub;
@@ -161,6 +162,8 @@ class CloudSyncService {
     _subtitlePrefsSub = null;
     _profilesSub = null;
     _listening = false;
+    _lastCloudKeys = null;
+    _lastCloudHistoryKeys = null;
     ProfileScope.onProfileChanged = null;
   }
 
@@ -172,20 +175,86 @@ class CloudSyncService {
 
   static void _onHistoryEvent(DatabaseEvent event) {
     final snapshot = event.snapshot;
-    if (snapshot.value == null) return;
+    final receivedAt = DateTime.now().millisecondsSinceEpoch;
     // Guard: capture the profile ID at the time this event was received.
     // If it differs from the current profile (profile switched mid-listener),
     // discard the event to prevent cross-profile data contamination.
     final profileId = ProfileScope.currentProfileId;
-    final data = Map<String, dynamic>.from(snapshot.value as Map);
+    final data = snapshot.value != null
+        ? Map<String, dynamic>.from(snapshot.value as Map)
+        : <String, dynamic>{};
+    final cloudKeys = <String>{};
 
     for (final entry in data.entries) {
-      final value = Map<String, dynamic>.from(entry.value as Map);
+      final raw = entry.value;
+      if (raw is! Map) continue;
+      final value = Map<String, dynamic>.from(raw);
       final tmdbId = (value['tmdbId'] ?? '').toString();
       if (tmdbId.isEmpty) continue;
+      cloudKeys.add(
+        watchHistoryKey(
+          tmdbId,
+          value['isMovie'] == true,
+          (value['season'] as num?)?.toInt() ?? 1,
+          (value['episode'] as num?)?.toInt() ?? 1,
+        ),
+      );
       unawaited(WatchHistoryService.importWatchProgress(value));
     }
+
+    // Reconcile deletions: an entry present in the previous cloud snapshot but
+    // gone now was removed on the TV or desktop (or by Clear History). Mirror
+    // that locally without pushing the deletion back up.
+    final previousKeys = _lastCloudHistoryKeys;
+    if (previousKeys != null) {
+      unawaited(
+        _removeStaleHistoryItems(
+          cloudKeys,
+          previousKeys,
+          profileId,
+          receivedAt,
+        ),
+      );
+    }
+    _lastCloudHistoryKeys = cloudKeys;
+
     // Only bump revision if profile hasn't changed during import.
+    if (ProfileScope.currentProfileId == profileId) {
+      historyRevision.value++;
+    }
+  }
+
+  static Future<void> _removeStaleHistoryItems(
+    Set<String> cloudKeys,
+    Set<String> previousKeys,
+    String profileId,
+    int newerThan,
+  ) async {
+    await ProfileScope.ensureInitialized();
+    if (ProfileScope.currentProfileId != profileId) return;
+    final local = await WatchHistoryService.getWatchHistory();
+    for (final item in local) {
+      final tmdbId = (item['tmdbId'] ?? '').toString();
+      if (tmdbId.isEmpty) continue;
+      final isMovie = item['isMovie'] == true;
+      final season = (item['season'] as num?)?.toInt() ?? 1;
+      final episode = (item['episode'] as num?)?.toInt() ?? 1;
+      final key = watchHistoryKey(tmdbId, isMovie, season, episode);
+      if (!previousKeys.contains(key) || cloudKeys.contains(key)) continue;
+      // Don't delete progress this device saved after the cloud read started;
+      // that local write is newer than the snapshot and will be pushed next.
+      final timestamp =
+          (item['timestamp'] as num?)?.toInt() ??
+          (item['updatedAt'] as num?)?.toInt() ??
+          0;
+      if (timestamp > newerThan) continue;
+      await WatchHistoryService.removeFromHistoryLocal(
+        tmdbId,
+        isMovie,
+        season,
+        episode,
+      );
+    }
     if (ProfileScope.currentProfileId == profileId) {
       historyRevision.value++;
     }
@@ -315,6 +384,20 @@ class CloudSyncService {
     }
   }
 
+  /// Deletes the whole per-profile history node. Clear History uses this so a
+  /// single action propagates to the other two apps.
+  static Future<void> clearAllWatchHistory() async {
+    final uid = _uid;
+    if (uid == null) return;
+    await ProfileScope.ensureInitialized();
+    final profileId = ProfileScope.currentProfileId;
+    try {
+      await _watchHistoryRef(uid, profileId).remove();
+    } catch (e) {
+      debugPrint('CloudSync: watch history clear failed: $e');
+    }
+  }
+
   static Future<void> pushWatchlist(Movie movie) async {
     final uid = _uid;
     if (uid == null || movie.id.isEmpty || movie.id == '0') return;
@@ -425,16 +508,40 @@ class CloudSyncService {
       // then writes the result into the fallback-scoped local keys.
       await ProfileScope.ensureInitialized();
       final profileId = ProfileScope.currentProfileId;
+      final pullStartedAt = DateTime.now().millisecondsSinceEpoch;
       final historySnap = await _watchHistoryRef(uid, profileId).get();
       // Guard: if profile changed during the async fetch, abort.
       if (ProfileScope.currentProfileId != profileId) return;
+      final cloudHistoryKeys = <String>{};
       if (historySnap.value != null) {
         final data = Map<String, dynamic>.from(historySnap.value as Map);
         for (final entry in data.entries) {
-          final value = Map<String, dynamic>.from(entry.value as Map);
+          final raw = entry.value;
+          if (raw is! Map) continue;
+          final value = Map<String, dynamic>.from(raw);
+          final tmdbId = (value['tmdbId'] ?? '').toString();
+          if (tmdbId.isEmpty) continue;
+          cloudHistoryKeys.add(
+            watchHistoryKey(
+              tmdbId,
+              value['isMovie'] == true,
+              (value['season'] as num?)?.toInt() ?? 1,
+              (value['episode'] as num?)?.toInt() ?? 1,
+            ),
+          );
           await WatchHistoryService.importWatchProgress(value);
         }
       }
+      final previousHistoryKeys = _lastCloudHistoryKeys;
+      if (previousHistoryKeys != null) {
+        await _removeStaleHistoryItems(
+          cloudHistoryKeys,
+          previousHistoryKeys,
+          profileId,
+          pullStartedAt,
+        );
+      }
+      _lastCloudHistoryKeys = cloudHistoryKeys;
 
       final watchlistSnap = await _watchlistRef(uid, profileId).get();
       // Guard: if profile changed during the async fetch, abort.

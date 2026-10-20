@@ -34,9 +34,13 @@ object WatchStateStore {
         val rating: Double = 0.0,
         /** TMDB genre IDs, so kids profiles can filter history offline. */
         val genreIds: List<Int> = emptyList(),
+        /** Set by cloud entries that were watched to the end on any device. */
+        val isWatched: Boolean = false,
     ) {
         val progress: Float
-            get() = if (lengthMs > 0L) (positionMs.toFloat() / lengthMs).coerceIn(0f, 1f) else 0f
+            get() = if (isWatched) 1f
+            else if (lengthMs > 0L) (positionMs.toFloat() / lengthMs).coerceIn(0f, 1f)
+            else 0f
     }
 
     /** Overridable so tests can point at a temp directory. */
@@ -133,6 +137,7 @@ object WatchStateStore {
                         genreIds = o.optJSONArray("genreIds")?.let { arr ->
                             (0 until arr.length()).map { i -> arr.optInt(i) }
                         } ?: emptyList(),
+                        isWatched = o.optBoolean("isWatched", false),
                     )
                 }
             }
@@ -167,7 +172,8 @@ object WatchStateStore {
                         .put("backdropPath", it.backdropPath ?: "")
                         .put("year", it.year ?: 0)
                         .put("rating", it.rating)
-                        .put("genreIds", JSONArray(it.genreIds)),
+                        .put("genreIds", JSONArray(it.genreIds))
+                        .put("isWatched", it.isWatched),
                 )
             }
             AtomicFiles.write(file(), JSONObject().put("items", arr).toString())

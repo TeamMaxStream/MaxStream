@@ -35,5 +35,5 @@ sealed class Screen(val route: String) {
     }
 
     // ── Sidebar tab indices (not routes — kept here for readability) ─────────
-    //  0 = Home  1 = Search  2 = Genre  3 = Series list  4 = Watchlist  5 = More
+    //  0 = Home  1 = Search  2 = Genre  3 = Series list  4 = Library  5 = More
 }

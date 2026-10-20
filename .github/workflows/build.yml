@@ -57,7 +57,7 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build Mobile APKs (split per ABI for VLC size)
+      - name: Build Mobile APKs (split per ABI)
         run: |
           # --split-per-abi produces app-arm64-v8a, app-armeabi-v7a and
           # app-x86_64 release APKs. Flutter 3.47 no longer ships a 32-bit x86
@@ -201,7 +201,7 @@ jobs:
           retention-days: 7
 
   build-desktop:
-    name: Kotlin Desktop (Windows MSI)
+    name: Kotlin Desktop (Windows installers)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -236,10 +236,11 @@ jobs:
       - name: Package Windows MSI
         run: cd desktop; ./gradlew.bat packageReleaseMsi --no-daemon
 
-      # EXE is the manually distributable MaxStream-Dex.exe installer. Keep it
-      # non-fatal so a WiX/EXE packaging hiccup never hides a good MSI.
+      # EXE is the manually distributable MaxStream-Dex.exe installer. Both
+      # installers are required: the desktop updater prefers the EXE and falls
+      # back to the MSI, and the release must contain the full installer rather
+      # than a raw launcher.
       - name: Package Windows EXE installer
-        continue-on-error: true
         run: cd desktop; ./gradlew.bat packageReleaseExe --no-daemon
 
       # Normalise both installers into the names users see in the release.
@@ -261,7 +262,7 @@ jobs:
             Copy-Item $exe.FullName "dist/MaxStream-Dex.exe"
             Write-Host "Staged $($exe.Name) as MaxStream-Dex.exe"
           } else {
-            Write-Warning "No EXE installer produced; MSI will still be released"
+            throw "No EXE installer was produced"
           }
 
       - name: Upload desktop installers
@@ -313,6 +314,38 @@ jobs:
 
       - name: List release assets
         run: find release-assets -maxdepth 2 -type f -printf '%f %s bytes\n' | sort
+
+      # Every app reads the same release, so refusing to publish a partial one
+      # matters more than publishing something. In particular the EXE must be
+      # the full installer (a raw jpackage launcher is only a few dozen KB).
+      - name: Verify all release assets
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in \
+            maxstream-arm64-v8a.apk \
+            maxstream-armeabi-v7a.apk \
+            maxstream-x86_64.apk \
+            maxstream-tv.apk \
+            MaxStream-Dex.exe \
+            MaxStream-Desktop.msi; do
+            if [ ! -s "release-assets/$f" ]; then
+              echo "::error::Release is missing $f"
+              missing=1
+            fi
+          done
+          exe_size="$(stat -c%s release-assets/MaxStream-Dex.exe 2>/dev/null || echo 0)"
+          msi_size="$(stat -c%s release-assets/MaxStream-Desktop.msi 2>/dev/null || echo 0)"
+          echo "MaxStream-Dex.exe=$exe_size bytes MaxStream-Desktop.msi=$msi_size bytes"
+          if [ "$exe_size" -lt 5000000 ]; then
+            echo "::error::MaxStream-Dex.exe is only $exe_size bytes; that is the launcher, not the installer"
+            missing=1
+          fi
+          if [ "$msi_size" -lt 1000000 ]; then
+            echo "::error::MaxStream-Desktop.msi is only $msi_size bytes"
+            missing=1
+          fi
+          exit "$missing"
 
       - name: Create/update GitHub release
         uses: softprops/action-gh-release@v2

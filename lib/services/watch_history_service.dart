@@ -203,8 +203,11 @@ class WatchHistoryService {
   /// re-importing is idempotent. Non-JSON fields (e.g. the Firestore
   /// `updatedAt` Timestamp) are stripped before encoding.
   static Future<void> importWatchProgress(Map<String, dynamic> history) async {
-    final tmdbId = (history['tmdbId'] ?? '').toString();
-    final isMovie = history['isMovie'] == true;
+    final tmdbId = (history['tmdbId'] ?? history['itemId'] ?? '').toString();
+    final rawIsMovie = history['isMovie'];
+    final isMovie = rawIsMovie is bool
+        ? rawIsMovie
+        : (history['mediaType']?.toString() ?? 'movie') != 'tv';
     var season = _integer(history['season'], 0);
     var episode = _integer(history['episode'], 0);
     if (tmdbId.isEmpty) return;
@@ -213,6 +216,28 @@ class WatchHistoryService {
     // fallback (UID) key — permanently, since it also seeds the list.
     await _awaitProfileScope();
     (season, episode) = _normalizedSeasonEpisode(isMovie, season, episode);
+    // Older desktop builds wrote milliseconds + different field names. Accept
+    // both shapes so existing cloud history migrates instead of being ignored.
+    final position = history.containsKey('position')
+        ? _integer(history['position'])
+        : _integer(history['positionMs']) ~/ 1000;
+    final duration = history.containsKey('duration')
+        ? _integer(history['duration'])
+        : _integer(history['lengthMs']) ~/ 1000;
+    final rawPercentage = (history['watchPercentage'] as num?)?.toDouble();
+    final watchPercentage =
+        rawPercentage ??
+        (duration > 0 ? (position / duration * 100).clamp(0, 100) : 0.0);
+    final isWatched = history['isWatched'] == true || watchPercentage >= 90;
+    final timestamp = _integer(history['timestamp']) != 0
+        ? _integer(history['timestamp'])
+        : _integer(history['updatedAt']);
+    final posterUrl =
+        (history['posterUrl'] ??
+                history['thumbnail'] ??
+                history['posterPath'] ??
+                '')
+            .toString();
     final clean = <String, dynamic>{
       'tmdbId': tmdbId,
       'title': history['title']?.toString() ?? '',
@@ -224,13 +249,17 @@ class WatchHistoryService {
       'isMovie': isMovie,
       'season': season,
       'episode': episode,
-      'posterUrl': history['posterUrl']?.toString() ?? '',
-      'position': _integer(history['position']),
-      'duration': _integer(history['duration']),
-      'watchPercentage':
-          (history['watchPercentage'] as num?)?.toDouble() ?? 0.0,
-      'isWatched': history['isWatched'] == true,
-      'timestamp': _integer(history['timestamp']),
+      'posterUrl': posterUrl,
+      'position': position,
+      'duration': duration,
+      'watchPercentage': watchPercentage,
+      'isWatched': isWatched,
+      'timestamp': timestamp,
+      if (history['genreIds'] is List)
+        'genreIds': (history['genreIds'] as List)
+            .map((id) => _integer(id))
+            .where((id) => id > 0)
+            .toList(),
     };
     final prefs = await SharedPreferences.getInstance();
     final existingJson = prefs.getString(
@@ -241,10 +270,9 @@ class WatchHistoryService {
         final existing = jsonDecode(existingJson) as Map<String, dynamic>;
         final existingTs = _integer(existing['timestamp']);
         final existingWatched = existing['isWatched'] == true;
-        final incomingTs = _integer(history['timestamp']);
-        final incomingWatched = history['isWatched'] == true;
+        final incomingTs = timestamp;
         // Don't downgrade from watched to unwatched
-        if (existingWatched && !incomingWatched) return;
+        if (existingWatched && !isWatched) return;
         // Never overwrite with older data
         if (incomingTs <= existingTs) return;
       } catch (_) {}
@@ -390,6 +418,7 @@ class WatchHistoryService {
             _integer(item['episode']) == episode;
       });
     await prefs.setString(_historyListKey, jsonEncode(list));
+    localHistoryRevision.value++;
   }
 
   static Future<void> removeSeriesFromHistory(String tmdbId) async {
@@ -413,6 +442,7 @@ class WatchHistoryService {
       (item) => item['isMovie'] != true && item['tmdbId']?.toString() == tmdbId,
     );
     await prefs.setString(_historyListKey, jsonEncode(list));
+    localHistoryRevision.value++;
     for (final item in matches) {
       unawaited(
         CloudSyncService.deleteWatchProgress(
@@ -439,6 +469,10 @@ class WatchHistoryService {
       );
     }
     await prefs.remove(_historyListKey);
+    localHistoryRevision.value++;
+    // One node removal propagates to phone/TV/desktop. The real-time
+    // listener on each device reconciles the now-empty snapshot.
+    await CloudSyncService.clearAllWatchHistory();
   }
 
   static Future<bool> hasWatchProgress(

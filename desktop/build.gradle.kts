@@ -174,7 +174,7 @@ compose.desktop {
 }
 
 // Promotes the packaged app to the user's Desktop (shortcut) and launches it.
-// Run after a successful `packageMsi` / manual MSI install:
+// Run after a successful packageReleaseMsi / manual MSI install:
 //   gradlew desktop:promoteAndLaunch
 tasks.register<DefaultTask>("promoteAndLaunch") {
     group = "maxstream"
@@ -185,7 +185,7 @@ tasks.register<DefaultTask>("promoteAndLaunch") {
             System.getenv("LOCALAPPDATA") + "\\Programs\\MaxStream\\MaxStream.exe",
         )
         val exe = exeCandidates.firstOrNull { File(it).exists() }
-            ?: throw GradleException("MaxStream.exe not found after install. Run packageMsi (or the MSI) first.")
+            ?: throw GradleException("MaxStream.exe not found after install. Run packageReleaseMsi (or the MSI) first.")
         val script = layout.projectDirectory.file("..\\scripts\\desktop-shortcut.ps1").asFile
         require(script.exists()) { "Missing scripts/desktop-shortcut.ps1 — required by promoteAndLaunch" }
         val proc = ProcessBuilder(

@@ -156,11 +156,8 @@ fun HistoryScreen(
                 TextButton(onClick = {
                     scope.launch {
                         withContext(Dispatchers.IO) {
-                            val all = WatchStateStore.all()
-                            if (CloudSync.isSynced) {
-                                all.forEach { CloudSync.clearWatchHistory(it) }
-                            }
                             WatchStateStore.clearAll()
+                            if (CloudSync.isSynced) CloudSync.clearAllWatchHistory()
                         }
                         clearAll = false
                         localRevision++
@@ -234,7 +231,11 @@ private fun HistoryRow(
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
-                    "${fmtHistoryTime(s.positionMs)} of ${fmtHistoryTime(s.lengthMs)} · ${historyDate(s.updatedAt)}",
+                    if (s.isWatched) {
+                        "Watched · ${historyDate(s.updatedAt)}"
+                    } else {
+                        "${fmtHistoryTime(s.positionMs)} of ${fmtHistoryTime(s.lengthMs)} · ${historyDate(s.updatedAt)}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

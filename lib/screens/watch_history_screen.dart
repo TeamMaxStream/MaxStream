@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../widgets/floating_nav_metrics.dart';
 import '../services/watch_history_service.dart';
+import '../services/cloud_sync_service.dart';
 
 import 'package:maxstream/widgets/video_player_screen.dart';
 import '../widgets/app_network_image.dart';
@@ -21,7 +22,20 @@ class _WatchHistoryScreenState extends State<WatchHistoryScreen> {
   @override
   void initState() {
     super.initState();
+    WatchHistoryService.localHistoryRevision.addListener(_onHistoryChanged);
+    CloudSyncService.historyRevision.addListener(_onHistoryChanged);
     _loadWatchHistory();
+  }
+
+  @override
+  void dispose() {
+    WatchHistoryService.localHistoryRevision.removeListener(_onHistoryChanged);
+    CloudSyncService.historyRevision.removeListener(_onHistoryChanged);
+    super.dispose();
+  }
+
+  void _onHistoryChanged() {
+    if (mounted) _loadWatchHistory();
   }
 
   Future<void> _loadWatchHistory() async {
@@ -195,7 +209,10 @@ class _WatchHistoryScreenState extends State<WatchHistoryScreen> {
   }
 
   Widget _buildHistoryItem(Map<String, dynamic> item, int index) {
-    final progress = (item['position'] ?? 0) / (item['duration'] ?? 1);
+    final watched = item['isWatched'] == true;
+    final progress = watched
+        ? 1.0
+        : ((item['position'] ?? 0) / (item['duration'] ?? 1)).toDouble();
     final progressPercent = (progress * 100).round();
 
     return Container(
@@ -262,7 +279,7 @@ class _WatchHistoryScreenState extends State<WatchHistoryScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '$progressPercent% watched',
+                          watched ? 'Watched' : '$progressPercent% watched',
                           style: const TextStyle(
                             color: Colors.grey,
                             fontSize: 12,

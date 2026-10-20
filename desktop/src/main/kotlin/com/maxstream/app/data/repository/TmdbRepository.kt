@@ -41,7 +41,10 @@ object TmdbRepository : MediaRepository {
     }.getOrElse { SampleCatalog.homeSections().map { section -> section.copy(items = section.items.visibleForActiveProfile()) } }
 
     override suspend fun continueWatching(): List<ContinueWatch> =
-        WatchStateStore.all().map { s ->
+        WatchStateStore.all()
+            // Finished titles stay in History but never in Continue Watching.
+            .filter { !it.isWatched && it.progress < 0.9f }
+            .map { s ->
             val stored = MediaItem(
                 id = s.itemId,
                 mediaType = s.mediaType,
@@ -180,7 +183,7 @@ object TmdbRepository : MediaRepository {
             mediaType = item.mediaType,
             season = season,
             episode = episode,
-            positionMs = if (nearEnd) 0L else positionMs,
+            positionMs = if (nearEnd) lengthMs else positionMs,
             lengthMs = lengthMs,
             updatedAt = System.currentTimeMillis(),
             title = item.title.ifBlank { existing?.title.orEmpty() },
@@ -189,13 +192,12 @@ object TmdbRepository : MediaRepository {
             year = item.year ?: existing?.year,
             rating = item.rating.takeIf { it > 0.0 } ?: existing?.rating ?: 0.0,
             genreIds = item.genreIds.ifEmpty { existing?.genreIds ?: emptyList() },
+            // Keep finished titles in history (phone/TV behaviour) and let
+            // Continue Watching filter them out instead of deleting the entry
+            // on every device.
+            isWatched = nearEnd,
         )
-        if (nearEnd) {
-            WatchStateStore.clear(item.id, season, episode)
-            if (CloudSync.isSynced) CloudSync.clearWatchHistory(state)
-        } else {
-            WatchStateStore.save(state)
-            if (CloudSync.isSynced) CloudSync.pushWatchHistory(state)
-        }
+        WatchStateStore.save(state)
+        if (CloudSync.isSynced) CloudSync.pushWatchHistory(state)
     }
 }

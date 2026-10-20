@@ -63,7 +63,7 @@ import com.maxstream.app.ui.screens.player.PlayerScreen
 import com.maxstream.app.ui.screens.search.SearchScreen
 import com.maxstream.app.ui.screens.series.SeriesListScreen
 import com.maxstream.app.ui.screens.splash.SplashScreen
-import com.maxstream.app.ui.screens.watchlist.WatchlistScreen
+import com.maxstream.app.ui.screens.library.LibraryScreen
 import com.maxstream.app.ui.theme.MaxStreamTheme
 import com.maxstream.app.ui.tv.TvFocusManager
 import kotlinx.coroutines.delay
@@ -75,8 +75,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         WatchEntryCompat.init(applicationContext)
         // Continuous cloud sync (watch progress + watchlist) while signed in —
-        // mirrors the Dart phone app's CloudSyncService.startListening().
-        com.maxstream.app.data.repository.CloudSyncCoordinator.start(applicationContext)
+        // mirrors the Dart phone app's CloudSyncService.startListening().        com.maxstream.app.data.repository.CloudSyncCoordinator.start(applicationContext)
 
         try {
             setContent {
@@ -481,7 +480,7 @@ private fun TvShell(
                 )
             }
             TabScreen(visible = appState.selectedTab == 4) {
-                WatchlistScreen(
+                LibraryScreen(
                     navController      = deepNavController,
                     onReturnToSidebar  = { appState.updateFocusOnSidebar(true) },
                     isVisible          = appState.selectedTab == 4,

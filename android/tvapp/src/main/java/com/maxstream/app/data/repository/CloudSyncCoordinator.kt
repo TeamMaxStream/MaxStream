@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
  *
  * While the user is signed in, a background loop re-pulls the phone's watch
  * progress + watchlist + profiles from Realtime Database every [SYNC_INTERVAL_MS].
- * Any change bumps the matching revision [StateFlow] — the Home/Details/Watchlist
+ * Any change bumps the matching revision [StateFlow] — the Home/Details/Library
  * screens collect these and refresh, so a title watched (or un-watched) on the phone
  * appears on the TV within a few seconds, just like the Dart listener did.
  *

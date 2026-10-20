@@ -7,7 +7,7 @@
         "watch_history": {
           "$key": {
             ".read": "$uid === auth.uid",
-            ".write": "$uid === auth.uid && (!newData.exists() || newData.child('isWatched').val() === false)"
+            ".write": "$uid === auth.uid"
           }
         },
         "watchlist": {

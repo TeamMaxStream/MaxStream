@@ -65,7 +65,7 @@ private const val COLUMNS = 5
 private const val GRID_ID = "watchlist:grid"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WatchlistScreen (Tab 5)
+// WatchlistScreen (Library → Watchlist)
 //
 // Matches Dart TvWatchlistScreen:
 //  - Header + tab chips (All / Movies / TV Shows)
@@ -78,6 +78,9 @@ private const val GRID_ID = "watchlist:grid"
 fun WatchlistScreen(
     navController: NavController,
     onReturnToSidebar: () -> Unit = {},
+    onUpToSections: (() -> Unit)? = null,
+    embedded: Boolean = false,
+    autoFocus: Boolean = true,
     isVisible: Boolean = true,
     focusKey: Int = 0,
     restoreFocusKey: Int = 0,
@@ -145,8 +148,8 @@ fun WatchlistScreen(
     // Seed focus when the tab becomes visible, or re-seed when focus returns
     // from the sidebar (focusKey bump). Restores the grid if a card was
     // focused, otherwise the selected tab chip. First attempt is immediate.
-    LaunchedEffect(isVisible, loading, focusKey) {
-        if (!isVisible || loading) return@LaunchedEffect
+    LaunchedEffect(isVisible, loading, autoFocus, focusKey) {
+        if (!isVisible || loading || !autoFocus) return@LaunchedEffect
         if (gridNav.activeGridId == GRID_ID && filtered.isNotEmpty()) {
             gridNav.focusFirstCard(GRID_ID, null, scope)
             return@LaunchedEffect
@@ -164,8 +167,8 @@ fun WatchlistScreen(
 
     // Deep-nav return: details/player overlay popped. The shell never left
     // composition, so restore the last focused grid card (or the tab chip).
-    LaunchedEffect(isVisible, restoreFocusKey, selectedTab, filtered.size) {
-        if (!isVisible || restoreFocusKey <= 0) return@LaunchedEffect
+    LaunchedEffect(isVisible, restoreFocusKey, autoFocus, selectedTab, filtered.size) {
+        if (!isVisible || restoreFocusKey <= 0 || !autoFocus) return@LaunchedEffect
         if (filtered.isNotEmpty()) {
             gridNav.focusFirstCard(GRID_ID, null, scope)
         } else {
@@ -198,7 +201,10 @@ fun WatchlistScreen(
                 true
             }
             Key.DirectionDown -> { focusGrid(); true }
-            Key.DirectionUp -> true
+            Key.DirectionUp -> {
+                onUpToSections?.invoke()
+                true
+            }
             Key.Back, Key.Escape -> { onReturnToSidebar(); true }
             Key.Enter, Key.DirectionCenter -> { selectedTab = index; true }
             else -> false
@@ -219,17 +225,20 @@ fun WatchlistScreen(
         // Header + tab chips are ALWAYS composed (matches Dart) so the tabs
         // stay reachable even when the list is empty or loading.
         Column(modifier = Modifier.fillMaxSize()) {
-            Text(
-                text = "My Watchlist",
-                color = Color.White,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier
-                    .padding(top = 48.dp)
-                    .padding(horizontal = 48.dp),
-            )
-
-            Spacer(Modifier.height(20.dp))
+            if (!embedded) {
+                Text(
+                    text = "My Watchlist",
+                    color = Color.White,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier
+                        .padding(top = 48.dp)
+                        .padding(horizontal = 48.dp),
+                )
+                Spacer(Modifier.height(20.dp))
+            } else {
+                Spacer(Modifier.height(2.dp))
+            }
 
             // ── Tab chips (counts mirrored from Dart's TvWatchlistScreen) ──
             val counts = listOf(

@@ -6,6 +6,8 @@
     <string name="genre">Genre</string>
     <string name="series">Series</string>
     <string name="watchlist">Watchlist</string>
+    <string name="library">Library</string>
+    <string name="history">History</string>
     <string name="more">More</string>
     <string name="play">Play</string>
     <string name="resume">Resume</string>

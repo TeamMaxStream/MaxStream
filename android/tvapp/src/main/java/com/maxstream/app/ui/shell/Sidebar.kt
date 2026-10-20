@@ -71,7 +71,6 @@ import androidx.compose.ui.unit.sp
 import com.maxstream.app.R
 import com.maxstream.app.data.local.ProfileData
 import com.maxstream.app.data.local.ProfileScope
-import com.maxstream.app.data.local.WatchlistRepository
 import com.maxstream.app.util.KidsTheme
 import kotlinx.coroutines.launch
 
@@ -86,7 +85,7 @@ private val NAV_ENTRIES = listOf(
     NavEntry(R.string.search,    R.drawable.ic_search),
     NavEntry(R.string.genre,     R.drawable.ic_genre),
     NavEntry(R.string.series,    R.drawable.ic_series),
-    NavEntry(R.string.watchlist, R.drawable.ic_watchlist),
+    NavEntry(R.string.library,   R.drawable.ic_library),
     NavEntry(R.string.more,      R.drawable.ic_more),
 )
 
