@@ -45,7 +45,7 @@ object CloudSyncRepository {
      * instead of only ever adding remote items. */
     @Volatile
     private var previousCloudKeys: Set<String> = emptySet()
-/
+
     /** Cloud watch-history keys from the previous poll. Used to mirror
      * deletions made on the phone/desktop into the TV's local history. */
     @Volatile
