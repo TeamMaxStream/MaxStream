@@ -205,8 +205,11 @@ class CloudSyncService {
     // Reconcile deletions: an entry present in the previous cloud snapshot but
     // gone now was removed on the TV or desktop (or by Clear History). Mirror
     // that locally without pushing the deletion back up.
+    // Guard: only reconcile when the current snapshot is non-empty. An empty
+    // snapshot likely means a failed or transient fetch — treating it as
+    // "everything was deleted" would wipe the user's entire local history.
     final previousKeys = _lastCloudHistoryKeys;
-    if (previousKeys != null) {
+    if (previousKeys != null && cloudKeys.isNotEmpty) {
       unawaited(
         _removeStaleHistoryItems(
           cloudKeys,
@@ -230,6 +233,10 @@ class CloudSyncService {
     String profileId,
     int newerThan,
   ) async {
+    // Safety guard: never reconcile deletions against an empty cloud snapshot.
+    // An empty set here means the fetch returned nothing — not that the user
+    // deleted everything — and proceeding would wipe all local history.
+    if (cloudKeys.isEmpty) return;
     await ProfileScope.ensureInitialized();
     if (ProfileScope.currentProfileId != profileId) return;
     final local = await WatchHistoryService.getWatchHistory();
@@ -533,7 +540,7 @@ class CloudSyncService {
         }
       }
       final previousHistoryKeys = _lastCloudHistoryKeys;
-      if (previousHistoryKeys != null) {
+      if (previousHistoryKeys != null && cloudHistoryKeys.isNotEmpty) {
         await _removeStaleHistoryItems(
           cloudHistoryKeys,
           previousHistoryKeys,

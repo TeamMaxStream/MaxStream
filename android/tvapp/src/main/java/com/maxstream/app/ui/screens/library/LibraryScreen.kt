@@ -71,6 +71,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 private val LIBRARY_SECTIONS = listOf("Watchlist", "History")
 
@@ -782,7 +783,7 @@ private fun HistoryRow(
             Text(
                 text = buildString {
                     if (group.isWatched) append("Watched")
-                    else append("${(group.progress * 100).toInt()}% watched")
+                    else append("${(group.progress * 100).roundToInt()}% watched")
                     append(" · ")
                     append(relativeHistoryTime(group.timestamp))
                 },

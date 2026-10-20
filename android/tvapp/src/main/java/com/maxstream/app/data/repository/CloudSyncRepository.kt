@@ -364,25 +364,33 @@ object CloudSyncRepository {
             // Mirror deletions: anything present in the previous cloud snapshot
             // but gone now was removed on the phone or desktop. Do not delete a
             // fresh local save that raced this pull.
-            previousCloudHistoryKeys?.let { previous ->
-                for (staleKey in previous - cloudHistoryKeys) {
-                    val parsed = parseHistoryKey(staleKey) ?: continue
-                    val local = WatchProgressRepository.find(
-                        context,
-                        parsed.tmdbId,
-                        parsed.isMovie,
-                        parsed.season,
-                        parsed.episode,
-                    ) ?: continue
-                    if (local.timestamp > pullStartedAt) continue
-                    WatchProgressRepository.removeEntry(
-                        context,
-                        parsed.tmdbId,
-                        parsed.isMovie,
-                        parsed.season,
-                        parsed.episode,
-                    )
-                    historyChanged = true
+            // Guard: only reconcile when both the previous AND current cloud
+            // snapshots are non-empty. An empty current snapshot most likely
+            // means a failed or incomplete fetch — treating it as "everything
+            // was deleted" would wipe the user's entire local history.
+            if (cloudHistoryKeys.isNotEmpty()) {
+                previousCloudHistoryKeys?.let { previous ->
+                    if (previous.isNotEmpty()) {
+                        for (staleKey in previous - cloudHistoryKeys) {
+                            val parsed = parseHistoryKey(staleKey) ?: continue
+                            val local = WatchProgressRepository.find(
+                                context,
+                                parsed.tmdbId,
+                                parsed.isMovie,
+                                parsed.season,
+                                parsed.episode,
+                            ) ?: continue
+                            if (local.timestamp > pullStartedAt) continue
+                            WatchProgressRepository.removeEntry(
+                                context,
+                                parsed.tmdbId,
+                                parsed.isMovie,
+                                parsed.season,
+                                parsed.episode,
+                            )
+                            historyChanged = true
+                        }
+                    }
                 }
             }
             previousCloudHistoryKeys = cloudHistoryKeys
