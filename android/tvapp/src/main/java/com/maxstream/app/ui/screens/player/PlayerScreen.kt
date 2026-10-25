@@ -505,9 +505,25 @@ fun PlayerScreen(
         }
     }
 
-    /** Remembers whether the video was playing, for a rebuild that follows. */
-    fun capturePlayIntent() {
-        resumePlayIntent = exoPlayer?.playWhenReady ?: true
+    /**
+     * Memory pressure: release the player (and let the resume path rebuild it)
+     * so the Low-Memory Killer never SIGKILLs the app mid-playback on 1GB TV
+     * boxes. The system often delivers several trim callbacks back to back
+     * (e.g. onTrimMemory followed by onLowMemory). Once the first one has
+     * released the player there is nothing left to release, and re-capturing
+     * the play intent from a null player used to default it to "playing", so
+     * the rebuild resumed a video the user had paused.
+     */
+    fun releaseForMemoryPressure() {
+        val player = exoPlayer ?: return
+        resumePlayIntent = player.playWhenReady
+        saveProgress()
+        captureResumePosition()
+        releasePlayer(player)
+        exoPlayer = null
+        memoryReleased = true
+        loading = true
+        status = "Resuming..."
     }
 
     fun qualityLabelFor(s: Source): String {
@@ -1299,26 +1315,12 @@ fun PlayerScreen(
         val callbacks = object : ComponentCallbacks2 {
             override fun onTrimMemory(level: Int) {
                 if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
-                    capturePlayIntent()
-                    saveProgress()
-                    captureResumePosition()
-                    releasePlayer(exoPlayer)
-                    exoPlayer = null
-                    memoryReleased = true
-                    loading = true
-                    status = "Resuming..."
+                    releaseForMemoryPressure()
                 }
             }
 
             override fun onLowMemory() {
-                capturePlayIntent()
-                saveProgress()
-                captureResumePosition()
-                releasePlayer(exoPlayer)
-                exoPlayer = null
-                memoryReleased = true
-                loading = true
-                status = "Resuming..."
+                releaseForMemoryPressure()
             }
 
             @Deprecated("Deprecated in Java")
@@ -2038,10 +2040,19 @@ fun PlayerScreen(
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown) {
-                    onKeyDown(event.key)
-                } else {
+                if (event.type != KeyEventType.KeyDown) {
                     false
+                } else if (event.nativeKeyEvent.repeatCount > 0 &&
+                    event.key in setOf(Key.DirectionCenter, Key.Enter, Key.ButtonA)
+                ) {
+                    // A slightly long OK press auto-repeats KeyDown about every
+                    // 50ms once held past ~500ms, which outlasts the confirm
+                    // debounce: the repeat toggled play/pause again, so the
+                    // video paused and immediately resumed. Only the initial
+                    // press counts (D-pad left/right repeats still seek).
+                    true
+                } else {
+                    onKeyDown(event.key)
                 }
             },
     ) {

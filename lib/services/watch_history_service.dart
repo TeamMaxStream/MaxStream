@@ -9,8 +9,6 @@ import 'profile_scope.dart';
 import 'user_scope.dart';
 
 class WatchHistoryService {
-  static const int _maxHistoryItems = 50;
-
   /// Every read and write below is keyed on [ProfileScope.currentProfileId],
   /// which returns the Firebase UID instead of the real profile ID until the
   /// active profile has been resolved from local storage. Reading in that
@@ -32,8 +30,12 @@ class WatchHistoryService {
   /// waiting for the CloudSync RTDB round-trip).
   static final ValueNotifier<int> localHistoryRevision = ValueNotifier<int>(0);
 
-  static String get _historyListKey =>
-      'watch_history_list_${UserScope.currentOwner}_${ProfileScope.currentProfileId}';
+  static String get _itemKeyPrefix =>
+      'watch_history_${UserScope.currentOwner}_${ProfileScope.currentProfileId}_';
+
+  static final RegExp _itemKeySuffix = RegExp(
+    r'^(movie_[^_]+|tv_[^_]+_\d+_\d+)$',
+  );
 
   static String getWatchHistoryKey(
     String tmdbId,
@@ -42,7 +44,57 @@ class WatchHistoryService {
     int episode,
   ) {
     final item = isMovie ? 'movie_$tmdbId' : 'tv_${tmdbId}_${season}_$episode';
-    return 'watch_history_${UserScope.currentOwner}_${ProfileScope.currentProfileId}_$item';
+    return '$_itemKeyPrefix$item';
+  }
+
+  /// Every per-title entry stored for the active profile, keyed by its
+  /// SharedPreferences key. These entries are the history itself: Continue
+  /// Watching and Watch History are built from them. They used to be read from
+  /// a separate list capped at 50 rows, where every finished episode took a
+  /// row, so a few days of watching pushed unfinished titles out of both
+  /// screens even though their entries (and the cloud copy) still existed.
+  static Map<String, Map<String, dynamic>> _storedItems(
+    SharedPreferences prefs,
+  ) {
+    final prefix = _itemKeyPrefix;
+    final items = <String, Map<String, dynamic>>{};
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(prefix) ||
+          !_itemKeySuffix.hasMatch(key.substring(prefix.length))) {
+        continue;
+      }
+      final value = prefs.get(key);
+      final item = value is String ? _decodeMap(value) : null;
+      if (item == null || (item['tmdbId']?.toString() ?? '').isEmpty) continue;
+      items[key] = item;
+    }
+    return items;
+  }
+
+  /// Identity of a history entry: movies by id, episodes by id + season +
+  /// episode (normalized, so entries saved by older builds with season 0 match).
+  static String _entryId(Map<String, dynamic> item) {
+    final isMovie = item['isMovie'] == true;
+    final (season, episode) = _normalizedSeasonEpisode(
+      isMovie,
+      _integer(item['season'], 1),
+      _integer(item['episode'], 1),
+    );
+    return CloudSyncService.watchHistoryKey(
+      item['tmdbId'].toString(),
+      isMovie,
+      season,
+      episode,
+    );
+  }
+
+  static Future<void> _removeStoredItems(
+    SharedPreferences prefs,
+    bool Function(Map<String, dynamic> item) test,
+  ) async {
+    for (final entry in _storedItems(prefs).entries) {
+      if (test(entry.value)) await prefs.remove(entry.key);
+    }
   }
 
   /// Keys written before the active profile resolved used the Firebase UID in
@@ -72,17 +124,8 @@ class WatchHistoryService {
 
     final prefs = await SharedPreferences.getInstance();
     try {
-      // Recover the shared list first — it is what Continue Watching and Watch
-      // History read, so a stranded copy here IS the reported symptom.
-      final strayListKey = 'watch_history_list_$owner';
-      final strayList = _decodeList(prefs.getString(strayListKey));
-      if (strayList.isNotEmpty &&
-          _decodeList(prefs.getString(_historyListKey)).isEmpty) {
-        await prefs.setString(_historyListKey, jsonEncode(strayList));
-      }
-
-      // Then the per-title entries, so resume keeps working for anything that
-      // was also written in that window.
+      // Recover the per-title entries, so resume keeps working for anything
+      // that was written in that window.
       final livePrefix = 'watch_history_${profileId}_';
       final strayPrefix = 'watch_history_${owner}_';
       for (final key in prefs.getKeys().toList()) {
@@ -107,20 +150,6 @@ class WatchHistoryService {
       return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
     } catch (_) {
       return null;
-    }
-  }
-
-  static List<Map<String, dynamic>> _decodeList(String? value) {
-    if (value == null) return [];
-    try {
-      final decoded = jsonDecode(value);
-      if (decoded is! List) return [];
-      return decoded
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-    } catch (_) {
-      return [];
     }
   }
 
@@ -194,7 +223,9 @@ class WatchHistoryService {
       getWatchHistoryKey(tmdbId, isMovie, season, episode),
       jsonEncode(history),
     );
-    await _saveToGlobalHistory(history);
+    // Notify listeners (e.g. Recommendations) immediately – faster than waiting
+    // for the CloudSync RTDB echo which may take seconds or fail offline.
+    localHistoryRevision.value++;
     unawaited(CloudSyncService.pushWatchProgress(history));
   }
 
@@ -281,39 +312,25 @@ class WatchHistoryService {
       getWatchHistoryKey(tmdbId, isMovie, season, episode),
       jsonEncode(clean),
     );
-    await _saveToGlobalHistory(clean);
-  }
-
-  static Future<void> _saveToGlobalHistory(Map<String, dynamic> history) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = _decodeList(prefs.getString(_historyListKey));
-    list.removeWhere((item) {
-      if (item['tmdbId']?.toString() != history['tmdbId']?.toString()) {
-        return false;
-      }
-      if (item['isMovie'] != history['isMovie']) return false;
-      // Movies never use season/episode in their key, so the same movie can
-      // be saved with (0,0) or (1,1) depending on the entry point. Treat any
-      // movie with the same tmdbId as a duplicate to avoid showing the same
-      // movie twice in Continue Watching.
-      if (history['isMovie'] == true) return true;
-      return item['season'] == history['season'] &&
-          item['episode'] == history['episode'];
-    });
-    list.insert(0, history);
-    if (list.length > _maxHistoryItems) {
-      list.removeRange(_maxHistoryItems, list.length);
-    }
-    await prefs.setString(_historyListKey, jsonEncode(list));
-    // Notify listeners (e.g. Recommendations) immediately – faster than waiting
-    // for the CloudSync RTDB echo which may take seconds or fail offline.
     localHistoryRevision.value++;
   }
 
+  /// Newest first, one entry per movie / episode.
   static Future<List<Map<String, dynamic>>> getWatchHistory() async {
     await _awaitProfileScope();
     final prefs = await SharedPreferences.getInstance();
-    return _decodeList(prefs.getString(_historyListKey));
+    final newest = <String, Map<String, dynamic>>{};
+    for (final item in _storedItems(prefs).values) {
+      final id = _entryId(item);
+      final current = newest[id];
+      if (current == null ||
+          _integer(item['timestamp']) > _integer(current['timestamp'])) {
+        newest[id] = item;
+      }
+    }
+    return newest.values.toList()..sort(
+      (a, b) => _integer(b['timestamp']).compareTo(_integer(a['timestamp'])),
+    );
   }
 
   static Future<List<Map<String, dynamic>>> getGroupedWatchHistory() async {
@@ -408,40 +425,23 @@ class WatchHistoryService {
   ) async {
     await _awaitProfileScope();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(getWatchHistoryKey(tmdbId, isMovie, season, episode));
-    final list = _decodeList(prefs.getString(_historyListKey))
-      ..removeWhere((item) {
-        if (item['tmdbId']?.toString() != tmdbId) return false;
-        if (item['isMovie'] != isMovie) return false;
-        if (isMovie) return true;
-        return _integer(item['season']) == season &&
-            _integer(item['episode']) == episode;
-      });
-    await prefs.setString(_historyListKey, jsonEncode(list));
+    final id = _entryId({
+      'tmdbId': tmdbId,
+      'isMovie': isMovie,
+      'season': season,
+      'episode': episode,
+    });
+    await _removeStoredItems(prefs, (item) => _entryId(item) == id);
     localHistoryRevision.value++;
   }
 
   static Future<void> removeSeriesFromHistory(String tmdbId) async {
     await _awaitProfileScope();
     final prefs = await SharedPreferences.getInstance();
-    final list = _decodeList(prefs.getString(_historyListKey));
-    final matches = list.where(
-      (item) => item['isMovie'] != true && item['tmdbId']?.toString() == tmdbId,
-    );
-    for (final item in matches) {
-      await prefs.remove(
-        getWatchHistoryKey(
-          tmdbId,
-          false,
-          _integer(item['season'], 1),
-          _integer(item['episode'], 1),
-        ),
-      );
-    }
-    list.removeWhere(
-      (item) => item['isMovie'] != true && item['tmdbId']?.toString() == tmdbId,
-    );
-    await prefs.setString(_historyListKey, jsonEncode(list));
+    bool isSeriesItem(Map<String, dynamic> item) =>
+        item['isMovie'] != true && item['tmdbId']?.toString() == tmdbId;
+    final matches = _storedItems(prefs).values.where(isSeriesItem).toList();
+    await _removeStoredItems(prefs, isSeriesItem);
     localHistoryRevision.value++;
     for (final item in matches) {
       unawaited(
@@ -458,17 +458,7 @@ class WatchHistoryService {
   static Future<void> clearAllHistory() async {
     await _awaitProfileScope();
     final prefs = await SharedPreferences.getInstance();
-    for (final item in await getWatchHistory()) {
-      await prefs.remove(
-        getWatchHistoryKey(
-          item['tmdbId']?.toString() ?? '',
-          item['isMovie'] == true,
-          _integer(item['season'], 1),
-          _integer(item['episode'], 1),
-        ),
-      );
-    }
-    await prefs.remove(_historyListKey);
+    await _removeStoredItems(prefs, (_) => true);
     localHistoryRevision.value++;
     // One node removal propagates to phone/TV/desktop. The real-time
     // listener on each device reconciles the now-empty snapshot.
@@ -552,6 +542,6 @@ class WatchHistoryService {
     history['watchPercentage'] = 100.0;
     history['timestamp'] = DateTime.now().millisecondsSinceEpoch;
     await prefs.setString(key, jsonEncode(history));
-    await _saveToGlobalHistory(history);
+    localHistoryRevision.value++;
   }
 }

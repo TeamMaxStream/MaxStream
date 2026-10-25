@@ -85,10 +85,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             _continueWatching.value = runCatching {
-                WatchProgressRepository
-                    .recent(getApplication(), limit = 20)
-                    .filter { entry -> entry.isVisibleInContinueWatching() }
-                    .map { it.toMediaItem() }
+                continueWatchingItems()
             }.getOrDefault(emptyList())
 
             // Personalized recommendations based on watch history
@@ -177,9 +174,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     @SuppressLint("NullSafeMutableLiveData")
     fun refreshSynced() {
-        _continueWatching.value = WatchProgressRepository
-            .recent(getApplication(), limit = 20)
-            .filter { entry -> entry.isVisibleInContinueWatching() }
-            .map { it.toMediaItem() }
+        _continueWatching.value = continueWatchingItems()
     }
+
+    // Filter BEFORE limiting: taking the 20 newest entries first let finished
+    // episodes fill every slot and hid older unfinished titles.
+    private fun continueWatchingItems(): List<MediaItem> = WatchProgressRepository
+        .history(getApplication())
+        .filter { entry -> entry.isVisibleInContinueWatching() }
+        .take(20)
+        .map { it.toMediaItem() }
 }

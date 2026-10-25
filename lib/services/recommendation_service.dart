@@ -284,8 +284,8 @@ class RecommendationService {
     final history = await WatchHistoryService.getWatchHistory();
     if (history.isEmpty) return [];
 
-    // Most recent entry (list is stored newest-first via insert(0) in
-    // WatchHistoryService). This guarantees the row follows the latest watch.
+    // Most recent entry (WatchHistoryService returns history newest-first).
+    // This guarantees the row follows the latest watch.
     final recent = history.first;
     final tmdbId = int.tryParse(recent['tmdbId']?.toString() ?? '') ?? 0;
     if (tmdbId == 0) return [];

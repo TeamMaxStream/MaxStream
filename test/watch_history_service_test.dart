@@ -151,6 +151,41 @@ void profileScopeRegressionTests() {
       reason: 'and in Watch History',
     );
   });
+
+  // Regression: an unfinished title vanished from Continue Watching and Watch
+  // History after a few days, once 50 newer (mostly finished) episodes had
+  // been watched and pushed it out of a capped history list.
+  test('an unfinished title survives many newer watched episodes', () async {
+    await WatchHistoryService.saveWatchProgress(
+      tmdbId: '42',
+      title: 'Movie',
+      isMovie: true,
+      season: 1,
+      episode: 1,
+      position: const Duration(minutes: 30),
+      duration: const Duration(minutes: 120),
+    );
+    for (var episode = 1; episode <= 60; episode++) {
+      await WatchHistoryService.saveWatchProgress(
+        tmdbId: '7',
+        title: 'Show',
+        isMovie: false,
+        season: 1,
+        episode: episode,
+        position: const Duration(minutes: 44),
+        duration: const Duration(minutes: 45),
+      );
+    }
+
+    final continueWatching = await WatchHistoryService.getContinueWatching();
+    expect(continueWatching.map((item) => item['tmdbId']), ['42']);
+    expect(await WatchHistoryService.getWatchHistory(), hasLength(61));
+
+    // Removing the series must remove every episode, not just the newest ones.
+    await WatchHistoryService.removeSeriesFromHistory('7');
+    final remaining = await WatchHistoryService.getWatchHistory();
+    expect(remaining.map((item) => item['tmdbId']), ['42']);
+  });
 }
 
 void main() {
