@@ -13,7 +13,7 @@ group = "com.maxstream"
 // Shared product version across the phone, TV, and desktop apps. Keep the tag,
 // pubspec.yaml, android/tvapp/build.gradle.kts, and AppConfig.APP_VERSION in
 // sync; the release job in .github/workflows/build.yml enforces it.
-version = "1.7.0"
+version = "1.8.0"
 
 // Windows laptop app — its own desktop UX. Shares the com.maxstream.app package
 // with the TV/mobile clients but does NOT use Google services (unavailable on
@@ -212,7 +212,7 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "MaxStream"
             // Must be MAJOR>0 for the macOS Dmg packager (0.1.0 is rejected).
-            packageVersion = "1.7.0"
+            packageVersion = "1.8.0"
             description = "MaxStream for Windows — desktop catalog & playback client"
             vendor = "MaxStream"
             // Compose only auto-detects JDK modules from *dependencies*; our own

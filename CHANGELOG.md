@@ -1,5 +1,80 @@
 # Changelog
 
+## 1.8.0+10
+
+> [!NOTE]
+> This is the largest MaxStream release since 1.7.0. It adds the Windows desktop app, multi-profile and kids support across phone and TV, a new TV Library with Watchlist and Watch History, real bidirectional history sync, accurate download sizes, per-quality size probes, device-to-device sharing, and a rebuilt playback/server stack. All 108 commits since `v1.7.0` are covered below.
+
+### Desktop app (new)
+
+- **Native Windows desktop client** with its own Compose UI, launch splash, authentication and profile gates, catalog tabs, details and season browsing, cloud sync, settings, and a VLCJ-based player for the first release; the first bundled-VLC, ProGuard, scrolling, pagination, and playback pass followed immediately (`c95994b`, `73d6c93`, `9217728`, `6a4439f`, `0821cb7`, `8c347af`).
+- **Desktop UI modernization**: collapsible rail, red theme, app icon, larger episode cards, hover-revealed player chrome, hover-expanding sidebar, skeleton loading, slide navigation, rotating hero, and recommendations (`965bc87`, `099eb3c`, `f7e67f8`, `3635458`).
+- **Desktop settings and profiles**: sign-out, forgot-password flow, quality selection, profile management, About screen, kids mode, and local profile caching (`f7e67f8`, `7a6a503`, `3635458`).
+- **Desktop playback parity**: fast server picker, multi-language audio tracks, subtitles, fullscreen controls, mini-player, resume state, and background-playback fixes (`a97019d`, `4f539d5`, `3b0d971`).
+- **libmpv replaces VLC**: removed VLC entirely and moved desktop playback to bundled libmpv with software-rendered video, native audio/subtitle tracks, resume, downloads, kids mode/theme, and self-update support (`3b0d971`).
+- **Smaller desktop installers**: ProGuard/R8 shrinking, trimmed bundled artwork, and a complete MSI/EXE packaging path that keeps the full installer as `MaxStream-Dex.exe` (`5b7e165`, `3b0d971`).
+- **Desktop watch history**: unified history payload, legacy desktop-field migration, cloud deletion reconciliation, completed-title handling, and compile fixes (`45aa9a8`, `cef41da`, `cf8f846`, `3310395`).
+
+### Profiles, kids and personalization
+
+- **Multi-profile support** with Material 3 avatars, profile creation/editing, profile pictures, upload support, and full cross-device sync between phone and TV (`7ba6f8a`, `1c8a073`, `5b2d8a9`, `61f7aa0`, `3a5bdb6`).
+- **Per-profile data isolation** for watchlist, watch history, downloads, and cloud sync so profiles no longer leak progress or saved titles into each other (`dfe19ce`, `888a387`, `b88d0e3`, `a3aaa3e`).
+- **TV profile experience**: automatic phone-to-TV profile sync, sidebar profile switcher, profile grid D-pad navigation, active-profile click, create-profile flow, sign-in/sign-up routing, delete hints, and profile cleanup on sign-out with a default profile for new accounts (`5b2d8a9`, `2a0c945`, `e25255e`, `392e640`, `d1f79ab`, `9e346ef`).
+- **Kids profiles**: content filtering across recommendations and rows, kids theme, sidebar profile indicator, biometric fix, and TV profile switching (`70b0c8e`, `69f12ba`).
+- **Profile-select hero screens**: Netflix-style backdrop, title/branding treatment, series support, avatar grid, and layout fixes (`ced56d8`, `870a922`, `031f70f`).
+- **Personalization**: personalized TV home rows, watch reminders for shows, trailer autoplay, search content filters, and fixes for autoplay/reminder edge cases (`4220866`, `06b0abc`, `6340c67`).
+- **Smaller fixes**: removed Trending Series from TV home, restored sidebar imports, added missing Compose/Kotlin imports, fixed `padStart`, fixed profile image tree-shaking, and reverted an unstable server-priority experiment (`585790a`, `fbe61fa`, `ac0c9aa`, `e6c0039`, `7619a1c`, `e80304d`).
+
+### TV experience
+
+- **New TV Library screen** replacing the old Watchlist tab: top-level `Watchlist | History` sections, embedded Watchlist with All/Movies/TV filters, and a mobile-style grouped Watch History with resume, per-title remove, clear-all, progress, and synced status (`45aa9a8`, `cf8f846`).
+- **Focus-safe TV navigation**: Left from content opens the sidebar, Up reaches Library sections, sections activate only on Enter/Down, history has row/Remove columns, and retry logic prevents detached focus requests from stranding the remote (`45aa9a8`, `cf8f846`, `3310395`).
+- **TV D-pad polish**: overscroll removal, smooth animated row scrolling, no skipped cards on fast input, stable content rows, restored card focus rings, and See All cells that match every row's card height and focus surface (`e7d6928`, `4e21ebd`, `710e68e`, `4cf22cf`, `34c254e`, `34cf4cc`, `82d52d6`, `9e6379c`, `cb94349`, `ed38112`, `01bc69c`).
+- **TV See All and full lists**: trailing See All cells open paginated full-list screens, and every row reaches its See All cell correctly (`add19d7`, `cb94349`).
+- **TV pairing and updates**: modernized pairing screen with red/white theme, in-app update download/install flow, release-notes renderer, and website button (`41d17fb`, `6340c67`, `fd19efd`, `351b962`).
+- **TV player upgrades**: audio-track menu, online subtitles, mini-player zombie fix, next-season advance instead of a false "Series complete", and fixes for pause/resume, autoplay, and background playback (`58dfbef`, `b070670`, `fa3ceed`, `3310395`, `e7d6928`).
+- **TV status and size fixes**: notification progress no longer sticks at `00:00`, download storage size display is accurate, and TV content-row layout no longer jumps (`a80f1bf`, `88cdac4`, `34cf4cc`).
+
+### Library, history and cross-device sync
+
+- **Bidirectional watch-history sync** among phone, TV, and desktop using the shared `tmdbId` / `isMovie` / `season` / `episode` / `position` / `duration` / `timestamp` schema, with legacy desktop fields still readable (`45aa9a8`, `cf8f846`, `3310395`).
+- **Deletion propagation**: removing one title/series or clearing history deletes the RTDB entry/node, and the other clients reconcile the remote deletion locally instead of resurrecting old rows (`45aa9a8`, `cf8f846`).
+- **Cloud write rules** now permit completed entries (`isWatched: true`) so finished titles can sync instead of being silently rejected (`45aa9a8`).
+- **Cold-start and empty-fetch protection**: history is no longer wiped when a cloud read returns an empty node or a transient failure, and old unfinished titles remain in history (`b67f95a`, `cf8f846`, `3310395`).
+- **Watchlist sync fixes**: desktop now writes the phone/TV watchlist schema (`id`, `thumbnail`, `description`, `backdrop`), mobile reconciles remote deletions, and TV details/watchlist actions keep Firebase and local state aligned (`a3aaa3e`, `45aa9a8`).
+- **Mobile watch history** now updates live from local and cloud changes, shows completed entries as `Watched`, preserves genre IDs for kids filtering, and accepts legacy desktop history records (`45aa9a8`, `3310395`).
+
+### Downloads, storage and sharing
+
+- **Real download sizes**: measured on-disk size is shown for downloads and refreshed live instead of using estimated or stream-probe sizes (`8ec6c24`, `55740d5`, `a80f1bf`).
+- **Per-quality size probes**: download sheets show the real size for every quality, including Auto, with bounded on-demand probing and correct size formatting (`d26a574`, `02eae6e`, `d485d99`, `35947bd`).
+- **Download fixes**: counts are correct, update APKs are cleaned up, sheets and buttons clear the system nav bar, downloads cannot start before a server is selected, Auto quality is honored, relative HLS variant URLs resolve correctly, failed probes are not cached, and VixSrc streams are classified by content instead of being measured in KB (`867c41e`, `b31e2ff`, `1883fd5`, `35947bd`, `f0b6393`, `ac0c332`).
+- **Per-profile downloads and limits**: downloads are isolated per profile, with a dedicated settings screen and storage-limit enforcement (`888a387`, `57ad2c3`).
+- **Device-to-device sharing**: share downloads over Wi-Fi LAN or Nearby Connections, receive from the Downloads list, show profile chips and share actions with no downloads, and keep sharing alive during navigation (`7d16fd9`, `55cc23c`, `fe7cfbd`, `170eeda`).
+- **Sharing reliability**: permission declarations for Nearby/Bluetooth/location on Android 12+, precise and approximate-location handling, auth-token fixes, already-advertising recovery, stage-specific error reporting, and progress notifications (`170eeda`, `4a855ea`, `03bd363`, `1e3bf41`, `42bdd18`, `0ffa2e2`).
+- **Background behavior**: downloads no longer keep playing audio in the background, streaming lag is reduced, and extractor WebViews cannot play audio after leaving the player (`adf9284`, `f894dad`).
+
+### Playback, servers and subtitles
+
+- **MaxStream API routing**: phone, TV, and desktop players now route through the standalone MaxStream API, with NetMirror integrated natively on mobile and TV (`7c37414`, `cc8eb9f`).
+- **Server and audio improvements**: fast server picker, multi-language audio tracks end-to-end, HLS audio-track enrichment fixes, NetMirror dub switching, and English subtitle auto-selection on server switches (`a97019d`, `dd358b3`, `fd4b12a`, `5384012`).
+- **Player stability**: ExoPlayer load-control correction, stop-resume/background playback fixes, audio-service lifecycle protection, biometric activity isolation, recommendations rendering without serial TMDB waits, and player notification thumbnail fixes (`63e8103`, `fa3ceed`, `9258ec6`, `9110706`, `ec1795a`, `4868f01`, `6d44648`).
+- **VLC removal**: desktop no longer ships VLC; libmpv is the supported desktop playback path, while mobile and TV use ExoPlayer (`3b0d971`).
+
+### Mobile, search and catalog
+
+- **Mobile reliability**: profile picture restore, avatar icon tree-shaking fix, hero/layout fixes, download-flow guards, and notification poster resolution improvements (`1c8a073`, `e6c0039`, `ced56d8`, `870a922`, `031f70f`, `1883fd5`, `6d44648`).
+- **Search and discovery**: recent search filters, trailer autoplay, genre browsing, pull-to-refresh, now-playing notification controls, and faster recommendations (`06b0abc`, `4868f01`).
+- **Watchlist/history UI**: completed history is labeled correctly, history refreshes on sync changes, and the mobile watchlist schema now matches TV and desktop (`a3aaa3e`, `45aa9a8`, `3310395`).
+
+### Infrastructure and release
+
+- **Shared-release workflow**: one `v*` tag builds mobile, TV, and desktop assets into a single GitHub release, with version verification across `pubspec.yaml`, TV, desktop, package, and `AppConfig` (`45aa9a8`).
+- **Toolchain upgrades**: Flutter 3.47.7, built-in Kotlin, NDK 28, Kotlin 2.3.20, and documented built-in-Kotlin opt-out (`6ce0fd5`, `139e590`).
+- **Build coverage**: 32-bit x86 APK variant added across build/updater/update screens, with CI tolerating Flutter emitting no x86 split (`3fbbec2`, `10ac4f3`).
+- **CI cleanup**: removed deprecated `android-actions/setup-android`, fixed CI SDK setup, and hardened artifact/release checks (`0ca6b17`, `41d17fb`).
+- **Repository and dependency maintenance**: updated funding links, Compose BOM/overscroll compatibility, and TV Firebase/material-icons dependencies (`7327735`, `4e21ebd`, `710e68e`, `61f7aa0`, `fbe61fa`).
+
 ## 1.7.0+9
 
 > [!NOTE]

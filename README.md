@@ -117,7 +117,7 @@ cd desktop
 
 ## Version
 
-- **Current**: 1.7.0 (mobile `1.7.0+9`)
+- **Current**: 1.8.0 (mobile `1.8.0+10`)
 - **Min SDK**: 3.8.0
 
 ## Contributing

@@ -1,7 +1,7 @@
 name: maxstream
 description: A new Flutter+Kotlin Native Movies & Series streaming project
 publish_to: 'none'
-version: 1.7.0+9
+version: 1.8.0+10
 
 environment:
   sdk: '>=3.8.0 <4.0.0'
