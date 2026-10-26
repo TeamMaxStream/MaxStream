@@ -203,6 +203,10 @@ jobs:
   build-desktop:
     name: Kotlin Desktop (Windows installers)
     runs-on: windows-latest
+    env:
+      # Authenticates the fallback lookup for mpv's rolling git-release assets,
+      # avoiding shared-IP API rate limits on hosted runners.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 

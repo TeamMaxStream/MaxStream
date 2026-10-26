@@ -1,5 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
 import java.net.URI
 import java.util.zip.ZipFile
 
@@ -78,10 +80,69 @@ dependencies {
 //   gradlew :desktop:syncMpvRuntime -PmpvLib="D:\path\to\libmpv-2.dll"
 // On Linux/macOS development builds the task is skipped and MpvRuntime falls
 // back to the system libmpv; package with -PmpvLib=... to ship it.
-val mpvVersion = "0.41.0-dev-g6a262d11f"
+// The git-release assets rotate whenever upstream publishes a new development
+// build. Keep a pinned, known-good archive as the primary source, and fall back
+// to the current live asset list if GitHub has already removed it. This keeps
+// release builds reproducible without breaking whenever the rolling assets
+// change (which happens frequently).
+val mpvVersion = "0.41.0-dev-gbaa3e11d4"
+val mpvArchiveName =
+    "libmpv-v0.41.0-dev-gbaa3e11d4-40141553607-x86_64-w64-mingw32-lgpl.zip"
 val mpvArchiveUrl =
-    "https://github.com/mpv-player/mpv/releases/download/git-release/" +
-        "libmpv-v0.41.0-dev-g6a262d11f-39135297726-x86_64-w64-mingw32-lgpl.zip"
+    "https://github.com/mpv-player/mpv/releases/download/git-release/$mpvArchiveName"
+val mpvReleaseApi =
+    "https://api.github.com/repos/mpv-player/mpv/releases/tags/git-release"
+
+fun mpvHttpConnection(url: String): HttpURLConnection =
+    (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+        connectTimeout = 30_000
+        readTimeout = 300_000
+        instanceFollowRedirects = true
+        setRequestProperty("User-Agent", "MaxStream-desktop-build")
+    }
+
+fun fetchMpvReleaseJson(): String {
+    val connection = mpvHttpConnection(mpvReleaseApi)
+    connection.setRequestProperty("Accept", "application/vnd.github+json")
+    System.getenv("GITHUB_TOKEN")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
+    return try {
+        val code = connection.responseCode
+        if (code !in 200..299) {
+            throw IOException("GitHub API returned HTTP $code")
+        }
+        connection.inputStream.bufferedReader().use { it.readText() }
+    } finally {
+        connection.disconnect()
+    }
+}
+
+fun currentLgplMpvAssetUrl(): String {
+    val body = fetchMpvReleaseJson()
+    val match = Regex(
+        "\"browser_download_url\"\\s*:\\s*\"([^\"]*libmpv-[^\"]*-x86_64-w64-mingw32-lgpl\\.zip)\"",
+    ).find(body) ?: throw IOException("No x86_64 LGPL libmpv asset in git-release")
+    return match.groupValues[1]
+}
+
+fun downloadMpvArchive(url: String, destination: File) {
+    val connection = mpvHttpConnection(url)
+    connection.setRequestProperty("Accept", "application/octet-stream")
+    try {
+        val code = connection.responseCode
+        if (code !in 200..299) {
+            throw IOException("HTTP $code while downloading $url")
+        }
+        destination.parentFile.mkdirs()
+        connection.inputStream.use { input ->
+            destination.outputStream().use { output -> input.copyTo(output) }
+        }
+    } finally {
+        connection.disconnect()
+    }
+}
+
 val mpvSource = providers.gradleProperty("mpvLib")
 val mpvResourceRoot = layout.buildDirectory.dir("generated/mpv-resources")
 val mpvResourceDir = mpvResourceRoot.map { it.dir("mpv") }
@@ -103,6 +164,7 @@ tasks.register("syncMpvRuntime") {
         val custom = mpvSource.orNull?.takeIf { it.isNotBlank() }?.let(::File)
         val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
         val copied = mutableListOf<String>()
+        var bundledVersion = mpvVersion
 
         if (custom != null) {
             require(custom.isFile) { "mpvLib does not point at a file: $custom" }
@@ -110,15 +172,59 @@ tasks.register("syncMpvRuntime") {
             custom.copyTo(File(out, name), overwrite = true)
             copied.add(name)
         } else if (isWindows) {
-            val cacheDir = File(gradle.gradleUserHomeDir, "caches/maxstream-mpv/$mpvVersion")
-            val archive = File(cacheDir, "libmpv.zip")
-            if (!archive.isFile || archive.length() < 1_000_000L) {
-                cacheDir.mkdirs()
-                println("syncMpvRuntime: downloading $mpvArchiveUrl")
-                URI(mpvArchiveUrl).toURL().openStream().use { input ->
-                    archive.outputStream().use { output -> input.copyTo(output) }
+            val cacheRoot = File(gradle.gradleUserHomeDir, "caches/maxstream-mpv")
+
+            fun archivePath(name: String): File =
+                File(File(cacheRoot, name.removeSuffix(".zip")), name)
+
+            fun usableArchive(file: File): Boolean =
+                file.isFile &&
+                    file.length() >= 1_000_000L &&
+                    runCatching {
+                        ZipFile(file).use { zip ->
+                            zip.getEntry("libmpv-2.dll") != null &&
+                                zip.getEntry("LICENSE.LGPL") != null
+                        }
+                    }.getOrDefault(false)
+
+            fun ensureArchive(url: String, name: String): File {
+                val file = archivePath(name)
+                if (usableArchive(file)) return file
+                file.delete()
+                file.parentFile.mkdirs()
+                println("syncMpvRuntime: downloading $url")
+                downloadMpvArchive(url, file)
+                if (!usableArchive(file)) {
+                    file.delete()
+                    throw IOException("Downloaded libmpv archive is invalid: $url")
                 }
+                return file
             }
+
+            var selectedName = mpvArchiveName
+            val archive = try {
+                ensureArchive(mpvArchiveUrl, selectedName)
+            } catch (primary: Exception) {
+                logger.warn(
+                    "syncMpvRuntime: pinned libmpv archive unavailable " +
+                        "(${primary.message}); resolving the current LGPL build",
+                )
+                val fallbackUrl = try {
+                    currentLgplMpvAssetUrl()
+                } catch (lookup: Exception) {
+                    throw GradleException(
+                        "Could not download pinned libmpv or resolve a replacement",
+                        lookup,
+                    )
+                }
+                selectedName = fallbackUrl.substringAfterLast('/')
+                ensureArchive(fallbackUrl, selectedName)
+            }
+
+            bundledVersion = Regex(
+                "libmpv-v(.+?)-\\d+-x86_64-w64-mingw32-lgpl\\.zip",
+            ).find(selectedName)?.groupValues?.get(1) ?: mpvVersion
+
             ZipFile(archive).use { zip ->
                 for (entryName in listOf("libmpv-2.dll", "LICENSE.LGPL")) {
                     val entry = zip.getEntry(entryName)
@@ -138,7 +244,7 @@ tasks.register("syncMpvRuntime") {
         }
 
         val dll = copied.firstOrNull { it.endsWith(".dll") || it.contains(".so") || it.endsWith(".dylib") }
-        val version = if (dll != null) "$mpvVersion:${File(out, dll).length()}" else mpvVersion
+        val version = if (dll != null) "$bundledVersion:${File(out, dll).length()}" else bundledVersion
         File(out, "VERSION.txt").writeText(version)
         val names = copied.sorted()
         File(out, "FILES.txt").writeText(names.joinToString("\n"))

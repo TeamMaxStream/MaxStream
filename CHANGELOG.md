@@ -3,7 +3,7 @@
 ## 1.8.0+10
 
 > [!NOTE]
-> This is the largest MaxStream release since 1.7.0. It adds the Windows desktop app, multi-profile and kids support across phone and TV, a new TV Library with Watchlist and Watch History, real bidirectional history sync, accurate download sizes, per-quality size probes, device-to-device sharing, and a rebuilt playback/server stack. All 108 commits since `v1.7.0` are covered below.
+> This is the largest MaxStream release since 1.7.0. It adds the Windows desktop app, multi-profile and kids support across phone and TV, a new TV Library with Watchlist and Watch History, real bidirectional history sync, accurate download sizes, per-quality size probes, device-to-device sharing, and a rebuilt playback/server stack. Every commit since `v1.7.0` is covered below.
 
 ### Desktop app (new)
 
@@ -69,10 +69,11 @@
 
 ### Infrastructure and release
 
-- **Shared-release workflow**: one `v*` tag builds mobile, TV, and desktop assets into a single GitHub release, with version verification across `pubspec.yaml`, TV, desktop, package, and `AppConfig` (`45aa9a8`).
+- **Shared-release workflow**: one `v*` tag builds mobile, TV, and desktop assets into a single GitHub release, with version verification across `pubspec.yaml`, TV, desktop, package, and `AppConfig` (`3272299`, `45aa9a8`).
 - **Toolchain upgrades**: Flutter 3.47.7, built-in Kotlin, NDK 28, Kotlin 2.3.20, and documented built-in-Kotlin opt-out (`6ce0fd5`, `139e590`).
 - **Build coverage**: 32-bit x86 APK variant added across build/updater/update screens, with CI tolerating Flutter emitting no x86 split (`3fbbec2`, `10ac4f3`).
 - **CI cleanup**: removed deprecated `android-actions/setup-android`, fixed CI SDK setup, and hardened artifact/release checks (`0ca6b17`, `41d17fb`).
+- **Resilient desktop provisioning**: pinned the libmpv LGPL archive with a live GitHub-asset fallback, authenticated API lookup on CI, and download/cache validation so upstream rotating development builds no longer break Windows releases.
 - **Repository and dependency maintenance**: updated funding links, Compose BOM/overscroll compatibility, and TV Firebase/material-icons dependencies (`7327735`, `4e21ebd`, `710e68e`, `61f7aa0`, `fbe61fa`).
 
 ## 1.7.0+9
