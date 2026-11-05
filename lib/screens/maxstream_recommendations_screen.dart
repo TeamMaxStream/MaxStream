@@ -4,14 +4,18 @@ import 'package:flutter/material.dart';
 import '../widgets/app_shimmer.dart';
 
 import '../models/movie.dart';
+import '../models/trailer_feed_item.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/recommendation_service.dart';
 import '../services/tmdb_api_service.dart';
+import '../services/trailer_feed_service.dart';
 import '../services/watch_history_service.dart';
 import '../utils/kids_filter.dart';
+import '../utils/kids_theme.dart';
 import '../widgets/profile_menu_button.dart';
 import 'maxstream_details_screen.dart';
 import 'maxstream_series_screen.dart';
+import 'trailers_screen.dart';
 import '../widgets/app_network_image.dart';
 
 class MaxStreamRecommendationsScreen extends StatefulWidget {
@@ -44,6 +48,9 @@ class _MaxStreamRecommendationsScreenState
   /// snapshot read can't replace fresher data.
   DateTime? _lastNetworkUpdate;
 
+  List<TrailerFeedItem> _trailers = const [];
+  int _trailerGeneration = 0;
+
   @override
   void initState() {
     super.initState();
@@ -54,7 +61,42 @@ class _MaxStreamRecommendationsScreenState
     // it — previously the screen showed a skeleton through the entire network
     // round-trip.
     unawaited(_restoreSnapshot());
+    unawaited(_restoreTrailerSnapshot());
     _loadRecommendations();
+    unawaited(_loadTrailers(refresh: true));
+  }
+
+  /// The trailer hero and rail only need a handful of items; the full feed is
+  /// built by [TrailersScreen] on demand (it shares the session cache).
+  Future<void> _restoreTrailerSnapshot() async {
+    final snapshot = await TrailerFeedService.loadSnapshot();
+    if (!mounted || snapshot == null) return;
+    setState(() => _trailers = snapshot);
+  }
+
+  Future<void> _loadTrailers({bool refresh = false}) async {
+    final generation = ++_trailerGeneration;
+    try {
+      final feed = await TrailerFeedService.getFeed(refresh: refresh);
+      if (!mounted || generation != _trailerGeneration) return;
+      setState(() => _trailers = feed);
+    } catch (_) {
+      // The hero and rail simply stay hidden; the screen itself still works.
+    }
+  }
+
+  void _openTrailers({int initialIndex = 0}) {
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            TrailersScreen(initialIndex: initialIndex),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+            FadeTransition(opacity: animation, child: child),
+        transitionDuration: const Duration(milliseconds: 250),
+      ),
+    );
   }
 
   /// Loads the previous session's rows so the screen has content on the first
@@ -112,6 +154,7 @@ class _MaxStreamRecommendationsScreenState
     // Debounce slightly – rapid episode saves (binge) can fire several times.
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) _loadRecommendations(showLoading: false);
+      if (mounted) unawaited(_loadTrailers(refresh: true));
     });
   }
 
@@ -321,11 +364,19 @@ class _MaxStreamRecommendationsScreenState
           : RefreshIndicator(
               onRefresh: () async {
                 RecommendationService.clearCache();
+                unawaited(_loadTrailers(refresh: true));
                 await _loadRecommendations();
               },
               child: CustomScrollView(
                 slivers: [
                   _buildAppBar(),
+                  if (_trailers.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: _TrailerHero(
+                        trailers: _trailers,
+                        onOpen: () => _openTrailers(),
+                      ),
+                    ),
                   if (!_hasHistory) ...[
                     const SliverToBoxAdapter(child: _EmptyState()),
                   ] else ...[
@@ -343,6 +394,7 @@ class _MaxStreamRecommendationsScreenState
                         onLoadMore: _loadMoreForYou,
                         loadingMore: _loadingMoreForYou,
                       ),
+                    if (_trailers.isNotEmpty) _buildTrailerRail(),
                     for (final entry in _byGenre.entries)
                       if (entry.value.isNotEmpty)
                         _buildSection(
@@ -375,9 +427,15 @@ class _MaxStreamRecommendationsScreenState
       ),
       actions: [
         IconButton(
+          tooltip: 'Watch trailers',
+          icon: const Icon(Icons.smart_display_outlined, color: Colors.white),
+          onPressed: () => _openTrailers(),
+        ),
+        IconButton(
           icon: const Icon(Icons.refresh, color: Colors.white),
           onPressed: () async {
             RecommendationService.clearCache();
+            unawaited(_loadTrailers(refresh: true));
             await _loadRecommendations();
           },
         ),
@@ -460,6 +518,123 @@ class _MaxStreamRecommendationsScreenState
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Horizontal rail of trailer cards, using the same header language as the
+  /// rows above it. The header names where the trailers come from, so the rail
+  /// reads as "trailers of things like what you watch".
+  Widget _buildTrailerRail() {
+    const cardWidth = 246.0;
+    const cardHeight = 138.0;
+    return SliverToBoxAdapter(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 3,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: KidsTheme.primary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'TRAILERS',
+                      style: TextStyle(
+                        color: Colors.grey[500],
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _trailers.first.railHeadline,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: cardHeight,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: _trailers.length + 1,
+              itemBuilder: (context, index) {
+                if (index == _trailers.length) {
+                  return _buildSeeAllTile(cardWidth, cardHeight);
+                }
+                final item = _trailers[index];
+                return Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: _TrailerRailCard(
+                    item: item,
+                    width: cardWidth,
+                    height: cardHeight,
+                    onTap: () => _openTrailers(initialIndex: index),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSeeAllTile(double width, double height) {
+    return GestureDetector(
+      onTap: () => _openTrailers(),
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: const Color(0xFF161616),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.play_circle_outline_rounded,
+              color: Colors.white,
+              size: 30,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'See all ${_trailers.length} trailers',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Swipe through them',
+              style: TextStyle(color: Colors.grey[500], fontSize: 11.5),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -730,6 +905,251 @@ class _EmptyState extends StatelessWidget {
               style: TextStyle(color: Colors.grey[600], fontSize: 14),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Cinematic entry point to [TrailersScreen]: the first trailer's backdrop,
+/// the next two faded in behind it, and a single tap target.
+class _TrailerHero extends StatelessWidget {
+  const _TrailerHero({required this.trailers, required this.onOpen});
+
+  final List<TrailerFeedItem> trailers;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final lead = trailers.first;
+    final collage = trailers.skip(1).take(2).toList();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: GestureDetector(
+        onTap: onOpen,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                AppNetworkImage(url: lead.backdropUrl, fit: BoxFit.cover),
+                if (collage.isNotEmpty)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 130,
+                    child: ShaderMask(
+                      shaderCallback: (rect) => const LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [Colors.transparent, Colors.black],
+                      ).createShader(rect),
+                      blendMode: BlendMode.dstIn,
+                      child: Row(
+                        children: [
+                          for (final item in collage)
+                            Expanded(
+                              child: AppNetworkImage(
+                                url: item.backdropUrl,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0x22000000), Color(0xE6000000)],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: KidsTheme.primary.withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'TRAILERS FOR YOU',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  lead.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.2,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${trailers.length} trailers picked from what you watch',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                    fontSize: 11.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: KidsTheme.primary.withValues(
+                                    alpha: 0.5,
+                                  ),
+                                  blurRadius: 18,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.play_arrow_rounded,
+                              color: Colors.black,
+                              size: 30,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 16:9 trailer card for the rail.
+class _TrailerRailCard extends StatelessWidget {
+  const _TrailerRailCard({
+    required this.item,
+    required this.width,
+    required this.height,
+    required this.onTap,
+  });
+
+  final TrailerFeedItem item;
+  final double width;
+  final double height;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AppNetworkImage(url: item.backdropUrl, fit: BoxFit.cover),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x00000000), Color(0xD9000000)],
+                  ),
+                ),
+              ),
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 10,
+                right: 10,
+                bottom: 8,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      item.reasonLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: KidsTheme.primary,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
