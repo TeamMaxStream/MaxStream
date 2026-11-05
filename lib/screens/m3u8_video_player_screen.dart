@@ -109,7 +109,6 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
   /// URL of the currently selected subtitle track, used as a stable key
   /// to re-sync the display value when group names change after re-discovery.
   String? _selectedSubtitleUrl;
-  double _subtitleOffsetMs = 0; // Subtitle timing offset in milliseconds
   SubtitleSettings _subtitleSettings = SubtitleSettings();
   String _statusMessage = 'Initializing...';
   Timer? _progressTimer;
@@ -157,11 +156,6 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
     }
   }
 
-  Duration get _currentPosition =>
-      _videoPlayerController?.value.position ?? Duration.zero;
-  Duration get _currentDuration =>
-      _videoPlayerController?.value.duration ?? Duration.zero;
-  bool get _isPlayingNow => _videoPlayerController?.value.isPlaying ?? false;
   int _playbackRetryCount = 0;
   // Failure tracking is identity-based: re-discovery hands every server a new
   // signed URL, so URL-keyed entries would never match the fresh list and a
@@ -1666,7 +1660,7 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
               final subtitleText = !available
                   ? 'Unavailable · Tap to retry'
                   : [
-                      if (method != null) method,
+                      ?method,
                       serverSuffix,
                       if (audioBadge.isNotEmpty) '🔊 $audioBadge',
                     ].join(' · ');
@@ -1725,7 +1719,9 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
       _separateAudio = stream['separateAudio'] == true;
       _syncAudioFromStream(stream);
       var selectedQuality = 'Auto';
-      for (final q in qualities) if (q.url == url) selectedQuality = q.label;
+      for (final q in qualities) {
+        if (q.url == url) selectedQuality = q.label;
+      }
       final position = _lastStablePosition;
       setState(() {
         _isSwitchingServer = true;
@@ -2844,8 +2840,9 @@ class _M3U8VideoPlayerScreenState extends State<M3U8VideoPlayerScreen> {
               child: ValueListenableBuilder<List<Subtitle>>(
                 valueListenable: _activeSubtitles,
                 builder: (context, subtitles, _) {
-                  if (subtitles.isEmpty || _videoPlayerController == null)
+                  if (subtitles.isEmpty || _videoPlayerController == null) {
                     return const SizedBox.shrink();
+                  }
                   return ValueListenableBuilder<VideoPlayerValue>(
                     valueListenable: _videoPlayerController!,
                     builder: (context, value, _) {

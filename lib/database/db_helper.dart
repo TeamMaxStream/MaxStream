@@ -816,17 +816,15 @@ class DBHelper {
         whereArgs: [providerId],
         limit: 1,
       );
-      if (existing.isNotEmpty)
+      if (existing.isNotEmpty) {
         resolvedName = existing.first['providerName']?.toString();
+      }
       resolvedName ??= _knownProviderName(providerId);
     }
 
     final count = await db.update(
       'provider_preferences',
-      {
-        'isPreferred': isPreferred ? 1 : 0,
-        if (resolvedName != null) 'providerName': resolvedName,
-      },
+      {'isPreferred': isPreferred ? 1 : 0, 'providerName': ?resolvedName},
       where: 'providerId = ?',
       whereArgs: [providerId],
     );

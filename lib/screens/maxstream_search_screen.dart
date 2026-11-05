@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import '../models/movie.dart';
 import '../services/tmdb_api_service.dart';
@@ -183,7 +184,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     return cleaned[0].toUpperCase() + cleaned.substring(1);
   }
 
-  void _onSpeechResult(result) {
+  void _onSpeechResult(SpeechRecognitionResult result) {
     final raw = result.recognizedWords.trim();
     if (raw.isEmpty) return;
     final words = _cleanVoiceQuery(raw);
@@ -222,8 +223,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     setState(() {
       _searchHistory.remove(trimmed);
       _searchHistory.insert(0, trimmed);
-      if (_searchHistory.length > 20)
+      if (_searchHistory.length > 20) {
         _searchHistory = _searchHistory.sublist(0, 20);
+      }
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('search_history', jsonEncode(_searchHistory));
@@ -233,12 +235,6 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     setState(() => _searchHistory.remove(query));
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('search_history', jsonEncode(_searchHistory));
-  }
-
-  Future<void> _clearHistory() async {
-    setState(() => _searchHistory.clear());
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('search_history');
   }
 
   Future<void> _loadSearchRecommendations() async {
@@ -361,8 +357,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
         if (dateStr.length >= 4) {
           final year = int.tryParse(dateStr.substring(0, 4));
           if (year != null) {
-            if (_filterYearFrom != null && year < _filterYearFrom!)
+            if (_filterYearFrom != null && year < _filterYearFrom!) {
               return false;
+            }
             if (_filterYearTo != null && year > _filterYearTo!) return false;
           }
         }
@@ -770,7 +767,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: _searchHistory.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (context, index) {
                     final item = _searchHistory[index];
                     return GestureDetector(
@@ -846,7 +843,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: 5,
-              itemBuilder: (_, __) => Container(
+              itemBuilder: (_, _) => Container(
                 width: 152,
                 margin: const EdgeInsets.only(right: 10),
                 decoration: BoxDecoration(
@@ -867,7 +864,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: 5,
-              itemBuilder: (_, __) => Container(
+              itemBuilder: (_, _) => Container(
                 width: 152,
                 margin: const EdgeInsets.only(right: 10),
                 decoration: BoxDecoration(
@@ -889,15 +886,16 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: _searchTabs.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
           final selected = _currentTabIndex == i;
           return GestureDetector(
             onTap: () {
               _tabController.animateTo(i);
               setState(() => _currentTabIndex = i);
-              if (_searchController.text.isNotEmpty)
+              if (_searchController.text.isNotEmpty) {
                 _performSearch(_searchController.text);
+              }
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
@@ -1398,7 +1396,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                               ),
                             ),
                             Text(
-                              '${rating.toStringAsFixed(1)}',
+                              rating.toStringAsFixed(1),
                               style: const TextStyle(
                                 color: Colors.white70,
                                 fontSize: 11,

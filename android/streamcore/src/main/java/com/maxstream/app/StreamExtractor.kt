@@ -609,7 +609,10 @@ class StreamExtractor(private val context: Context) {
 
                 if (result != null) {
                     val url = result["url"] as String
-                    val headers = result["headers"] as? Map<String, String> ?: emptyMap()
+                    val headers = (result["headers"] as? Map<*, *>)
+                        ?.entries
+                        ?.associate { it.key.toString() to it.value.toString() }
+                        ?: emptyMap()
                     validateStream(
                         StreamResult(
                             url = url,
@@ -1794,7 +1797,7 @@ class StreamExtractor(private val context: Context) {
                             }
                             override fun onPageFinished(view: WebView, url: String) {
                                 // Extraction pages autoplay their player with sound; keep them silent.
-                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
+                                runCatching { view.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__nativeStreamHook) return;
@@ -1947,7 +1950,7 @@ class StreamExtractor(private val context: Context) {
 
                                 // Extraction pages autoplay their player with sound; keep them silent.
 
-                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
+                                runCatching { view.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__vidukiHook) return;
@@ -2192,7 +2195,7 @@ class StreamExtractor(private val context: Context) {
                         webView.webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
                                 // Extraction pages autoplay their player with sound; keep them silent.
-                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
+                                runCatching { view.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__maxstreamHook) return;
@@ -2422,7 +2425,7 @@ class StreamExtractor(private val context: Context) {
                         webView.webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
                                 // Extraction pages autoplay their player with sound; keep them silent.
-                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
+                                runCatching { view.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 if (host(url).endsWith("mov2day.xyz") && !url.contains("/embed", true)) {
                                     val script = """
                                         (() => {
@@ -4572,7 +4575,7 @@ class StreamExtractor(private val context: Context) {
 
     private fun unpackObfuscatedJs(html: String): String? {
         val marker = "eval(function(p,a,c,k,e,d){"
-        val start = html.indexOf(marker) ?: return null
+        val start = html.indexOf(marker)
         if (start < 0) return null
 
         // Find closing } of function body

@@ -43,10 +43,11 @@ class _MaxStreamMoreScreenState extends State<MaxStreamMoreScreen> {
 
   Future<void> _loadBiometricPreference() async {
     final prefs = await SharedPreferences.getInstance();
-    if (mounted)
+    if (mounted) {
       setState(
         () => _biometricEnabled = prefs.getBool('biometric_lock') ?? false,
       );
+    }
   }
 
   void _loadUserInfo() async {

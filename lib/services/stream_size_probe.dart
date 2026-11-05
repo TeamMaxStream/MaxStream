@@ -560,9 +560,7 @@ class StreamSizeProbe {
       if (raw == null) return;
       final uri = Uri.tryParse(raw);
       if (uri == null) return;
-      final resolved = uri.hasScheme
-          ? raw
-          : (base == null ? null : base.resolveUri(uri).toString());
+      final resolved = uri.hasScheme ? raw : base?.resolveUri(uri).toString();
       if (resolved == null) return;
       variants.add((
         uri: resolved,
@@ -657,7 +655,7 @@ class StreamSizeProbe {
       if (uri != null) {
         final resolved = uri.hasScheme
             ? line
-            : (base == null ? null : base.resolveUri(uri).toString());
+            : base?.resolveUri(uri).toString();
         if (resolved != null && pendingSeconds > 0) {
           segments.add((
             uri: resolved,
@@ -706,8 +704,9 @@ class StreamSizeProbe {
   static String format(int? bytes, {required bool estimated}) {
     if (bytes == null || bytes <= 0) return '';
     final prefix = estimated ? '~' : '';
-    if (bytes < 1024 * 1024)
+    if (bytes < 1024 * 1024) {
       return '$prefix${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
     if (bytes < 1024 * 1024 * 1024) {
       return '$prefix${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }

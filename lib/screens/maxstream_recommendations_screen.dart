@@ -246,8 +246,9 @@ class _MaxStreamRecommendationsScreenState
     try {
       _forYouPage++;
       final more = await RecommendationService.getForYou(page: _forYouPage);
-      if (mounted)
+      if (mounted) {
         setState(() => _forYou = [..._forYou, ...filterForKids(more)]);
+      }
     } catch (_) {}
     if (mounted) setState(() => _loadingMoreForYou = false);
   }

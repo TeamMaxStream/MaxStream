@@ -53,13 +53,11 @@ class _SplashScreenState extends State<SplashScreen>
 
       User? user = cachedUser;
 
-      if (user == null) {
-        // No cached session — wait for Firebase to restore one (up to 5s).
-        user = await auth.authStateChanges().first.timeout(
-          const Duration(seconds: 5),
-          onTimeout: () => null,
-        );
-      }
+      // No cached session — wait for Firebase to restore one (up to 5s).
+      user ??= await auth.authStateChanges().first.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => null,
+      );
 
       // Ensure the minimum splash duration has elapsed.
       await minimumDelay;

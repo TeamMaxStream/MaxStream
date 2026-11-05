@@ -107,7 +107,7 @@ class _MaxStreamDetailsScreenState extends State<MaxStreamDetailsScreen> {
   Future<void> _toggleReminder() async {
     final showId = int.parse(widget.item.id);
     final title = widget.item.title;
-    final posterPath = widget.item.thumbnail ?? '';
+    final posterPath = widget.item.thumbnail;
 
     // Get current season/episode count from details
     int lastSeason = details?['number_of_seasons'] as int? ?? 1;
@@ -1418,7 +1418,6 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
   /// an empty cell — and a stalled one can't pin the sheet in that state
   /// forever (see _probeQualitySizes' per-URL deadline).
   final Set<String> _sizingUrls = {};
-  bool _sizesLoading = false;
 
   /// Probes the qualities of the servers that are actually on screen.
   ///
@@ -1468,7 +1467,6 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
     }
     if (pending.isEmpty) return;
 
-    if (mounted) setState(() => _sizesLoading = true);
     final urls = pending.keys.toList();
     final slots = <_ProbeSlot>[];
     for (final url in urls) {
@@ -1485,7 +1483,6 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
       final batch = slots.skip(offset).take(poolSize).toList();
       await _probeBatch(batch, streams);
     }
-    if (mounted) setState(() => _sizesLoading = false);
   }
 
   Future<void> _probeBatch(
@@ -1607,7 +1604,7 @@ class _QualitySelectionSheetState extends State<_QualitySelectionSheet> {
       'subtitles': server['subtitles'],
       'audioTracks': server['audioTracks'],
       'label': label,
-      if (maxVariantHeight != null) 'maxVariantHeight': maxVariantHeight,
+      'maxVariantHeight': ?maxVariantHeight,
       // Preferred dub language. Downloads keep every audio rendition;
       // playback rewrites the master to default to this language.
       if (audio != null) ...{

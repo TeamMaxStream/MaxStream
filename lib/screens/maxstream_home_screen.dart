@@ -58,8 +58,9 @@ class _MaxStreamHomeScreenState extends State<MaxStreamHomeScreen> {
     if (!mounted) return;
     // Guard: only reload if the active profile hasn't changed since last load.
     if (_loadProfileId.isNotEmpty &&
-        _loadProfileId != ProfileScope.currentProfileId)
+        _loadProfileId != ProfileScope.currentProfileId) {
       return;
+    }
     _loadContinueWatching();
   }
 
@@ -110,11 +111,9 @@ class _MaxStreamHomeScreenState extends State<MaxStreamHomeScreen> {
 
       // Discard stale results if profile changed or a newer load started.
       if (!mounted || generation != _loadGeneration) return;
-      final upcomingMv = TmdbApiService.filterUnreleased(
-        results[3] as List<Map<String, dynamic>>,
-      );
+      final upcomingMv = TmdbApiService.filterUnreleased(results[3]);
       final upcomingTv = TmdbApiService.filterUnreleased(
-        results[4] as List<Map<String, dynamic>>,
+        results[4],
         dateField: 'first_air_date',
       );
       // Merge and shuffle movies + series into one "Coming Soon" section
@@ -125,7 +124,7 @@ class _MaxStreamHomeScreenState extends State<MaxStreamHomeScreen> {
         item['media_type'] = 'movie';
       }
       // Watchlist upcoming episodes (already formatted)
-      final watchlistUpcoming = results[6] as List<Map<String, dynamic>>;
+      final watchlistUpcoming = results[6];
       final mergedUpcoming = [
         ...upcomingMv,
         ...upcomingTv,
@@ -138,15 +137,13 @@ class _MaxStreamHomeScreenState extends State<MaxStreamHomeScreen> {
           : (List<Map<String, dynamic>> l) => l;
 
       setState(() {
-        trendingMovies = filter(results[0] as List<Map<String, dynamic>>);
-        popularMovies = filter(results[1] as List<Map<String, dynamic>>);
-        topRatedMovies = filter(results[2] as List<Map<String, dynamic>>);
+        trendingMovies = filter(results[0]);
+        popularMovies = filter(results[1]);
+        topRatedMovies = filter(results[2]);
         upcomingContent = filter(mergedUpcoming);
-        continueWatching = (results[5] as List<Map<String, dynamic>>)
-            .take(10)
-            .toList();
-        nowPlaying = filter(results[7] as List<Map<String, dynamic>>);
-        genres = results[8] as List<Map<String, dynamic>>;
+        continueWatching = results[5].take(10).toList();
+        nowPlaying = filter(results[7]);
+        genres = results[8];
       });
     } catch (e) {
       debugPrint('Home load error: $e');
@@ -1831,16 +1828,20 @@ class _ComingSoonFullListScreenState extends State<_ComingSoonFullListScreen> {
         TmdbApiService.fetchUpcomingMovies(page: 1),
         TmdbApiService.fetchUpcomingSeries(page: 1),
       ]);
-      final watchlistUpcoming = results[0] as List<Map<String, dynamic>>;
-      final moviesRaw = results[1] as List<Map<String, dynamic>>;
-      final seriesRaw = results[2] as List<Map<String, dynamic>>;
+      final watchlistUpcoming = results[0];
+      final moviesRaw = results[1];
+      final seriesRaw = results[2];
       final movies = TmdbApiService.filterUnreleased(moviesRaw);
-      for (final m in movies) m['media_type'] = 'movie';
+      for (final m in movies) {
+        m['media_type'] = 'movie';
+      }
       final series = TmdbApiService.filterUnreleased(
         seriesRaw,
         dateField: 'first_air_date',
       );
-      for (final s in series) s['media_type'] = 'tv';
+      for (final s in series) {
+        s['media_type'] = 'tv';
+      }
       final merged = [...watchlistUpcoming, ...movies, ...series];
       merged.sort(_dateSort);
       final deduped = <String, Map<String, dynamic>>{};
@@ -1873,15 +1874,19 @@ class _ComingSoonFullListScreenState extends State<_ComingSoonFullListScreen> {
         TmdbApiService.fetchUpcomingMovies(page: nextMoviePage),
         TmdbApiService.fetchUpcomingSeries(page: nextSeriesPage),
       ]);
-      final moviesRaw = results[0] as List<Map<String, dynamic>>;
-      final seriesRaw = results[1] as List<Map<String, dynamic>>;
+      final moviesRaw = results[0];
+      final seriesRaw = results[1];
       final movies = TmdbApiService.filterUnreleased(moviesRaw);
-      for (final m in movies) m['media_type'] = 'movie';
+      for (final m in movies) {
+        m['media_type'] = 'movie';
+      }
       final series = TmdbApiService.filterUnreleased(
         seriesRaw,
         dateField: 'first_air_date',
       );
-      for (final s in series) s['media_type'] = 'tv';
+      for (final s in series) {
+        s['media_type'] = 'tv';
+      }
       final newItems = [...movies, ...series];
       if (newItems.isEmpty) {
         if (mounted) setState(() => _hasMore = false);
@@ -1957,245 +1962,6 @@ class _ComingSoonFullListScreenState extends State<_ComingSoonFullListScreen> {
     } catch (_) {
       return date;
     }
-  }
-
-  Widget _buildComingSoonCard(Map<String, dynamic> item) {
-    final name = item['title'] ?? item['name'] ?? 'Unknown';
-    final posterPath = item['poster_path'];
-    final backdropPath = item['backdrop_path'];
-    final rating = (item['vote_average'] as num?)?.toDouble();
-    final releaseDate =
-        (item['release_date'] ?? item['first_air_date'])?.toString() ?? '';
-    final overview = item['overview']?.toString() ?? '';
-    final isTv = item['media_type'] == 'tv';
-    final typeLabel = isTv ? 'TV' : 'MOVIE';
-    final isWatchlistUpcoming = item['_isWatchlistUpcoming'] == true;
-    final nextSeason = item['_nextSeason'];
-    final nextEpisode = item['_nextEpisode'];
-
-    return GestureDetector(
-      onTap: () {
-        if (!mounted) return;
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => isTv
-                ? MaxStreamSeriesScreen(seriesItem: Movie.fromJson(item))
-                : MaxStreamDetailsScreen(
-                    item: Movie.fromJson(item),
-                    mediaType: 'movie',
-                  ),
-          ),
-        );
-      },
-      child: Container(
-        height: 200,
-        margin: const EdgeInsets.only(bottom: 14),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              backdropPath != null
-                  ? AppNetworkImage(
-                      url: TmdbApiService.getBackdropUrl(backdropPath),
-                      fit: BoxFit.cover,
-                      errorWidget: _posterFallback(posterPath),
-                    )
-                  : _posterFallback(posterPath),
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withValues(alpha: 0.9),
-                      ],
-                      stops: const [0.3, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-              if (posterPath != null)
-                Positioned(
-                  left: 10,
-                  bottom: 10,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: AppNetworkImage(
-                      url: TmdbApiService.getPosterUrl(posterPath),
-                      width: 56,
-                      height: 82,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                ),
-              Positioned(
-                top: 10,
-                left: 10,
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isTv ? Colors.teal : KidsTheme.primary,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        typeLabel,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isWatchlistUpcoming
-                            ? Colors.amber.shade700
-                            : Colors.purple.shade700,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        isWatchlistUpcoming ? 'IN YOUR WATCHLIST' : 'UPCOMING',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (rating != null && rating > 0)
-                Positioned(
-                  top: 10,
-                  right: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.star, color: Colors.amber, size: 12),
-                        const SizedBox(width: 3),
-                        Text(
-                          rating.toStringAsFixed(1),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              Positioned(
-                left: 78,
-                right: 10,
-                bottom: 10,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (isWatchlistUpcoming && nextSeason != null) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.tv,
-                            color: Colors.amberAccent,
-                            size: 11,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Season $nextSeason \u00b7 Episode $nextEpisode',
-                            style: const TextStyle(
-                              color: Colors.amberAccent,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (releaseDate.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            isWatchlistUpcoming
-                                ? Icons.access_time
-                                : Icons.calendar_today,
-                            color: isWatchlistUpcoming
-                                ? Colors.amberAccent
-                                : Colors.purpleAccent,
-                            size: 11,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _formatReleaseDate(releaseDate),
-                            style: TextStyle(
-                              color: isWatchlistUpcoming
-                                  ? Colors.amberAccent
-                                  : Colors.purpleAccent,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (overview.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        overview,
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildComingSoonGridCard(Map<String, dynamic> item) {

@@ -255,7 +255,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             child: ListView.builder(
               padding: listPadding,
               itemCount: 3,
-              itemBuilder: (_, __) => Container(
+              itemBuilder: (_, _) => Container(
                 height: 88,
                 margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
@@ -498,8 +498,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       // Add active downloads for this series if any
       final sid = first['seriesId']?.toString() ?? first['mediaId'].toString();
       for (final d in _downloadManager.activeDownloads) {
-        if (d.seriesId?.toString() == sid && d.totalBytes != null)
+        if (d.seriesId?.toString() == sid && d.totalBytes != null) {
           total += d.totalBytes!;
+        }
       }
       if (total == 0) return '';
       return ' • ${DownloadStorageService.formatBytes(total)}';

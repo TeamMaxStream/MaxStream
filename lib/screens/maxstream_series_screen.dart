@@ -1700,7 +1700,6 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
   /// an empty cell — and a stalled one can't pin the sheet in that state
   /// forever (see _probeQualitySizes' per-URL deadline).
   final Set<String> _sizingUrls = {};
-  bool _sizesLoading = false;
 
   /// Probes the qualities of the servers that are actually on screen.
   ///
@@ -1750,7 +1749,6 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
     }
     if (pending.isEmpty) return;
 
-    if (mounted) setState(() => _sizesLoading = true);
     final urls = pending.keys.toList();
     final slots = <_ProbeSlot>[];
     for (final url in urls) {
@@ -1767,7 +1765,6 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
       final batch = slots.skip(offset).take(poolSize).toList();
       await _probeBatch(batch, streams);
     }
-    if (mounted) setState(() => _sizesLoading = false);
   }
 
   Future<void> _probeBatch(
@@ -1889,7 +1886,7 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
       'subtitles': server['subtitles'],
       'audioTracks': server['audioTracks'],
       'label': label,
-      if (maxVariantHeight != null) 'maxVariantHeight': maxVariantHeight,
+      'maxVariantHeight': ?maxVariantHeight,
       if (audio != null) ...{
         'preferredAudioLanguage': StreamAudioHelper.languageOf(audio).isNotEmpty
             ? StreamAudioHelper.languageOf(audio)

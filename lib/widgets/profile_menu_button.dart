@@ -27,8 +27,8 @@ class _ProfileMenuButtonState extends State<ProfileMenuButton> {
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const MaxStreamMoreScreen(),
-        transitionsBuilder: (_, animation, __, child) => SlideTransition(
+        pageBuilder: (_, _, _) => const MaxStreamMoreScreen(),
+        transitionsBuilder: (_, animation, _, child) => SlideTransition(
           position:
               Tween<Offset>(
                 begin: const Offset(1.0, 0.0),
@@ -62,7 +62,6 @@ class _ProfileMenuButtonState extends State<ProfileMenuButton> {
         final avatar = activeProfile?.avatar ?? const ProfileAvatar();
         final avatarColor = avatar.color;
         final avatarIcon = avatar.icon;
-        final profileName = activeProfile?.name ?? 'Profile';
 
         return GestureDetector(
           onTap: () => _showProfileMenu(context, activeProfile),

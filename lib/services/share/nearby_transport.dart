@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -328,8 +327,9 @@ class NearbyTransport implements ShareTransport {
     if (blocked != null) throw StateError(blocked);
 
     final token = descriptor.data['token']?.toString() ?? '';
-    if (token.isEmpty)
+    if (token.isEmpty) {
       throw StateError('That share code is not a nearby code.');
+    }
     final nickname = await _deviceNickname();
 
     // Per-session state: the transport is long-lived, so the completers from a

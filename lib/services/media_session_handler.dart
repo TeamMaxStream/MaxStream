@@ -13,17 +13,15 @@ class MediaSessionHandler {
   Future<void> init() async {
     if (_initialized) return;
     try {
-      _handler =
-          await AudioService.init(
-                builder: () => MaxStreamAudioHandler(),
-                config: const AudioServiceConfig(
-                  androidNotificationChannelId: 'com.maxstream.app.playback',
-                  androidNotificationChannelName: 'MaxStream Playback',
-                  androidNotificationOngoing: true,
-                  androidStopForegroundOnPause: true,
-                ),
-              )
-              as MaxStreamAudioHandler;
+      _handler = await AudioService.init<MaxStreamAudioHandler>(
+        builder: () => MaxStreamAudioHandler(),
+        config: const AudioServiceConfig(
+          androidNotificationChannelId: 'com.maxstream.app.playback',
+          androidNotificationChannelName: 'MaxStream Playback',
+          androidNotificationOngoing: true,
+          androidStopForegroundOnPause: true,
+        ),
+      );
       _initialized = true;
     } catch (e) {
       debugPrint('MediaSession init error: $e');

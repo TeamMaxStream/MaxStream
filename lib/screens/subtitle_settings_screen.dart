@@ -39,11 +39,12 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
   Future<void> _load({bool silent = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
     final s = await SubtitleSettings.load();
-    if (mounted)
+    if (mounted) {
       setState(() {
         _settings = s;
         _loading = false;
       });
+    }
   }
 
   Future<void> _save() async {

@@ -195,7 +195,7 @@ class _ProfileCreateScreenState extends State<ProfileCreateScreen> {
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: ProfileAvatar.palette.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
+                  separatorBuilder: (_, _) => const SizedBox(width: 10),
                   itemBuilder: (context, index) {
                     final color = ProfileAvatar.palette[index];
                     final isSelected = index == _selectedColorIndex;

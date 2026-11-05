@@ -253,7 +253,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
                 fit: BoxFit.cover,
                 width: double.infinity,
                 height: double.infinity,
-                errorBuilder: (_, __, ___) => const SizedBox(),
+                errorBuilder: (_, _, _) => const SizedBox(),
               ),
             ),
 
@@ -328,7 +328,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
                 Image.asset(
                   'assets/images/maxstream_logo.png',
                   width: 70,
-                  errorBuilder: (_, __, ___) => const Icon(
+                  errorBuilder: (_, _, _) => const Icon(
                     Icons.play_circle_fill,
                     size: 70,
                     color: Colors.red,

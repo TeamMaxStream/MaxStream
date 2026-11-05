@@ -17,7 +17,7 @@ class SalsaSecretBoxTest {
     fun secretboxMatchesPyNaCl() {
         val key = hexToBytes("c75136c5668bbfe65a7ecad431a745db68b5f381555b38d8f6c699449cf11fcd")
         val nonce = ByteArray(24)
-        val message = "299534".toByteArray() + byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x6a, 0x77, 0x0c, 0xb7)
+        val message = "299534".toByteArray() + byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x6a, 0x77, 0x0c, 0xb7.toByte())
 
         // Expected mac||ct from PyNaCl SecretBox.encrypt for this exact input.
         val expected = Base64.getUrlDecoder().decode(knownToken).copyOfRange(24, 54)
@@ -30,7 +30,7 @@ class SalsaSecretBoxTest {
     fun roundTripWithSelf() {
         val key = hexToBytes("c75136c5668bbfe65a7ecad431a745db68b5f381555b38d8f6c699449cf11fcd")
         val nonce = ByteArray(24)
-        val message = "1396".toByteArray() + byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x7a, 0x69, 0x0c, 0xb7)
+        val message = "1396".toByteArray() + byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x7a, 0x69, 0x0c, 0xb7.toByte())
         val enc = SalsaSecretBox.secretboxDetached(message, key, nonce)
         assertEquals(16 + message.size, enc.size)
     }
