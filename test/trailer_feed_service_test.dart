@@ -45,7 +45,7 @@ Map<String, dynamic> video(
   'key': key,
   'type': type,
   'site': site,
-  if (official != null) 'official': official,
+  'official': ?official,
   'published_at': publishedAt,
 };
 
@@ -240,8 +240,6 @@ void main() {
                 'results': [video('good-key', official: true)],
               });
             }
-            if (path == '/3/movie/2/videos')
-              return jsonResponse({'results': []});
             return jsonResponse({'results': []});
           }),
         );
