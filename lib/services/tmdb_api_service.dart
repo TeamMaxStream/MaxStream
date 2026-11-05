@@ -16,23 +16,31 @@ class TmdbApiException implements Exception {
 }
 
 class TmdbApiService {
-  static String get _apiKey => ApiConfig.requireTmdbApiKey();
   static const Duration _timeout = Duration(seconds: 10);
   static http.Client _client = http.Client();
 
   /// Allows tests and application hosts to supply their own HTTP client.
   static void setHttpClient(http.Client client) => _client = client;
 
-  /// Builds a correctly encoded TMDB URI. Kept public for focused tests.
+  static Map<String, String> get _authHeaders {
+    final key = ApiConfig.tmdbApiKey;
+    return key.startsWith('eyJ') || key.length > 40
+        ? {'Authorization': 'Bearer $key'}
+        : const {};
+  }
+
+  /// Builds a correctly encoded TMDB URI. Public for focused tests; sending a
+  /// request requires the build-time key (see [_getJson]).
   static Uri buildUri(
     String path, [
     Map<String, Object?> parameters = const {},
   ]) {
     final base = Uri.parse(ApiConfig.tmdbBaseUrl);
     return Uri.https(base.authority, '${base.path}$path', {
-      'api_key': _apiKey,
       for (final entry in parameters.entries)
         if (entry.value != null) entry.key: entry.value.toString(),
+      if (!_authHeaders.containsKey('Authorization'))
+        'api_key': ApiConfig.tmdbApiKey,
     });
   }
 
@@ -40,9 +48,12 @@ class TmdbApiService {
     String path, [
     Map<String, Object?> parameters = const {},
   ]) async {
+    ApiConfig.requireTmdbApiKey();
     final uri = buildUri(path, parameters);
     try {
-      final response = await _client.get(uri).timeout(_timeout);
+      final response = await _client
+          .get(uri, headers: _authHeaders)
+          .timeout(_timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw TmdbApiException(
           'TMDB returned HTTP ${response.statusCode}',

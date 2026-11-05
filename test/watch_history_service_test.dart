@@ -66,7 +66,7 @@ void profileScopeBaselineTests() {
     expect(UserScope.currentOwner, UserScope.anonymousOwner);
     expect(
       WatchHistoryService.getWatchHistoryKey('7', false, 1, 2),
-      'watch_history___anonymous___tv_7_1_2',
+      'watch_history___anonymous_____default___tv_7_1_2',
     );
   });
 }
