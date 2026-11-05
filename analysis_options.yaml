@@ -40,6 +40,9 @@ analyzer:
     - "**/*.g.dart"
     - "**/*.freezed.dart"
     - build/**
+    # Vendored path-dependency plugin with its own pubspec/dev-deps; it is not
+    # part of this package and lacks this project's dev dependencies.
+    - plugins/**
     - android/**
     - ios/**
     - web/**

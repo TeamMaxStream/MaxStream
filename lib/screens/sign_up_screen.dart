@@ -12,7 +12,8 @@ class SignUpScreen extends StatefulWidget {
   State<SignUpScreen> createState() => _SignUpScreenState();
 }
 
-class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderStateMixin {
+class _SignUpScreenState extends State<SignUpScreen>
+    with SingleTickerProviderStateMixin {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -62,7 +63,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         _emailController.text.trim(),
         _passwordController.text.trim(),
       );
-      
+
       if (result != null && mounted) {
         Navigator.pushReplacement(
           context,
@@ -126,13 +127,18 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
       print('Attempting Google sign-up...');
       final user = await AuthService.signInWithGoogleEnhanced();
       print('Google sign-up result: ${user != null ? 'Success' : 'Failed'}');
-      
+
       if (user != null && mounted) {
         print('Navigating to main screen...');
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ProfileSelectScreen()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const ProfileSelectScreen()),
+        );
       } else if (mounted) {
         print('Google sign-up was cancelled or failed');
-        setState(() => _errorMessage = 'Google sign-up was cancelled or failed');
+        setState(
+          () => _errorMessage = 'Google sign-up was cancelled or failed',
+        );
       }
     } on FirebaseAuthException catch (e) {
       print('FirebaseAuthException during Google sign-up: ${e.code}');
@@ -146,7 +152,8 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
             errorMessage = 'Invalid Google credentials';
             break;
           case 'operation-not-allowed':
-            errorMessage = 'Google sign-in not enabled. Please contact support.';
+            errorMessage =
+                'Google sign-in not enabled. Please contact support.';
             break;
           case 'user-disabled':
             errorMessage = 'This account has been disabled';
@@ -196,7 +203,9 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.3),
+                      ),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withValues(alpha: 0.3),
@@ -206,7 +215,11 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                       ],
                     ),
                     child: _loading
-                        ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                        ? const Center(
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                            ),
+                          )
                         : SingleChildScrollView(
                             child: Form(
                               key: _formKey,
@@ -215,7 +228,11 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                                 children: [
                                   const Text(
                                     'Create Account',
-                                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+                                    style: TextStyle(
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
                                   ),
                                   const SizedBox(height: 16),
                                   TextFormField(
@@ -223,13 +240,17 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                                     keyboardType: TextInputType.emailAddress,
                                     style: const TextStyle(color: Colors.white),
                                     autofillHints: const [AutofillHints.email],
-                                    decoration: _inputDecoration(label: 'Email'),
+                                    decoration: _inputDecoration(
+                                      label: 'Email',
+                                    ),
                                     validator: (value) {
                                       final email = value?.trim() ?? '';
                                       final valid = RegExp(
                                         r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
                                       ).hasMatch(email);
-                                      return valid ? null : 'Enter a valid email';
+                                      return valid
+                                          ? null
+                                          : 'Enter a valid email';
                                     },
                                   ),
                                   const SizedBox(height: 12),
@@ -237,12 +258,16 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                                     controller: _passwordController,
                                     obscureText: !_showPassword,
                                     style: const TextStyle(color: Colors.white),
-                                    autofillHints: const [AutofillHints.newPassword],
+                                    autofillHints: const [
+                                      AutofillHints.newPassword,
+                                    ],
                                     decoration: _inputDecoration(
                                       label: 'Password',
                                       suffix: IconButton(
                                         icon: Icon(
-                                          _showPassword ? Icons.visibility : Icons.visibility_off,
+                                          _showPassword
+                                              ? Icons.visibility
+                                              : Icons.visibility_off,
                                           color: Colors.white,
                                         ),
                                         onPressed: () {
@@ -253,34 +278,58 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                                       ),
                                     ),
                                     validator: (value) =>
-                                        value == null || value.length < 6 ? 'Enter 6+ characters' : null,
+                                        value == null || value.length < 6
+                                        ? 'Enter 6+ characters'
+                                        : null,
                                   ),
                                   const SizedBox(height: 10),
                                   if (_errorMessage != null)
-                                    Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent)),
+                                    Text(
+                                      _errorMessage!,
+                                      style: const TextStyle(
+                                        color: Colors.redAccent,
+                                      ),
+                                    ),
                                   const SizedBox(height: 10),
                                   ElevatedButton(
                                     onPressed: _signUpWithEmail,
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: Colors.blueAccent,
-                                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 40,
+                                        vertical: 14,
+                                      ),
                                     ),
                                     child: const Text(
                                       'Sign Up',
-                                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(height: 12),
                                   ElevatedButton.icon(
                                     onPressed: _signUpWithGoogle,
-                                    icon: const Icon(Icons.g_mobiledata, color: Colors.white),
+                                    icon: const Icon(
+                                      Icons.g_mobiledata,
+                                      color: Colors.white,
+                                    ),
                                     label: const Text(
                                       'Sign Up with Google',
-                                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
                                     ),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: Colors.redAccent,
-                                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 14),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 30,
+                                        vertical: 14,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(height: 16),
@@ -288,7 +337,9 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                                     onPressed: () {
                                       Navigator.pushReplacement(
                                         context,
-                                        MaterialPageRoute(builder: (_) => const SignInScreen()),
+                                        MaterialPageRoute(
+                                          builder: (_) => const SignInScreen(),
+                                        ),
                                       );
                                     },
                                     child: const Text(
@@ -326,4 +377,3 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     );
   }
 }
-

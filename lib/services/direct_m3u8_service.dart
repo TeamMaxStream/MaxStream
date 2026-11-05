@@ -21,8 +21,7 @@ class DirectM3u8Service {
     bool isMovie,
     int season,
     int episode,
-  ) =>
-      '$tmdbId|$isMovie|$season|$episode';
+  ) => '$tmdbId|$isMovie|$season|$episode';
 
   /// Returns cached server lists (including failed entries) or null.
   static List<Map<String, dynamic>>? cachedStreams({
@@ -50,11 +49,11 @@ class DirectM3u8Service {
     int episode = 1,
   }) {
     if (cachedStreams(
-      tmdbId: tmdbId,
-      isMovie: isMovie,
-      season: season,
-      episode: episode,
-    ) !=
+          tmdbId: tmdbId,
+          isMovie: isMovie,
+          season: season,
+          episode: episode,
+        ) !=
         null) {
       return;
     }
@@ -162,17 +161,21 @@ class DirectM3u8Service {
     );
     // Keep every entry, including servers whose extraction failed (empty
     // URL, available: false) so the picker can list them and offer re-fetch.
-    final result = streams.map((stream) {
-      final url = stream['url']?.toString() ?? '';
-      if (url.isEmpty) {
-        return {
-          ...stream,
-          'headers':
-              StreamSecurity.sanitizeHeaders(stream['headers'] is Map ? stream['headers'] as Map : null),
-        };
-      }
-      return StreamSecurity.sanitizeResolverResult(stream);
-    }).whereType<Map<String, dynamic>>().toList();
+    final result = streams
+        .map((stream) {
+          final url = stream['url']?.toString() ?? '';
+          if (url.isEmpty) {
+            return {
+              ...stream,
+              'headers': StreamSecurity.sanitizeHeaders(
+                stream['headers'] is Map ? stream['headers'] as Map : null,
+              ),
+            };
+          }
+          return StreamSecurity.sanitizeResolverResult(stream);
+        })
+        .whereType<Map<String, dynamic>>()
+        .toList();
     if (useCache && !fast) {
       _streamsCache[_cacheKey(tmdbId, isMovie, season, episode)] =
           _CachedStreams(result, DateTime.now());
@@ -227,7 +230,8 @@ class DirectM3u8Service {
         ..headers.addAll(headers)
         ..headers.putIfAbsent(
           'User-Agent',
-          () => 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 '
+          () =>
+              'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
         );
       final response = await client.send(request).timeout(timeout);

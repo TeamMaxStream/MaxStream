@@ -15,11 +15,7 @@ import 'share_receive_screen.dart';
 /// Share sheet opened from a download row: pick what to send, choose a
 /// transport, then show the QR / code the other device pairs with.
 class ShareSendSheet extends StatefulWidget {
-  const ShareSendSheet({
-    super.key,
-    required this.initialDownloads,
-    this.title,
-  });
+  const ShareSendSheet({super.key, required this.initialDownloads, this.title});
 
   final List<Map<String, dynamic>> initialDownloads;
   final String? title;
@@ -108,7 +104,7 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
             _descriptor == null
                 ? '${_items.length} item${_items.length == 1 ? '' : 's'} selected'
                 : '$_manifestItems item${_manifestItems == 1 ? '' : 's'} • '
-                    '${_formatBytes(_manifestBytes)}',
+                      '${_formatBytes(_manifestBytes)}',
             style: const TextStyle(color: Colors.grey, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -140,7 +136,9 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
                             } else {
                               _items = _items
                                   .where(
-                                    (i) => i['downloadKey'] != download['downloadKey'],
+                                    (i) =>
+                                        i['downloadKey'] !=
+                                        download['downloadKey'],
                                   )
                                   .toList();
                             }
@@ -166,9 +164,7 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: Text(
-                  _starting ? 'Preparing…' : 'Show pairing code',
-                ),
+                child: Text(_starting ? 'Preparing…' : 'Show pairing code'),
               ),
             ),
           ] else
@@ -262,12 +258,20 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
                 onPressed: () async {
                   await SharePlus.instance.share(
                     ShareParams(
-                      text: 'Send "${widget.title ?? 'a download'}" to my MaxStream device:\n${descriptor.code}',
+                      text:
+                          'Send "${widget.title ?? 'a download'}" to my MaxStream device:\n${descriptor.code}',
                     ),
                   );
                 },
-                icon: const Icon(Icons.ios_share, size: 18, color: Colors.white70),
-                label: const Text('Share code', style: TextStyle(color: Colors.white70)),
+                icon: const Icon(
+                  Icons.ios_share,
+                  size: 18,
+                  color: Colors.white70,
+                ),
+                label: const Text(
+                  'Share code',
+                  style: TextStyle(color: Colors.white70),
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -301,13 +305,19 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
     try {
       // Nearby advertises over Bluetooth: location + scan/connect/advertise are
       // all needed, and ADVERTISE is the one that fails with Android's 8038.
-      final status =
-          await ShareService.ensureTransportPermissions(_transportId);
+      final status = await ShareService.ensureTransportPermissions(
+        _transportId,
+      );
       if (status != PermissionStatus.granted) {
-        _toast(ShareService.describeError(
-          PlatformException(code: 'permission', message: 'Nearby permissions were not granted'),
-          _transportId,
-        ));
+        _toast(
+          ShareService.describeError(
+            PlatformException(
+              code: 'permission',
+              message: 'Nearby permissions were not granted',
+            ),
+            _transportId,
+          ),
+        );
         return;
       }
       final hints = ShareService.pendingNearbyHints();
@@ -329,7 +339,9 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
         manifest,
         transportId: _transportId,
       );
-      _events = ShareService.instance.senderEvents(_transportId).listen((event) {
+      _events = ShareService.instance.senderEvents(_transportId).listen((
+        event,
+      ) {
         if (!mounted) return;
         setState(() => _status = event.message ?? '');
       });
@@ -373,11 +385,17 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop('wifi'),
-            child: const Text('Use Wi-Fi', style: TextStyle(color: Colors.green)),
+            child: const Text(
+              'Use Wi-Fi',
+              style: TextStyle(color: Colors.green),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop('settings'),
-            child: const Text('Open settings', style: TextStyle(color: Colors.red)),
+            child: const Text(
+              'Open settings',
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -415,18 +433,16 @@ class _ShareSendSheetState extends State<ShareSendSheet> {
         content: Text(message),
         backgroundColor: Colors.orange,
         duration: const Duration(seconds: 8),
-        action: SnackBarAction(
-          label: 'Settings',
-          onPressed: openAppSettings,
-        ),
+        action: SnackBarAction(label: 'Settings', onPressed: openAppSettings),
       ),
     );
   }
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -449,7 +465,7 @@ Future<void> showShareSendSheet(
 
 /// Convenience used by the Downloads screen.
 void openShareReceiver(BuildContext context) {
-  Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => const ShareReceiveScreen()),
-  );
+  Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const ShareReceiveScreen()));
 }

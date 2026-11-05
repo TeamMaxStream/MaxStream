@@ -39,7 +39,11 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
   Future<void> _load({bool silent = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
     final s = await SubtitleSettings.load();
-    if (mounted) setState(() { _settings = s; _loading = false; });
+    if (mounted)
+      setState(() {
+        _settings = s;
+        _loading = false;
+      });
   }
 
   Future<void> _save() async {
@@ -47,7 +51,10 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
     unawaited(CloudSyncService.pushSubtitleSettings());
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Subtitle settings saved'), backgroundColor: Colors.green),
+        const SnackBar(
+          content: Text('Subtitle settings saved'),
+          backgroundColor: Colors.green,
+        ),
       );
     }
   }
@@ -59,7 +66,10 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
         backgroundColor: const Color(0xFF121212),
         appBar: AppBar(
           backgroundColor: const Color(0xFF1A1A1A),
-          title: const Text('Subtitle Settings', style: TextStyle(color: Colors.white)),
+          title: const Text(
+            'Subtitle Settings',
+            style: TextStyle(color: Colors.white),
+          ),
         ),
         body: const Center(child: CircularProgressIndicator(color: Colors.red)),
       );
@@ -69,7 +79,10 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text('Subtitle Settings', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Subtitle Settings',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         actions: [
           TextButton(
             onPressed: () {
@@ -89,7 +102,9 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
             const SizedBox(height: 24),
             _buildSectionHeader('TEXT'),
             _buildColorTile('Text Color', _settings.textColorParsed, (c) {
-              setState(() => _settings.textColor = SubtitleSettings.colorToHex(c));
+              setState(
+                () => _settings.textColor = SubtitleSettings.colorToHex(c),
+              );
               _save();
             }),
             _buildSlider('Font Size', _settings.fontSize, 12, 32, (v) {
@@ -97,10 +112,18 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
             }, onChangeEnd: (_) => _save()),
             const SizedBox(height: 16),
             _buildSectionHeader('BACKGROUND'),
-            _buildColorTile('Background Color', _settings.backgroundColorParsed, (c) {
-              setState(() => _settings.backgroundColor = SubtitleSettings.colorToHex(c));
-              _save();
-            }),
+            _buildColorTile(
+              'Background Color',
+              _settings.backgroundColorParsed,
+              (c) {
+                setState(
+                  () => _settings.backgroundColor = SubtitleSettings.colorToHex(
+                    c,
+                  ),
+                );
+                _save();
+              },
+            ),
             _buildSlider('Opacity', _settings.backgroundOpacity, 0, 1, (v) {
               setState(() => _settings.backgroundOpacity = v);
             }, onChangeEnd: (_) => _save()),
@@ -108,7 +131,9 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
             _buildSectionHeader('EDGE / SHADOW'),
             _buildEdgeTypeTile(),
             _buildColorTile('Edge Color', _settings.edgeColorParsed, (c) {
-              setState(() => _settings.edgeColor = SubtitleSettings.colorToHex(c));
+              setState(
+                () => _settings.edgeColor = SubtitleSettings.colorToHex(c),
+              );
               _save();
             }),
             _buildToggle('Text Shadow', _settings.textShadow, (v) {
@@ -116,8 +141,14 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
               _save();
             }),
             if (_settings.textShadow)
-              _buildColorTile('Shadow Color', _settings.textShadowColorParsed, (c) {
-                setState(() => _settings.textShadowColor = SubtitleSettings.colorToHex(c));
+              _buildColorTile('Shadow Color', _settings.textShadowColorParsed, (
+                c,
+              ) {
+                setState(
+                  () => _settings.textShadowColor = SubtitleSettings.colorToHex(
+                    c,
+                  ),
+                );
                 _save();
               }),
             const SizedBox(height: 16),
@@ -139,7 +170,10 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
       ),
       child: Column(
         children: [
-          const Text('Preview', style: TextStyle(color: Colors.grey, fontSize: 12)),
+          const Text(
+            'Preview',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
@@ -149,17 +183,27 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Stack(
-              alignment: _settings.position == 'top' ? Alignment.topCenter : Alignment.bottomCenter,
+              alignment: _settings.position == 'top'
+                  ? Alignment.topCenter
+                  : Alignment.bottomCenter,
               children: [
                 Center(
-                  child: Text('Sample Video', style: TextStyle(color: Colors.grey[700], fontSize: 14)),
+                  child: Text(
+                    'Sample Video',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  ),
                 ),
                 Padding(
                   padding: const EdgeInsets.all(8),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
-                      color: _settings.backgroundColorParsed.withValues(alpha: _settings.backgroundOpacity),
+                      color: _settings.backgroundColorParsed.withValues(
+                        alpha: _settings.backgroundOpacity,
+                      ),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -170,7 +214,12 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
                         fontSize: _settings.fontSize.clamp(10, 24),
                         fontWeight: FontWeight.w600,
                         shadows: _settings.textShadow
-                            ? [Shadow(color: _settings.textShadowColorParsed, blurRadius: 3)]
+                            ? [
+                                Shadow(
+                                  color: _settings.textShadowColorParsed,
+                                  blurRadius: 3,
+                                ),
+                              ]
                             : null,
                       ),
                     ),
@@ -189,17 +238,31 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
       padding: const EdgeInsets.only(bottom: 8),
       child: Text(
         title,
-        style: TextStyle(color: Colors.grey[500], fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 1.2),
+        style: TextStyle(
+          color: Colors.grey[500],
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.2,
+        ),
       ),
     );
   }
 
-  Widget _buildColorTile(String label, Color currentColor, ValueChanged<Color> onColorChanged) {
+  Widget _buildColorTile(
+    String label,
+    Color currentColor,
+    ValueChanged<Color> onColorChanged,
+  ) {
     return ListTile(
       title: Text(label, style: const TextStyle(color: Colors.white)),
       trailing: Container(
-        width: 32, height: 32,
-        decoration: BoxDecoration(color: currentColor, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey)),
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: currentColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey),
+        ),
       ),
       onTap: () => _showColorPicker(currentColor, onColorChanged),
     );
@@ -207,8 +270,21 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
 
   void _showColorPicker(Color current, ValueChanged<Color> onChanged) {
     final colors = [
-      Colors.white, Colors.yellow, Colors.lime, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red, Colors.orange,
-      Colors.grey, Colors.amber, Colors.teal, Colors.pink, Colors.indigo, Colors.brown,
+      Colors.white,
+      Colors.yellow,
+      Colors.lime,
+      Colors.green,
+      Colors.cyan,
+      Colors.blue,
+      Colors.purple,
+      Colors.red,
+      Colors.orange,
+      Colors.grey,
+      Colors.amber,
+      Colors.teal,
+      Colors.pink,
+      Colors.indigo,
+      Colors.brown,
     ];
     showModalBottomSheet(
       context: context,
@@ -219,7 +295,14 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Choose Color', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              'Choose Color',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 16),
             Wrap(
               spacing: 8,
@@ -227,13 +310,20 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
               children: colors.map((c) {
                 final selected = c.value == current.value;
                 return GestureDetector(
-                  onTap: () { onChanged(c); Navigator.pop(ctx); },
+                  onTap: () {
+                    onChanged(c);
+                    Navigator.pop(ctx);
+                  },
                   child: Container(
-                    width: 44, height: 44,
+                    width: 44,
+                    height: 44,
                     decoration: BoxDecoration(
                       color: c,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: selected ? Colors.red : Colors.grey, width: selected ? 3 : 1),
+                      border: Border.all(
+                        color: selected ? Colors.red : Colors.grey,
+                        width: selected ? 3 : 1,
+                      ),
                     ),
                   ),
                 );
@@ -246,7 +336,14 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
     );
   }
 
-  Widget _buildSlider(String label, double value, double min, double max, ValueChanged<double> onChanged, {ValueChanged<double>? onChangeEnd}) {
+  Widget _buildSlider(
+    String label,
+    double value,
+    double min,
+    double max,
+    ValueChanged<double> onChanged, {
+    ValueChanged<double>? onChangeEnd,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -256,13 +353,17 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(label, style: const TextStyle(color: Colors.white)),
-              Text(value.toStringAsFixed(1), style: const TextStyle(color: Colors.grey)),
+              Text(
+                value.toStringAsFixed(1),
+                style: const TextStyle(color: Colors.grey),
+              ),
             ],
           ),
         ),
         Slider(
           value: value.clamp(min, max),
-          min: min, max: max,
+          min: min,
+          max: max,
           activeColor: Colors.red,
           inactiveColor: Colors.grey[800],
           onChanged: onChanged,
@@ -283,14 +384,20 @@ class _SubtitleSettingsScreenState extends State<SubtitleSettingsScreen> {
 
   Widget _buildEdgeTypeTile() {
     final types = ['none', 'outline', 'dropShadow'];
-    final labels = {'none': 'None', 'outline': 'Outline', 'dropShadow': 'Drop Shadow'};
+    final labels = {
+      'none': 'None',
+      'outline': 'Outline',
+      'dropShadow': 'Drop Shadow',
+    };
     return ListTile(
       title: const Text('Edge Type', style: TextStyle(color: Colors.white)),
       trailing: DropdownButton<String>(
         value: _settings.edgeType,
         dropdownColor: const Color(0xFF2A2A2A),
         style: const TextStyle(color: Colors.white),
-        items: types.map((t) => DropdownMenuItem(value: t, child: Text(labels[t]!))).toList(),
+        items: types
+            .map((t) => DropdownMenuItem(value: t, child: Text(labels[t]!)))
+            .toList(),
         onChanged: (v) {
           if (v != null) {
             setState(() => _settings.edgeType = v);

@@ -45,8 +45,10 @@ class DefaultFirebaseOptions {
     projectId: "maxstream-8effc",
     storageBucket: "maxstream-8effc.appspot.com", // ✅ FIXED
     messagingSenderId: "799710852137",
-    appId: "1:799710852137:ios:e22a364983819068a6c609", // ✅ Use correct iOS appId if available
-    iosBundleId: 'com.example.maxstream', // ✅ Update this if you have a real iOS bundle ID
+    appId:
+        "1:799710852137:ios:e22a364983819068a6c609", // ✅ Use correct iOS appId if available
+    iosBundleId:
+        'com.example.maxstream', // ✅ Update this if you have a real iOS bundle ID
   );
 
   static const FirebaseOptions macos = ios;

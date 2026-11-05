@@ -39,7 +39,10 @@ class WatchReminderService {
 
     if (ids.contains(showId)) {
       ids.remove(showId);
-      await prefs.setStringList(_remindersKey, ids.map((id) => id.toString()).toList());
+      await prefs.setStringList(
+        _remindersKey,
+        ids.map((id) => id.toString()).toList(),
+      );
       // Remove episode tracking
       await prefs.remove('reminder_${showId}_season');
       await prefs.remove('reminder_${showId}_episode');
@@ -49,13 +52,18 @@ class WatchReminderService {
       return false;
     } else {
       ids.add(showId);
-      await prefs.setStringList(_remindersKey, ids.map((id) => id.toString()).toList());
+      await prefs.setStringList(
+        _remindersKey,
+        ids.map((id) => id.toString()).toList(),
+      );
       // Store episode tracking info
       await prefs.setInt('reminder_${showId}_season', lastKnownSeason);
       await prefs.setInt('reminder_${showId}_episode', lastKnownEpisode);
       await prefs.setString('reminder_${showId}_title', title);
       await prefs.setString('reminder_${showId}_poster', posterPath);
-      debugPrint('WatchReminderService: Added reminder for "$title" (S${lastKnownSeason}E$lastKnownEpisode)');
+      debugPrint(
+        'WatchReminderService: Added reminder for "$title" (S${lastKnownSeason}E$lastKnownEpisode)',
+      );
       return true;
     }
   }
@@ -98,7 +106,8 @@ class WatchReminderService {
         showId: showId,
         title: title,
         posterPath: posterPath,
-        message: 'New season available! Season $currentSeason is now streaming.',
+        message:
+            'New season available! Season $currentSeason is now streaming.',
       );
       await prefs.setInt('reminder_${showId}_season', currentSeason);
       await prefs.setInt('reminder_${showId}_episode', 0);
@@ -107,14 +116,18 @@ class WatchReminderService {
 
     // Check for new episodes in current season
     if (currentSeason > 0) {
-      final episodes = await TmdbApiService.getSeasonEpisodes(showId, currentSeason);
+      final episodes = await TmdbApiService.getSeasonEpisodes(
+        showId,
+        currentSeason,
+      );
       final currentEpisodeCount = episodes.length;
       if (currentEpisodeCount > lastKnownEpisode && lastKnownEpisode > 0) {
         await _sendNotification(
           showId: showId,
           title: title,
           posterPath: posterPath,
-          message: 'New episode available! Season $currentSeason now has $currentEpisodeCount episodes.',
+          message:
+              'New episode available! Season $currentSeason now has $currentEpisodeCount episodes.',
         );
         await prefs.setInt('reminder_${showId}_episode', currentEpisodeCount);
       }
@@ -137,7 +150,8 @@ class WatchReminderService {
           androidDetails = AndroidNotificationDetails(
             'maxstream_content_channel',
             'New Content Notifications',
-            channelDescription: 'Notifications for new releases on your favorite providers',
+            channelDescription:
+                'Notifications for new releases on your favorite providers',
             importance: Importance.max,
             priority: Priority.high,
             autoCancel: true,
@@ -183,7 +197,8 @@ class WatchReminderService {
     return const AndroidNotificationDetails(
       'maxstream_content_channel',
       'New Content Notifications',
-      channelDescription: 'Notifications for new releases on your favorite providers',
+      channelDescription:
+          'Notifications for new releases on your favorite providers',
       importance: Importance.max,
       priority: Priority.high,
       autoCancel: true,

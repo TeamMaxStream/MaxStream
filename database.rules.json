@@ -34,29 +34,27 @@
         }
       }
     },
+
     "device_codes": {
+      ".read": false,
       "$code": {
-        ".read": true,
-        ".write": "auth != null"
+        ".read": false,
+        ".write": "auth != null && !data.exists() && newData.child('userId').val() === auth.uid && newData.child('code').val() === $code && newData.child('isUsed').val() === false && newData.child('expiresAt').val() > now && newData.child('expiresAt').val() <= now + 900000 && !newData.child('password').exists()",
+        ".validate": "newData.hasChildren(['code', 'userId', 'createdAt', 'expiresAt', 'isUsed'])"
       }
     },
+
     "tv_authenticated_sessions": {
-      "$session": {
-        ".read": "auth != null",
-        ".write": "auth != null"
-      }
+      ".read": false,
+      ".write": false
     },
     "biometric_sessions": {
-      "$session": {
-        ".read": "auth != null",
-        ".write": "auth != null"
-      }
+      ".read": false,
+      ".write": false
     },
     "login_audits": {
-      "$audit": {
-        ".read": "auth != null",
-        ".write": "auth != null"
-      }
+      ".read": false,
+      ".write": false
     }
   }
 }

@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'notification_service.dart';
+import 'release_checksum.dart';
 
 /// APK variant names matching GitHub release assets.
 const Map<String, String> kApkVariants = {
@@ -25,8 +26,9 @@ const Map<String, String> kApkVariants = {
 Future<String> getDeviceArch() async {
   try {
     if (Platform.isAndroid) {
-      final arch = await const MethodChannel('com.maxstream.app/install')
-          .invokeMethod<String>('getArch');
+      final arch = await const MethodChannel(
+        'com.maxstream.app/install',
+      ).invokeMethod<String>('getArch');
       if (arch != null && kApkVariants.containsKey(arch)) return arch;
     }
   } catch (_) {}
@@ -50,10 +52,15 @@ class UpdateInfo {
   final String version;
   final String changelog;
 
+  /// URL of the release's `SHA256SUMS` asset. Null on releases that predate
+  /// update verification; installs fail closed in that case.
+  final String? checksumUrl;
+
   const UpdateInfo({
     required this.downloadUrl,
     required this.version,
     this.changelog = '',
+    this.checksumUrl,
   });
 }
 
@@ -137,13 +144,15 @@ class DownloadCompleteDialog extends StatelessWidget {
     try {
       final result = await const MethodChannel('com.maxstream.app/install')
           .invokeMethod<String>('installApk', {
-        'filePath': filePath,
-        'packageName': packageName,
-      });
+            'filePath': filePath,
+            'packageName': packageName,
+          });
       if (result != 'ok' && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Failed to launch installer. Try downloading from website.'),
+            content: const Text(
+              'Failed to launch installer. Try downloading from website.',
+            ),
             action: SnackBarAction(label: 'Website', onPressed: _launchWebsite),
           ),
         );
@@ -181,10 +190,7 @@ class DownloadCompleteDialog extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Later'),
         ),
-        TextButton(
-          onPressed: _launchWebsite,
-          child: const Text('Website'),
-        ),
+        TextButton(onPressed: _launchWebsite, child: const Text('Website')),
         FilledButton(
           onPressed: () => _tryInstall(context),
           child: const Text('Install'),
@@ -237,9 +243,18 @@ class UpdateService {
 
       // Auto-detect device variant and find matching APK asset.
       final deviceArch = await getDeviceArch();
-      final expectedFilename = kApkVariants[deviceArch] ?? 'maxstream-arm64-v8a.apk';
+      final expectedFilename =
+          kApkVariants[deviceArch] ?? 'maxstream-arm64-v8a.apk';
 
       final assets = response.data['assets'] as List<dynamic>? ?? [];
+
+      String? checksumUrl;
+      for (final asset in assets) {
+        if ((asset['name'] as String? ?? '') == 'SHA256SUMS') {
+          checksumUrl = asset['browser_download_url'] as String?;
+          break;
+        }
+      }
 
       // First, try to find the exact variant match.
       for (final asset in assets) {
@@ -249,6 +264,7 @@ class UpdateService {
             downloadUrl: asset['browser_download_url'] as String,
             version: latestVersion,
             changelog: changelog,
+            checksumUrl: checksumUrl,
           );
         }
       }
@@ -266,6 +282,7 @@ class UpdateService {
               downloadUrl: asset['browser_download_url'] as String,
               version: latestVersion,
               changelog: changelog,
+              checksumUrl: checksumUrl,
             );
           }
         }
@@ -288,6 +305,7 @@ class UpdateService {
             downloadUrl: asset['browser_download_url'] as String,
             version: latestVersion,
             changelog: changelog,
+            checksumUrl: checksumUrl,
           );
         }
       }
@@ -316,7 +334,8 @@ class UpdateService {
         title: 'Update Available',
         body:
             'MaxStream ${availableUpdate.version} is available (current: $currentVersion). Tap to download.',
-        payload: 'update:${availableUpdate.downloadUrl}',
+        payload:
+            'update:${availableUpdate.downloadUrl}|${availableUpdate.checksumUrl ?? ''}',
       );
     } catch (_) {
       if (_notifiedVersion == availableUpdate.version) _notifiedVersion = null;
@@ -390,8 +409,9 @@ class UpdateService {
   /// installer never leaves the user stuck.
   static Future<void> downloadAndInstallUpdate(
     BuildContext context,
-    String downloadUrl,
-  ) async {
+    String downloadUrl, {
+    String? checksumUrl,
+  }) async {
     String? filePath;
     bool progressShown = false;
     try {
@@ -428,6 +448,8 @@ class UpdateService {
         throw StateError('Downloaded file is too small — likely an error page');
       }
 
+      await _verifyDownload(downloadedFile, downloadUrl, checksumUrl);
+
       if (context.mounted && progressShown) {
         Navigator.of(context).pop();
         progressShown = false;
@@ -440,9 +462,9 @@ class UpdateService {
         try {
           final result = await const MethodChannel('com.maxstream.app/install')
               .invokeMethod<String>('installApk', {
-            'filePath': filePath!,
-            'packageName': packageInfo.packageName,
-          });
+                'filePath': filePath,
+                'packageName': packageInfo.packageName,
+              });
           if (result != 'ok' && context.mounted) {
             // Installer didn't launch — show fallback dialog
             await showDialog(
@@ -468,6 +490,13 @@ class UpdateService {
         }
       }
     } catch (e) {
+      // Never leave an unverified or partial installer behind.
+      if (filePath != null) {
+        try {
+          final partial = File(filePath);
+          if (await partial.exists()) await partial.delete();
+        } catch (_) {}
+      }
       if (context.mounted && progressShown) {
         Navigator.of(context).pop();
       }
@@ -488,6 +517,47 @@ class UpdateService {
         );
       }
     }
+  }
+
+  /// Fetches the release's `SHA256SUMS` sidecar and verifies the download.
+  ///
+  /// Fails closed: a release without the sidecar, or a sidecar without an entry
+  /// for this asset, aborts the install. An unverified APK must never reach the
+  /// system installer — that is exactly the path a tampered download would take.
+  static Future<void> _verifyDownload(
+    File file,
+    String downloadUrl,
+    String? checksumUrl,
+  ) async {
+    if (checksumUrl == null || checksumUrl.trim().isEmpty) {
+      throw StateError(
+        'This release does not publish SHA256SUMS, so the download cannot be '
+        'verified. Install from the website instead.',
+      );
+    }
+    final fileName = _assetNameFromUrl(downloadUrl);
+    final response = await Dio().get<String>(
+      checksumUrl,
+      options: Options(responseType: ResponseType.plain),
+    );
+    final expected = findSha256ForFile(response.data ?? '', fileName);
+    if (expected == null) {
+      throw StateError('SHA256SUMS does not list $fileName');
+    }
+    final actual = await sha256OfFile(file);
+    if (actual != expected) {
+      throw StateError(
+        'Checksum mismatch for $fileName — the download is corrupted or was '
+        'tampered with',
+      );
+    }
+    debugPrint('UpdateService: verified $fileName ($actual)');
+  }
+
+  static String _assetNameFromUrl(String url) {
+    final segments = Uri.parse(url).pathSegments;
+    if (segments.isEmpty) return '';
+    return Uri.decodeComponent(segments.last);
   }
 
   static bool _isVersionNewer(String current, String latest) {

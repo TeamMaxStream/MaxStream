@@ -9,11 +9,7 @@ class MiniplayerBar extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback onClose;
 
-  const MiniplayerBar({
-    super.key,
-    required this.onTap,
-    required this.onClose,
-  });
+  const MiniplayerBar({super.key, required this.onTap, required this.onClose});
 
   @override
   State<MiniplayerBar> createState() => _MiniplayerBarState();
@@ -25,12 +21,9 @@ class _MiniplayerBarState extends State<MiniplayerBar> {
   @override
   void initState() {
     super.initState();
-    _progressTimer = Timer.periodic(
-      const Duration(milliseconds: 500),
-      (_) {
-        if (mounted) setState(() {});
-      },
-    );
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -101,10 +94,7 @@ class _MiniplayerBarState extends State<MiniplayerBar> {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withOpacity(0.6),
-                    ],
+                    colors: [Colors.transparent, Colors.black.withOpacity(0.6)],
                     stops: const [0.4, 1.0],
                   ),
                 ),
@@ -136,8 +126,9 @@ class _MiniplayerBarState extends State<MiniplayerBar> {
                       value: progress,
                       minHeight: 2,
                       backgroundColor: Colors.white24,
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(Colors.red),
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Colors.red,
+                      ),
                     ),
                   ),
                 ],
@@ -152,8 +143,7 @@ class _MiniplayerBarState extends State<MiniplayerBar> {
                 child: Builder(
                   builder: (context) {
                     final cues = service.activeSubtitleCues.where(
-                      (cue) =>
-                          position >= cue.start && position <= cue.end,
+                      (cue) => position >= cue.start && position <= cue.end,
                     );
                     if (cues.isEmpty) return const SizedBox.shrink();
                     return Text(
@@ -164,10 +154,7 @@ class _MiniplayerBarState extends State<MiniplayerBar> {
                         fontSize: isTablet ? 10 : 8,
                         fontWeight: FontWeight.w500,
                         shadows: const [
-                          Shadow(
-                            blurRadius: 4,
-                            color: Colors.black,
-                          ),
+                          Shadow(blurRadius: 4, color: Colors.black),
                         ],
                       ),
                       maxLines: 2,

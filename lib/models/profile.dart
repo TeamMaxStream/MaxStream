@@ -62,14 +62,14 @@ class ProfileAvatar {
 
   Color get color => palette[colorIndex % palette.length];
   IconData get icon => icons.firstWhere(
-        (i) => i.codePoint == iconCodePoint,
-        orElse: () => Icons.person,
-      );
+    (i) => i.codePoint == iconCodePoint,
+    orElse: () => Icons.person,
+  );
 
   Map<String, dynamic> toJson() => {
-        'colorIndex': colorIndex,
-        'iconCodePoint': iconCodePoint,
-      };
+    'colorIndex': colorIndex,
+    'iconCodePoint': iconCodePoint,
+  };
 
   factory ProfileAvatar.fromJson(Map<String, dynamic> json) {
     return ProfileAvatar(
@@ -118,13 +118,13 @@ class Profile {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'avatar': avatar.toJson(),
-        'isKids': isKids,
-        'pinHash': pinHash,
-        'createdAt': createdAt.toIso8601String(),
-      };
+    'id': id,
+    'name': name,
+    'avatar': avatar.toJson(),
+    'isKids': isKids,
+    'pinHash': pinHash,
+    'createdAt': createdAt.toIso8601String(),
+  };
 
   factory Profile.fromJson(Map<String, dynamic> json) {
     return Profile(
@@ -132,7 +132,8 @@ class Profile {
       name: json['name'] as String? ?? 'Profile',
       avatar: json['avatar'] != null
           ? ProfileAvatar.fromJson(
-              Map<String, dynamic>.from(json['avatar'] as Map))
+              Map<String, dynamic>.from(json['avatar'] as Map),
+            )
           : const ProfileAvatar(),
       isKids: json['isKids'] as bool? ?? false,
       pinHash: json['pinHash'] as String?,

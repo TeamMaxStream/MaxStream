@@ -141,7 +141,9 @@ class NativeStreamExtractor {
       if (result == null) return null;
       return _normalizeStream(result);
     } on PlatformException catch (e) {
-      debugPrint('NativeExtractor: resolveServer $serverName failed: ${e.message}');
+      debugPrint(
+        'NativeExtractor: resolveServer $serverName failed: ${e.message}',
+      );
       return null;
     } catch (e) {
       debugPrint('NativeExtractor: resolveServer error: $e');

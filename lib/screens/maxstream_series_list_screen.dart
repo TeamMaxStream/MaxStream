@@ -121,10 +121,7 @@ class _MaxStreamSeriesListScreenState extends State<MaxStreamSeriesListScreen> {
         ],
       ),
       actions: const [
-        Padding(
-          padding: EdgeInsets.only(right: 8),
-          child: ProfileMenuButton(),
-        ),
+        Padding(padding: EdgeInsets.only(right: 8), child: ProfileMenuButton()),
       ],
     );
   }
@@ -363,19 +360,12 @@ class _MaxStreamSeriesListScreenState extends State<MaxStreamSeriesListScreen> {
                   : Container(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: [
-                            Colors.grey[850]!,
-                            Colors.grey[900]!,
-                          ],
+                          colors: [Colors.grey[850]!, Colors.grey[900]!],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
                       ),
-                      child: const Icon(
-                        Icons.tv,
-                        color: Colors.grey,
-                        size: 40,
-                      ),
+                      child: const Icon(Icons.tv, color: Colors.grey, size: 40),
                     ),
               // Gradient overlay
               Positioned.fill(
@@ -433,11 +423,7 @@ class _MaxStreamSeriesListScreenState extends State<MaxStreamSeriesListScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.star,
-                          color: Colors.amber,
-                          size: 12,
-                        ),
+                        const Icon(Icons.star, color: Colors.amber, size: 12),
                         const SizedBox(width: 3),
                         Text(
                           rating.toStringAsFixed(1),
@@ -579,8 +565,11 @@ class _MaxStreamSeriesListScreenState extends State<MaxStreamSeriesListScreen> {
                             width: 135,
                             height: 200,
                             color: Colors.grey[850],
-                            child: const Icon(Icons.tv,
-                                color: Colors.grey, size: 40),
+                            child: const Icon(
+                              Icons.tv,
+                              color: Colors.grey,
+                              size: 40,
+                            ),
                           ),
                         )
                       : Container(
@@ -588,23 +577,25 @@ class _MaxStreamSeriesListScreenState extends State<MaxStreamSeriesListScreen> {
                           height: 200,
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
-                              colors: [
-                                Colors.grey[850]!,
-                                Colors.grey[900]!,
-                              ],
+                              colors: [Colors.grey[850]!, Colors.grey[900]!],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
                           ),
-                          child: const Icon(Icons.tv,
-                              color: Colors.grey, size: 40),
+                          child: const Icon(
+                            Icons.tv,
+                            color: Colors.grey,
+                            size: 40,
+                          ),
                         ),
                   Positioned(
                     top: 6,
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.red,
                         borderRadius: BorderRadius.circular(4),
@@ -625,7 +616,9 @@ class _MaxStreamSeriesListScreenState extends State<MaxStreamSeriesListScreen> {
                       right: 6,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 2),
+                          horizontal: 5,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.75),
                           borderRadius: BorderRadius.circular(4),
@@ -633,8 +626,11 @@ class _MaxStreamSeriesListScreenState extends State<MaxStreamSeriesListScreen> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.star,
-                                color: Colors.amber, size: 10),
+                            const Icon(
+                              Icons.star,
+                              color: Colors.amber,
+                              size: 10,
+                            ),
                             const SizedBox(width: 2),
                             Text(
                               rating.toStringAsFixed(1),
@@ -950,11 +946,7 @@ class _AutoScrollingCarouselState extends State<_AutoScrollingCarousel> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.star,
-                          color: Colors.amber,
-                          size: 14,
-                        ),
+                        const Icon(Icons.star, color: Colors.amber, size: 14),
                         const SizedBox(width: 4),
                         Text(
                           rating.toStringAsFixed(1),
@@ -1092,8 +1084,18 @@ class _AutoScrollingCarouselState extends State<_AutoScrollingCarousel> {
     try {
       final parsed = DateTime.parse(date);
       final months = [
-        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
       ];
       return '${months[parsed.month - 1]} ${parsed.day}, ${parsed.year}';
     } catch (_) {
@@ -1202,7 +1204,11 @@ class _FullListScreenState extends State<_FullListScreen> {
       }
 
       if (!mounted) return;
-      final merged = uniqueTmdbItems(_allItems, filterForKids(newItems), widget.mediaType);
+      final merged = uniqueTmdbItems(
+        _allItems,
+        filterForKids(newItems),
+        widget.mediaType,
+      );
       setState(() {
         _hasMore = merged.length > _allItems.length;
         _allItems = merged;

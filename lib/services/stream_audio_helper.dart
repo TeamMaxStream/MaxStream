@@ -86,8 +86,7 @@ class StreamAudioHelper {
   static String languageOf(Map track) =>
       (track['language']?.toString() ?? '').trim();
 
-  static String labelOf(Map track) =>
-      (track['label']?.toString() ?? '').trim();
+  static String labelOf(Map track) => (track['label']?.toString() ?? '').trim();
 
   /// Human-readable name: "English", "Hindi · 6ch", ...
   static String displayName(Map track) {
@@ -117,7 +116,9 @@ class StreamAudioHelper {
     if (tracks.length == 1) {
       final lang = languageOf(tracks.first);
       if (lang.isEmpty || lang == 'und') return '';
-      return lang.length <= 3 ? lang.toUpperCase() : lang.toUpperCase().substring(0, 3);
+      return lang.length <= 3
+          ? lang.toUpperCase()
+          : lang.toUpperCase().substring(0, 3);
     }
     final first = languageOf(tracks.first);
     final short = first.length <= 3

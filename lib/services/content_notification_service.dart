@@ -156,7 +156,9 @@ class ContentNotificationService {
       final seasons = details?['number_of_seasons'];
       if (seasons is num && seasons.toInt() > 0) {
         final n = seasons.toInt();
-        return n == 1 ? 'Season 1 is now available' : '$n seasons are now available';
+        return n == 1
+            ? 'Season 1 is now available'
+            : '$n seasons are now available';
       }
     } catch (_) {}
     return 'Now streaming';
@@ -171,10 +173,7 @@ class ContentNotificationService {
 
   static Set<int> _getStoredIds(SharedPreferences prefs, String key) {
     final stored = prefs.getStringList(key) ?? [];
-    return stored
-        .map((id) => int.tryParse(id))
-        .whereType<int>()
-        .toSet();
+    return stored.map((id) => int.tryParse(id)).whereType<int>().toSet();
   }
 
   static int _notificationId(int tmdbId, int providerId) =>
@@ -255,7 +254,10 @@ class ContentNotificationService {
     try {
       final dir = await getTemporaryDirectory();
       final file = '${dir.path}/maxstream_notify_$tmdbId.jpg';
-      await Dio().download('https://image.tmdb.org/t/p/original$posterPath', file);
+      await Dio().download(
+        'https://image.tmdb.org/t/p/original$posterPath',
+        file,
+      );
       if (File(file).existsSync()) return file;
       return null;
     } catch (_) {

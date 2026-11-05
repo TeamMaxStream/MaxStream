@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +22,7 @@ void main() {
 
   late List<MethodCall> calls;
   late List<Map<String, dynamic>> disconnected;
+
   /// Statuses the fake platform should reject a start with.
   late Set<String> busyStatuses;
   const endpoint = 'endpoint-1';
@@ -69,9 +69,9 @@ void main() {
     // The plugin subscribes to events on this channel; accept the listen call.
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel(eventChannelName),
-      (_) async => null,
-    );
+          const MethodChannel(eventChannelName),
+          (_) async => null,
+        );
   });
 
   tearDown(() {
@@ -84,12 +84,13 @@ void main() {
   /// Delivers a plugin event the way the native side does: a success envelope
   /// on the event channel carrying `{method, ...args}`.
   Future<void> emit(String method, Map<String, dynamic> args) async {
-    await TestDefaultBinaryMessengerBinding
-        .instance
-        .defaultBinaryMessenger
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .handlePlatformMessage(
           eventChannelName,
-          codec.encodeSuccessEnvelope(<String, dynamic>{'method': method, ...args}),
+          codec.encodeSuccessEnvelope(<String, dynamic>{
+            'method': method,
+            ...args,
+          }),
           (_) {},
         );
     await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -120,14 +121,14 @@ void main() {
   }
 
   ShareSession sessionFor() => ShareSession(
-        manifest: ShareManifest(
-          senderName: 'Pixel',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-          items: const [],
-        ),
-        openFile: (_, {int? start, int? end}) async =>
-            Stream<Uint8List>.value(Uint8List(0)),
-      );
+    manifest: ShareManifest(
+      senderName: 'Pixel',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      items: const [],
+    ),
+    openFile: (_, {int? start, int? end}) async =>
+        Stream<Uint8List>.value(Uint8List(0)),
+  );
 
   /// Brings the transport to the "peer connected" state.
   ///
@@ -160,25 +161,27 @@ void main() {
     );
   });
 
-  test('a peer that does not know the code is never served the manifest',
-      () async {
-    final transport = NearbyTransport();
-    await connectPeer(transport);
+  test(
+    'a peer that does not know the code is never served the manifest',
+    () async {
+      final transport = NearbyTransport();
+      await connectPeer(transport);
 
-    // Asks for the manifest without proving anything.
-    await emitBytes('{"manifest":"?"}');
+      // Asks for the manifest without proving anything.
+      await emitBytes('{"manifest":"?"}');
 
-    expect(
-      sentBodies().where((b) => b.contains('items')),
-      isEmpty,
-      reason: 'an unauthenticated peer got the manifest',
-    );
-    expect(
-      disconnected.any((a) => a['endpointId'] == endpoint),
-      isTrue,
-      reason: 'the peer should have been disconnected',
-    );
-  });
+      expect(
+        sentBodies().where((b) => b.contains('items')),
+        isEmpty,
+        reason: 'an unauthenticated peer got the manifest',
+      );
+      expect(
+        disconnected.any((a) => a['endpointId'] == endpoint),
+        isTrue,
+        reason: 'the peer should have been disconnected',
+      );
+    },
+  );
 
   test('a peer that presents the code is served the manifest', () async {
     final transport = NearbyTransport();
@@ -210,10 +213,7 @@ void main() {
       isEmpty,
       reason: 'a wrong code was accepted',
     );
-    expect(
-      disconnected.any((a) => a['endpointId'] == endpoint),
-      isTrue,
-    );
+    expect(disconnected.any((a) => a['endpointId'] == endpoint), isTrue);
   });
 
   test('the manifest echoes the code so the receiver can authenticate it', () {
@@ -228,10 +228,11 @@ void main() {
       isNot(contains('hello')),
       reason: 'the LAN transport must not gain a hello field',
     );
-    expect(ShareManifest.decode(manifest.encode(token: 'zz99xx')).senderName,
-        'Pixel');
+    expect(
+      ShareManifest.decode(manifest.encode(token: 'zz99xx')).senderName,
+      'Pixel',
+    );
   });
-
 
   test('8001 ALREADY_ADVERTISING does not break a fresh share', () async {
     // The platform can still be advertising when the user starts another
@@ -267,12 +268,15 @@ void main() {
   test('an unrelated nearby failure is still surfaced', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(methodChannel, (call) async {
-      calls.add(call);
-      if (call.method == 'startAdvertising') {
-        throw PlatformException(code: 'Failure', message: '8011: no Play services');
-      }
-      return true;
-    });
+          calls.add(call);
+          if (call.method == 'startAdvertising') {
+            throw PlatformException(
+              code: 'Failure',
+              message: '8011: no Play services',
+            );
+          }
+          return true;
+        });
     final transport = NearbyTransport();
     await expectLater(
       transport.publish(sessionFor()),

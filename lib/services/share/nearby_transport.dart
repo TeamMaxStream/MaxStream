@@ -51,8 +51,7 @@ class NearbyTransport implements ShareTransport {
   String? _connectedEndpoint;
 
   final _senderEvents = StreamController<ShareSenderEvent>.broadcast();
-  final _progress =
-      StreamController<Map<int, ShareFileProgress>>.broadcast();
+  final _progress = StreamController<Map<int, ShareFileProgress>>.broadcast();
   final Map<int, ShareFileProgress> _lastProgress = {};
 
   final Map<int, Completer<void>> _payloadWaiters = {};
@@ -211,7 +210,10 @@ class NearbyTransport implements ShareTransport {
         'nearby devices.',
       );
     }
-    _emit('waiting', 'Advertising nearby — open the same code on the other phone');
+    _emit(
+      'waiting',
+      'Advertising nearby — open the same code on the other phone',
+    );
     // If nobody ever arrives, say so instead of waiting silently forever.
     Timer(const Duration(seconds: 30), () {
       if (_connectedEndpoint == null && _session != null) {
@@ -326,7 +328,8 @@ class NearbyTransport implements ShareTransport {
     if (blocked != null) throw StateError(blocked);
 
     final token = descriptor.data['token']?.toString() ?? '';
-    if (token.isEmpty) throw StateError('That share code is not a nearby code.');
+    if (token.isEmpty)
+      throw StateError('That share code is not a nearby code.');
     final nickname = await _deviceNickname();
 
     // Per-session state: the transport is long-lived, so the completers from a
@@ -374,9 +377,8 @@ class NearbyTransport implements ShareTransport {
     try {
       await _peerHello.future.timeout(
         const Duration(seconds: 20),
-        onTimeout: () => throw StateError(
-          'That device did not confirm the share code.',
-        ),
+        onTimeout: () =>
+            throw StateError('That device did not confirm the share code.'),
       );
     } catch (_) {
       await _nearby.disconnectFromEndpoint(peer).catchError((_) {});

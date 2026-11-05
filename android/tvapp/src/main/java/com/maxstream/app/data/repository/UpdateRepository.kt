@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import com.maxstream.app.Sha256
 import com.maxstream.app.core.Constants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,6 +29,7 @@ object UpdateRepository {
     private const val REPO = "MaxStream"
     private const val LATEST_URL = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
     private const val APK_HINT = "maxstream-tv"
+    private const val CHECKSUM_ASSET = "SHA256SUMS"
     private const val RELEASES_URL = "https://github.com/$OWNER/$REPO/releases"
     private const val WEBSITE_URL = "https://maxstreamweb.vercel.app/"
     private const val DOWNLOAD_FILE_NAME = "MaxStream-tv.apk"
@@ -53,6 +55,11 @@ object UpdateRepository {
         val sizeBytes: Long = -1L,
         val publishedAt: String = "",
         val releaseUrl: String = RELEASES_URL,
+        /**
+         * URL of the release's `SHA256SUMS` asset. Null on releases that predate
+         * update verification; the download then fails closed.
+         */
+        val checksumUrl: String? = null,
     )
 
     sealed class InstallResult {
@@ -92,6 +99,15 @@ object UpdateRepository {
                 if (tag.isEmpty()) return@withContext null
                 if (!isVersionNewer(currentVersion(context), tag)) return@withContext null
                 val assets = json.optJSONArray("assets") ?: JSONArray()
+                var checksumUrl: String? = null
+                for (i in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(i) ?: continue
+                    val name = asset.optString("name")
+                    if (name.equals(CHECKSUM_ASSET, ignoreCase = true)) {
+                        checksumUrl = asset.optString("browser_download_url")
+                            .takeIf { it.isNotBlank() }
+                    }
+                }
                 var size = -1L
                 for (i in 0 until assets.length()) {
                     val asset = assets.optJSONObject(i)
@@ -107,6 +123,7 @@ object UpdateRepository {
                             publishedAt = json.optString("published_at", ""),
                             releaseUrl = json.optString("html_url", RELEASES_URL)
                                 .ifBlank { RELEASES_URL },
+                            checksumUrl = checksumUrl,
                         )
                     }
                 }
@@ -124,6 +141,7 @@ object UpdateRepository {
     suspend fun downloadUpdate(
         context: Context,
         url: String,
+        checksumUrl: String?,
         onProgress: (Long, Long) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val target = File(context.cacheDir, DOWNLOAD_FILE_NAME)
@@ -156,7 +174,52 @@ object UpdateRepository {
             target.delete()
             throw IOException("Downloaded file is too small — likely an error page")
         }
+        verifyChecksum(target, url, checksumUrl)
         target
+    }
+
+    /**
+     * Compares the downloaded APK against the release's `SHA256SUMS`.
+     *
+     * Fails closed: a missing sidecar or a missing entry aborts the install, so
+     * an unverified (possibly tampered) file never reaches the system installer.
+     * The unverified file is deleted before the error is thrown.
+     */
+    private fun verifyChecksum(target: File, apkUrl: String, checksumUrl: String?) {
+        if (checksumUrl.isNullOrBlank()) {
+            target.delete()
+            throw IOException(
+                "This release does not publish SHA256SUMS, so the download " +
+                    "cannot be verified. Install from the website instead."
+            )
+        }
+        val fileName = assetNameFromUrl(apkUrl)
+        val sumsRequest = Request.Builder().url(checksumUrl).build()
+        val sums = client.newCall(sumsRequest).execute().use { response ->
+            if (!response.isSuccessful) {
+                target.delete()
+                throw IOException("Could not fetch SHA256SUMS (HTTP ${response.code})")
+            }
+            response.body?.string().orEmpty()
+        }
+        val expected = Sha256.findForFile(sums, fileName)
+        if (expected == null) {
+            target.delete()
+            throw IOException("SHA256SUMS does not list $fileName")
+        }
+        val actual = Sha256.fileHex(target)
+        if (!actual.equals(expected, ignoreCase = true)) {
+            target.delete()
+            throw IOException(
+                "Checksum mismatch for $fileName — the download is corrupted " +
+                    "or was tampered with"
+            )
+        }
+    }
+
+    private fun assetNameFromUrl(url: String): String {
+        val raw = url.substringBefore('?').substringBefore('#').substringAfterLast('/')
+        return runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
     }
 
     /** Hands a downloaded APK to the system installer (FileProvider content URI). */

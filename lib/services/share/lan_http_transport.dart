@@ -25,8 +25,7 @@ class LanHttpTransport implements ShareTransport {
   String? _address;
 
   final _senderEvents = StreamController<ShareSenderEvent>.broadcast();
-  final _progress =
-      StreamController<Map<int, ShareFileProgress>>.broadcast();
+  final _progress = StreamController<Map<int, ShareFileProgress>>.broadcast();
   final Map<int, ShareFileProgress> _lastProgress = {};
 
   static const Duration _connectTimeout = Duration(seconds: 8);
@@ -75,7 +74,11 @@ class LanHttpTransport implements ShareTransport {
     );
   }
 
-  Future<void> _serve(HttpServer server, String token, ShareSession session) async {
+  Future<void> _serve(
+    HttpServer server,
+    String token,
+    ShareSession session,
+  ) async {
     await for (final request in server) {
       final segments = request.uri.pathSegments;
       // /s/<token>/manifest.json | /s/<token>/f/<index>
@@ -200,7 +203,9 @@ class LanHttpTransport implements ShareTransport {
       final request = await client
           .getUrl(Uri.parse('http://$host:$port/s/$token/manifest.json'))
           .timeout(const Duration(seconds: 15));
-      final response = await request.close().timeout(const Duration(seconds: 20));
+      final response = await request.close().timeout(
+        const Duration(seconds: 20),
+      );
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException(
           'Sender returned ${response.statusCode}',
@@ -244,7 +249,9 @@ class LanHttpTransport implements ShareTransport {
       if (from > 0) {
         request.headers.set(HttpHeaders.rangeHeader, 'bytes=$from-');
       }
-      final response = await request.close().timeout(const Duration(minutes: 5));
+      final response = await request.close().timeout(
+        const Duration(minutes: 5),
+      );
       if (response.statusCode != HttpStatus.partialContent &&
           response.statusCode != HttpStatus.ok) {
         throw HttpException(
@@ -273,7 +280,11 @@ class LanHttpTransport implements ShareTransport {
   @override
   Future<void> closeReceiver() async {}
 
-  void _updateProgress(ShareFileEntry file, int received, {required bool done}) {
+  void _updateProgress(
+    ShareFileEntry file,
+    int received, {
+    required bool done,
+  }) {
     _lastProgress[file.index] = ShareFileProgress(
       received: received,
       total: file.size,
@@ -330,7 +341,9 @@ class LanHttpTransport implements ShareTransport {
   static String _randomToken() {
     const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
     final random = Random.secure();
-    return List.generate(8, (_) => alphabet[random.nextInt(alphabet.length)])
-        .join();
+    return List.generate(
+      8,
+      (_) => alphabet[random.nextInt(alphabet.length)],
+    ).join();
   }
 }

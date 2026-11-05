@@ -337,6 +337,14 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     imeAction = if (selectedTab == 0) ImeAction.Done else ImeAction.Next,
                     onDone = { if (selectedTab == 0) submit() else moveFocus(1) },
                 )
+                if (selectedTab == 0) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "On your phone, open MaxStream → TV Pairing and enter the 6-digit code shown there.",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 14.sp,
+                    )
+                }
                 if (selectedTab != 0) {
                     Spacer(Modifier.height(16.dp))
                     AuthField(

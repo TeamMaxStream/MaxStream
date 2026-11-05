@@ -24,12 +24,14 @@ class CustomNavBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final navBarHeight = ResponsiveUtils.getNavBarHeight(context);
     final horizontalPadding = ResponsiveUtils.getHorizontalPadding(context);
-    
+
     return Container(
       height: navBarHeight,
       decoration: BoxDecoration(
         color: backgroundColor,
-        borderRadius: ResponsiveUtils.isTablet(context) || ResponsiveUtils.isDesktop(context)
+        borderRadius:
+            ResponsiveUtils.isTablet(context) ||
+                ResponsiveUtils.isDesktop(context)
             ? const BorderRadius.only(
                 topLeft: Radius.circular(24),
                 topRight: Radius.circular(24),
@@ -38,16 +40,15 @@ class CustomNavBar extends StatelessWidget {
                 topLeft: Radius.circular(20),
                 topRight: Radius.circular(20),
               ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x99000000),
-            blurRadius: 10,
-          ),
-        ],
+        boxShadow: const [BoxShadow(color: Color(0x99000000), blurRadius: 10)],
       ),
       padding: EdgeInsets.symmetric(
         horizontal: horizontalPadding,
-        vertical: ResponsiveUtils.isTablet(context) || ResponsiveUtils.isDesktop(context) ? 12 : 10,
+        vertical:
+            ResponsiveUtils.isTablet(context) ||
+                ResponsiveUtils.isDesktop(context)
+            ? 12
+            : 10,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -59,7 +60,12 @@ class CustomNavBar extends StatelessWidget {
     );
   }
 
-  Widget _buildNavItem(Widget icon, String label, int index, BuildContext context) {
+  Widget _buildNavItem(
+    Widget icon,
+    String label,
+    int index,
+    BuildContext context,
+  ) {
     final isSelected = index == currentIndex;
     return Expanded(
       child: Material(
@@ -80,7 +86,9 @@ class CustomNavBar extends StatelessWidget {
                   duration: const Duration(milliseconds: 150),
                   child: IconTheme(
                     data: IconThemeData(
-                      color: isSelected ? selectedItemColor : unselectedItemColor,
+                      color: isSelected
+                          ? selectedItemColor
+                          : unselectedItemColor,
                       size: ResponsiveUtils.responsive(
                         context,
                         mobile: 24.0,
@@ -91,7 +99,13 @@ class CustomNavBar extends StatelessWidget {
                     child: icon,
                   ),
                 ),
-                SizedBox(height: ResponsiveUtils.isTablet(context) || ResponsiveUtils.isDesktop(context) ? 6 : 4),
+                SizedBox(
+                  height:
+                      ResponsiveUtils.isTablet(context) ||
+                          ResponsiveUtils.isDesktop(context)
+                      ? 6
+                      : 4,
+                ),
                 AnimatedDefaultTextStyle(
                   duration: const Duration(milliseconds: 150),
                   style: TextStyle(
@@ -100,7 +114,9 @@ class CustomNavBar extends StatelessWidget {
                       context,
                       mobile: isSelected ? 12.5 : 12,
                     ),
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    fontWeight: isSelected
+                        ? FontWeight.w600
+                        : FontWeight.normal,
                   ),
                   child: Text(label),
                 ),

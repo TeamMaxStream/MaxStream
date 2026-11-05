@@ -328,11 +328,16 @@ class DBHelper {
   static Future<List<Map<String, dynamic>>> getAllMediaDownloads() async {
     if (kIsWeb) return const [];
     final db = await database;
-    final downloads = await db.query('media_downloads', orderBy: 'downloadDate DESC');
+    final downloads = await db.query(
+      'media_downloads',
+      orderBy: 'downloadDate DESC',
+    );
     return downloads.map((download) {
       final result = Map<String, dynamic>.from(download);
       try {
-        result['subtitles'] = jsonDecode(download['subtitles']?.toString() ?? '[]');
+        result['subtitles'] = jsonDecode(
+          download['subtitles']?.toString() ?? '[]',
+        );
       } on FormatException {
         result['subtitles'] = <dynamic>[];
       }
@@ -351,10 +356,7 @@ class DBHelper {
     final db = await database;
     await db.update(
       'media_downloads',
-      {
-        'localPath': localPath,
-        'subtitles': jsonEncode(subtitles),
-      },
+      {'localPath': localPath, 'subtitles': jsonEncode(subtitles)},
       where: 'downloadKey = ?',
       whereArgs: [downloadKey],
     );
@@ -432,7 +434,6 @@ class DBHelper {
   static void notifyDownloadsChanged() {
     DownloadStorageService.notifyChanged();
   }
-
 
   static Future<void> addToWatchlist(Movie movie) async {
     if (kIsWeb) return;

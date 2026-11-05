@@ -96,7 +96,9 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _connecting ? null : () => _connect(_codeController.text),
+                  onPressed: _connecting
+                      ? null
+                      : () => _connect(_codeController.text),
                   icon: const Icon(Icons.link, size: 18),
                   label: Text(_connecting ? 'Connecting…' : 'Connect'),
                   style: ElevatedButton.styleFrom(
@@ -207,7 +209,7 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
                   _selected.isEmpty
                       ? 'Select something to receive'
                       : 'Receive ${_selected.length} item${_selected.length == 1 ? '' : 's'} '
-                          '(${DownloadStorageService.formatBytes(totalSelected)})',
+                            '(${DownloadStorageService.formatBytes(totalSelected)})',
                 ),
               ),
             ),
@@ -252,7 +254,9 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
   Future<void> _connect(String raw) async {
     final descriptor = ShareDescriptor.tryParse(raw);
     if (descriptor == null) {
-      setState(() => _error = 'That does not look like a MaxStream share code.');
+      setState(
+        () => _error = 'That does not look like a MaxStream share code.',
+      );
       return;
     }
     setState(() {
@@ -262,16 +266,19 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
     try {
       // Nearby needs the same runtime permissions on this side: it advertises
       // too (that is how it finds the sender when the sender is quiet).
-      final status =
-          await ShareService.ensureTransportPermissions(descriptor.transportId);
+      final status = await ShareService.ensureTransportPermissions(
+        descriptor.transportId,
+      );
       if (status != PermissionStatus.granted) {
-        setState(() => _error = ShareService.describeError(
-          PlatformException(
-            code: 'permission',
-            message: 'Nearby permissions were not granted',
+        setState(
+          () => _error = ShareService.describeError(
+            PlatformException(
+              code: 'permission',
+              message: 'Nearby permissions were not granted',
+            ),
+            descriptor.transportId,
           ),
-          descriptor.transportId,
-        ));
+        );
         return;
       }
       final manifest = await ShareService.instance.previewShare(descriptor);
@@ -281,12 +288,18 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
         _selected.addAll(manifest.items.map((i) => i.downloadKey));
       });
     } on NearbyNeedsPreciseLocation {
-      setState(() => _error = 'Android is sharing only approximate location '
-          'with MaxStream, which nearby sharing cannot use. Open the MaxStream '
-          'permission screen and choose Precise, or send with the Wi-Fi '
-          'option instead.');
+      setState(
+        () => _error =
+            'Android is sharing only approximate location '
+            'with MaxStream, which nearby sharing cannot use. Open the MaxStream '
+            'permission screen and choose Precise, or send with the Wi-Fi '
+            'option instead.',
+      );
     } catch (error) {
-      setState(() => _error = ShareService.describeError(error, descriptor.transportId));
+      setState(
+        () =>
+            _error = ShareService.describeError(error, descriptor.transportId),
+      );
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
@@ -312,9 +325,11 @@ class _ShareReceiveScreenState extends State<ShareReceiveScreen> {
       _receiving = true;
       _stage = '';
     });
-    _progressSub = ShareService.instance.progress(descriptor.transportId).listen((_) {
-      if (mounted) setState(() {});
-    });
+    _progressSub = ShareService.instance
+        .progress(descriptor.transportId)
+        .listen((_) {
+          if (mounted) setState(() {});
+        });
     try {
       await ShareService.instance.receive(
         descriptor,

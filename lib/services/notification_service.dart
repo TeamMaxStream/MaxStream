@@ -110,12 +110,15 @@ class NotificationService {
     required int total,
     required bool sending,
   }) async {
-    final percent = total <= 0 ? 0 : ((done / total) * 100).round().clamp(0, 100);
+    final percent = total <= 0
+        ? 0
+        : ((done / total) * 100).round().clamp(0, 100);
     final size = _humanBytes(done);
     final details = AndroidNotificationDetails(
       'maxstream_share',
       'Device-to-device sharing',
-      channelDescription: 'Progress while sending or receiving a shared movie '
+      channelDescription:
+          'Progress while sending or receiving a shared movie '
           'or series to another device',
       importance: Importance.low,
       priority: Priority.low,
@@ -149,7 +152,8 @@ class NotificationService {
     const details = AndroidNotificationDetails(
       'maxstream_share',
       'Device-to-device sharing',
-      channelDescription: 'Progress while sending or receiving a shared movie '
+      channelDescription:
+          'Progress while sending or receiving a shared movie '
           'or series to another device',
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,

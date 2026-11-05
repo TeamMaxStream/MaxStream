@@ -165,7 +165,12 @@ class ShareService {
             continue;
           }
           files.add(
-            ShareFileEntry(index: index++, name: name, size: size, path: entity.path),
+            ShareFileEntry(
+              index: index++,
+              name: name,
+              size: size,
+              path: entity.path,
+            ),
           );
         }
       } catch (_) {
@@ -220,9 +225,9 @@ class ShareService {
       openFile: (file, {int? start, int? end}) async {
         final path = file.path;
         if (path == null) return const Stream<Uint8List>.empty();
-        return File(path)
-            .openRead(start)
-            .map((chunk) => Uint8List.fromList(chunk));
+        return File(
+          path,
+        ).openRead(start).map((chunk) => Uint8List.fromList(chunk));
       },
     );
     final descriptor = await transport.publish(session);
@@ -243,10 +248,7 @@ class ShareService {
   }
 
   /// Watches a running share and mirrors it into a notification (bytes sent).
-  void _watchSendingProgress(
-    String transportId,
-    ShareManifest manifest,
-  ) {
+  void _watchSendingProgress(String transportId, ShareManifest manifest) {
     final transport = transportById(transportId);
     final notifications = NotificationService();
     const notificationId = 0x5A4E; // 'SN' — same slot as receiving
@@ -266,7 +268,8 @@ class ShareService {
         sent += entry.received;
         final item = filesByIndex[index];
         if (item != null) {
-          byItem[item.downloadKey] = (byItem[item.downloadKey] ?? 0) + entry.received;
+          byItem[item.downloadKey] =
+              (byItem[item.downloadKey] ?? 0) + entry.received;
         }
       });
       final percent = total <= 0 ? 0 : ((sent / total) * 100).round();
@@ -275,25 +278,28 @@ class ShareService {
       final active = byItem.entries.isEmpty
           ? manifest.senderName
           : manifest.items
-              .firstWhere(
-                (i) => i.downloadKey == byItem.keys.first,
-                orElse: () => manifest.items.first,
-              )
-              .title;
-      unawaited(notifications.showShareProgress(
-        id: notificationId,
-        title: 'Sending ${manifest.items.length} item${manifest.items.length == 1 ? '' : 's'}',
-        label: active,
-        done: sent,
-        total: total,
-        sending: true,
-      ));
+                .firstWhere(
+                  (i) => i.downloadKey == byItem.keys.first,
+                  orElse: () => manifest.items.first,
+                )
+                .title;
+      unawaited(
+        notifications.showShareProgress(
+          id: notificationId,
+          title:
+              'Sending ${manifest.items.length} item${manifest.items.length == 1 ? '' : 's'}',
+          label: active,
+          done: sent,
+          total: total,
+          sending: true,
+        ),
+      );
     });
     _sendingSubscribers[transportId] = sub;
   }
 
   final Map<String, StreamSubscription<Map<int, ShareFileProgress>>>
-      _sendingSubscribers = {};
+  _sendingSubscribers = {};
 
   /// Ends the sending notification with a success/failure line.
   Future<void> finishSending(
@@ -307,7 +313,7 @@ class ShareService {
       id: 0x5A4E,
       label: error == null
           ? '${manifest.items.length} item${manifest.items.length == 1 ? '' : 's'} '
-              '· ${DownloadStorageService.formatBytes(manifest.totalBytes)}'
+                '· ${DownloadStorageService.formatBytes(manifest.totalBytes)}'
           : 'Send failed',
       sending: true,
       error: error,
@@ -356,74 +362,79 @@ class ShareService {
         }
       }
       final total = items.fold<int>(0, (sum, item) => sum + item.totalBytes);
-      unawaited(notifications.showShareProgress(
-        id: notificationId,
-        title: 'Receiving ${items.length} item${items.length == 1 ? '' : 's'}',
-        label: currentLabel,
-        done: received,
-        total: total,
-        sending: false,
-      ));
+      unawaited(
+        notifications.showShareProgress(
+          id: notificationId,
+          title:
+              'Receiving ${items.length} item${items.length == 1 ? '' : 's'}',
+          label: currentLabel,
+          done: received,
+          total: total,
+          sending: false,
+        ),
+      );
     });
 
     try {
       for (final item in items) {
-      onStage?.call(item.title);
-      currentLabel = item.title;
-      final key = item.downloadKey.isEmpty
-          ? 'shared_${item.mediaId}_${DateTime.now().microsecondsSinceEpoch}'
-          : item.downloadKey;
-      final directory = Directory(p.join(root.path, key));
-      if (await directory.exists()) {
-        await directory.delete(recursive: true);
-      }
-      await directory.create(recursive: true);
+        onStage?.call(item.title);
+        currentLabel = item.title;
+        final key = item.downloadKey.isEmpty
+            ? 'shared_${item.mediaId}_${DateTime.now().microsecondsSinceEpoch}'
+            : item.downloadKey;
+        final directory = Directory(p.join(root.path, key));
+        if (await directory.exists()) {
+          await directory.delete(recursive: true);
+        }
+        await directory.create(recursive: true);
 
-      // Manifest first: if the transfer dies halfway the partial directory has
-      // no `.complete` marker, so the app never lists a broken item.
-      final manifestFile = File(p.join(directory.path, 'share_manifest.json'));
-      await manifestFile.writeAsString(
-        '{"item":${item.toJson()}}',
-        flush: true,
-      );
+        // Manifest first: if the transfer dies halfway the partial directory has
+        // no `.complete` marker, so the app never lists a broken item.
+        final manifestFile = File(
+          p.join(directory.path, 'share_manifest.json'),
+        );
+        await manifestFile.writeAsString(
+          '{"item":${item.toJson()}}',
+          flush: true,
+        );
 
-      for (final file in item.files) {
-        final target = File(p.join(directory.path, file.name));
-        await _writeFile(transport, descriptor, file, target);
-      }
+        for (final file in item.files) {
+          final target = File(p.join(directory.path, file.name));
+          await _writeFile(transport, descriptor, file, target);
+        }
 
-      final subtitles = <Map<String, dynamic>>[];
-      for (var i = 0; i < item.subtitleNames.length; i++) {
-        subtitles.add({
-          'label': 'Subtitle ${i + 1}',
-          'url': p.join(directory.path, item.subtitleNames[i]),
-          'default': i == 0,
-          'source': 'Shared',
-        });
-      }
+        final subtitles = <Map<String, dynamic>>[];
+        for (var i = 0; i < item.subtitleNames.length; i++) {
+          subtitles.add({
+            'label': 'Subtitle ${i + 1}',
+            'url': p.join(directory.path, item.subtitleNames[i]),
+            'default': i == 0,
+            'source': 'Shared',
+          });
+        }
 
-      await File(p.join(directory.path, '.complete')).writeAsString(
-        'ok',
-        flush: true,
-      );
+        await File(
+          p.join(directory.path, '.complete'),
+        ).writeAsString('ok', flush: true);
 
-      await DBHelper.insertMediaDownload(
-        downloadKey: key,
-        mediaId: item.mediaId,
-        mediaType: item.mediaType,
-        title: item.title,
-        thumbnail: item.thumbnail,
-        localPath: p.join(directory.path, item.entryFile),
-        subtitles: subtitles,
-        seriesId: item.seriesId,
-        seasonNumber: item.seasonNumber,
-        episodeNumber: item.episodeNumber,
-      );
+        await DBHelper.insertMediaDownload(
+          downloadKey: key,
+          mediaId: item.mediaId,
+          mediaType: item.mediaType,
+          title: item.title,
+          thumbnail: item.thumbnail,
+          localPath: p.join(directory.path, item.entryFile),
+          subtitles: subtitles,
+          seriesId: item.seriesId,
+          seasonNumber: item.seasonNumber,
+          episodeNumber: item.episodeNumber,
+        );
       }
       DBHelper.notifyDownloadsChanged();
       await notifications.showShareFinished(
         id: notificationId,
-        label: '${items.length} item${items.length == 1 ? '' : 's'} '
+        label:
+            '${items.length} item${items.length == 1 ? '' : 's'} '
             '· ${DownloadStorageService.formatBytes(items.fold<int>(0, (sum, i) => sum + i.totalBytes))}',
         sending: false,
       );

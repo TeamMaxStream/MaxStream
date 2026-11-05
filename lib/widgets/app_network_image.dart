@@ -37,11 +37,8 @@ class AppNetworkImage extends StatelessWidget {
       // here so they never reach FlutterError / Crashlytics as a fatal crash.
       // The errorWidget below still renders the fallback UI.
       errorListener: (Object error) {},
-      placeholder: (context, _) => Container(
-        width: width,
-        height: height,
-        color: Colors.grey[850],
-      ),
+      placeholder: (context, _) =>
+          Container(width: width, height: height, color: Colors.grey[850]),
       errorWidget: (context, url, error) => errorWidget ?? _defaultError(),
     );
   }

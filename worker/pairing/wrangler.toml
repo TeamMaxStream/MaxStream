@@ -1,0 +1,10 @@
+name = "maxstream-pairing"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+# Per-IP rate limiting for the public redemption endpoint. Without it the
+# endpoint still works, but 6-digit codes have no abuse brake beyond code
+# expiry and single use.
+[[kv_namespaces]]
+binding = "PAIRING_KV"
+id = "8aee276574154416bf8db29ef96308a7"

@@ -24,6 +24,7 @@ class DownloadsScreen extends StatefulWidget {
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
   List<Map<String, dynamic>> _downloads = const [];
+
   /// Real on-disk bytes per download, measured when the list loads. The rows
   /// carry no size column and `localPath` is a few-KB playlist for HLS
   /// downloads, so nothing could be derived from the row itself.
@@ -712,10 +713,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   void _pickAndSend() => showSharePicker(context);
 
   /// Per-series Send: same picker, scoped to that series' episodes.
-  void _pickAndSendSeries(
-    List<Map<String, dynamic>> episodes,
-    String title,
-  ) {
+  void _pickAndSendSeries(List<Map<String, dynamic>> episodes, String title) {
     showSharePicker(context, downloads: episodes, title: title);
   }
 

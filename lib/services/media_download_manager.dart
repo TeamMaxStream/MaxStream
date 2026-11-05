@@ -686,10 +686,7 @@ class MediaDownloadManager extends ChangeNotifier {
         final maxHeight = lowestQuality
             ? _lowestVariantHeight(selected['qualities'])
             : null;
-        final expectedTotal = await _measureExpectedTotal(
-          masterUrl,
-          headers,
-        );
+        final expectedTotal = await _measureExpectedTotal(masterUrl, headers);
         await start(
           downloadKey: downloadKey,
           url: masterUrl,
@@ -841,7 +838,8 @@ class MediaDownloadManager extends ChangeNotifier {
     // Settings", not "the highest variant available" — resolveAndStart already
     // applied this, but the sheet starts downloads through start() directly.
     final effectiveMaxHeight =
-        maxVariantHeightPixels ?? DownloadsSettingsService.maxVariantHeightPixels;
+        maxVariantHeightPixels ??
+        DownloadsSettingsService.maxVariantHeightPixels;
     final label = title;
     final notificationId = downloadKey.hashCode & 0x7fffffff;
     var lastNotificationProgress = -1;

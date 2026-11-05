@@ -19,6 +19,7 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.3.0"
     id("com.android.application") version "9.0.1" apply false
+    id("com.android.library") version "9.0.1" apply false
     // Kotlin Gradle Plugin: required because built-in Kotlin is opted out of
     // (see gradle.properties). 2.3.20 is past Flutter's 2.2.20 floor and past
     // the 2.3.20 "support will be dropped" threshold.
@@ -26,6 +27,9 @@ plugins {
 }
 
 include(":app")
+// Stream extractor shared by the phone app and the native TV app. Always
+// included (no native dependencies), so both builds compile the same sources.
+include(":streamcore")
 // TV app is a separate product flavor with heavy native deps (nextlib FFmpeg).
 // Including it unconditionally makes *any* Gradle invocation (including
 // `flutter build apk` for mobile) configure :tvapp and try to resolve

@@ -1,6 +1,7 @@
 package com.maxstream.app.data.repository
 
 import android.content.Context
+import android.util.Base64
 import com.maxstream.app.data.local.SessionManager
 import com.google.gson.Gson
 import com.google.gson.JsonObject
@@ -18,24 +19,22 @@ import java.util.concurrent.TimeUnit
  * not bundle the Firebase SDK or google-services.json, so auth goes over the
  * public Firebase REST APIs using OkHttp/Gson.
  *
- * Device-code pairing uses Firebase Realtime Database (RTDB) REST API instead
- * of Firestore to avoid Firestore daily usage limits.
- *
  * Flow:
- *  - Device Code: read the code from RTDB `device_codes/{code}`, burn it
- *    (isUsed -> true), then sign in directly with the embedded email and
- *    password via the Auth REST signInWithPassword endpoint.
+ *  - Device Code: POST the phone-generated code to the MaxStream pairing
+ *    Worker, which burns it server-side and returns a Firebase custom token.
+ *    The TV signs in with that token via `signInWithCustomToken`, so no
+ *    credentials ever travel through the (publicly readable) RTDB node or the
+ *    TV. Works for Google-only accounts too.
  *  - Sign In / Sign Up: email + password against the Auth REST endpoints.
  *  - A successful auth persists a lightweight session via [SessionManager] so
  *    subsequent launches skip the login screen.
  */
 object AuthRepository {
-    private const val PROJECT_ID = "maxstream-8effc"
     private const val API_KEY = "AIzaSyAiNjTADd8kA3qi3Dgnvlyo1Vf347QnsYk"
 
     private const val AUTH_BASE = "https://identitytoolkit.googleapis.com/v1/accounts"
-    private const val RTDB_BASE =
-        "https://$PROJECT_ID-default-rtdb.firebaseio.com"
+    private const val PAIRING_REDEEM_URL =
+        "https://maxstream-pairing.maxstream123.workers.dev/pairing/redeem"
 
     private val JSON = "application/json".toMediaType()
 
@@ -60,25 +59,21 @@ object AuthRepository {
             }
         }
 
-    private suspend fun getJson(url: String): JsonObject? =
-        withContext(Dispatchers.IO) {
-            val request = Request.Builder().url(url).get().build()
-            client.newCall(request).execute().use { response ->
-                val text = response.body?.string() ?: return@use null
-                if (text == "null" || text.isBlank()) return@use null
-                runCatching { gson.fromJson(text, JsonObject::class.java) }.getOrNull()
-            }
-        }
+    private data class HttpResult(val status: Int, val body: JsonObject?)
 
-    private suspend fun patchJson(url: String, body: JsonObject): JsonObject? =
+    /** POSTs JSON and keeps the HTTP status so callers can map API errors. */
+    private suspend fun postJsonForStatus(url: String, body: JsonObject): HttpResult =
         withContext(Dispatchers.IO) {
             val request = Request.Builder()
                 .url(url)
-                .patch(body.toString().toRequestBody(JSON))
+                .post(body.toString().toRequestBody(JSON))
                 .build()
             client.newCall(request).execute().use { response ->
-                val text = response.body?.string() ?: return@use null
-                runCatching { gson.fromJson(text, JsonObject::class.java) }.getOrNull()
+                val text = response.body?.string().orEmpty()
+                val json = if (text.isBlank()) null else runCatching {
+                    gson.fromJson(text, JsonObject::class.java)
+                }.getOrNull()
+                HttpResult(response.code, json)
             }
         }
 
@@ -144,78 +139,65 @@ object AuthRepository {
     }
 
     /**
-     * Reads a device code from RTDB, burns it, and signs the linked user
-     * in directly using the email + password carried by the code.
+     * Redeems the 6-digit code shown on the phone. The pairing Worker validates
+     * and burns the code server-side (the TV never reads RTDB), mints a custom
+     * token for the code's uid, and the TV exchanges it for a Firebase session.
      */
     suspend fun authenticateWithDeviceCode(code: String): Result<Session> {
-        if (code.isBlank()) return Result.failure(IllegalArgumentException("Enter your code"))
-        val clean = code.trim()
-        val digits = clean.filter { it.isDigit() }
-        if (digits.length != 6) return Result.failure(
-            IllegalArgumentException("Code must be 6 digits"),
-        )
-        val encoded = java.net.URLEncoder.encode(digits, "UTF-8")
+        val digits = code.trim()
+        if (digits.isEmpty()) return Result.failure(IllegalArgumentException("Enter your code"))
+        if (!digits.matches(Regex("\\d{6}"))) {
+            return Result.failure(IllegalArgumentException("Code must be 6 digits"))
+        }
         return try {
-            val doc = getJson("$RTDB_BASE/device_codes/$encoded.json")
-                ?: return Result.failure(Exception(
-                    "Cannot reach MaxStream servers. Check your internet connection.",
-                ))
-
-            // RTDB returns plain JSON object with fields directly (no "fields" wrapper)
-            val email = doc.get("email")?.asString.orEmpty()
-            val password = doc.get("password")?.asString.orEmpty()
-            if (email.isBlank()) {
-                return Result.failure(Exception(
-                    "Code not found. Check the code and try again, "
-                        + "or generate a new code on your phone.",
-                ))
+            val body = JsonObject().apply { addProperty("code", digits) }
+            val response = postJsonForStatus(PAIRING_REDEEM_URL, body)
+            val customToken = response.body?.get("customToken")?.asString.orEmpty()
+            if (response.status in 200..299 && customToken.isNotEmpty()) {
+                return signInWithCustomToken(customToken)
             }
-            if (password.isBlank()) {
-                return Result.failure(Exception(
-                    "This code has no credentials. Sign in with your email "
-                        + "and password instead, or generate a new code from "
-                        + "a phone that signed in with email/password.",
-                ))
+            val message = when (response.status) {
+                400 -> "Invalid pairing code. Check the code and try again."
+                404 -> "Code not found, already used, or expired. Generate a new code on your phone."
+                409 -> "This code was already used. Generate a new code on your phone."
+                429 -> "Too many attempts. Wait a minute and try again."
+                in 500..599 -> "MaxStream pairing is temporarily unavailable. Try again shortly."
+                else -> "Could not pair this TV. Check your connection and try again."
             }
-
-            val isUsed = doc.get("isUsed")?.asBoolean ?: false
-            if (isUsed) return Result.failure(Exception(
-                "Code already used. Generate a new code on your phone.",
-            ))
-
-            // Check expiry: RTDB stores as epoch millis (number)
-            val expiresAt = doc.get("expiresAt")?.asLong
-            if (expiresAt != null && System.currentTimeMillis() > expiresAt) {
-                return Result.failure(Exception(
-                    "Code expired. Generate a new code on your phone.",
-                ))
-            }
-
-            // Burn the code so it can never be reused.
-            val burnBody = JsonObject().apply {
-                addProperty("isUsed", true)
-            }
-            val burnUrl = "$RTDB_BASE/device_codes/$encoded.json"
-            runCatching { patchJson(burnUrl, burnBody) }
-
-            // Sign in directly with the credentials the code carries.
-            val signInBody = JsonObject().apply {
-                addProperty("email", email)
-                addProperty("password", password)
-                addProperty("returnSecureToken", true)
-            }
-            val auth = postJson("$AUTH_BASE:signInWithPassword?key=$API_KEY", signInBody)
-                ?: return Result.failure(Exception("Failed to sign in. Check your connection."))
-            if (auth.has("error")) return Result.failure(Exception(authError(auth)))
-
-            Result.success(sessionFrom(auth, email))
+            Result.failure(Exception(message))
         } catch (e: Exception) {
-            if (e is IllegalStateException || e is java.io.IOException) {
+            if (e is java.io.IOException) {
                 Result.failure(Exception("Failed to connect. Check your connection."))
             } else {
                 Result.failure(e)
             }
         }
+    }
+
+    private suspend fun signInWithCustomToken(customToken: String): Result<Session> {
+        val body = JsonObject().apply {
+            addProperty("token", customToken)
+            addProperty("returnSecureToken", true)
+        }
+        val auth = postJson("$AUTH_BASE:signInWithCustomToken?key=$API_KEY", body)
+            ?: return Result.failure(Exception("Failed to sign in. Check your connection."))
+        if (auth.has("error")) return Result.failure(Exception(authError(auth)))
+
+        val idToken = auth.get("idToken")?.asString.orEmpty()
+        val email = decodeIdTokenClaims(idToken)?.get("email")?.asString.orEmpty()
+        return Result.success(sessionFrom(auth, email))
+    }
+
+    /** Decodes the (unsigned) idToken payload to recover the account email. */
+    private fun decodeIdTokenClaims(idToken: String): JsonObject? {
+        val payload = idToken.split('.').getOrNull(1) ?: return null
+        return runCatching {
+            val bytes = Base64.decode(
+                payload,
+                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+            )
+            gson.fromJson(String(bytes, Charsets.UTF_8), JsonObject::class.java)
+        }.getOrNull()
     }
 
     suspend fun signInWithEmail(email: String, password: String): Result<Session> {

@@ -30,6 +30,7 @@ class StreamSizeProbe {
   StreamSizeProbe._();
 
   static final Map<String, ProbeResult> _cache = {};
+
   /// URLs that failed, with the time, so a transient network hiccup does not
   /// blank the row for the rest of the session — but a dead server is not
   /// re-probed on every keystroke either.
@@ -56,12 +57,12 @@ class StreamSizeProbe {
   /// loopback hosts, so a local test server cannot be used.
   @visibleForTesting
   static Future<String?> Function(String url, Map<String, String> headers)?
-      debugFetchTextOverride;
+  debugFetchTextOverride;
 
   /// Test seam: replaces the progressive-file size probe. See above.
   @visibleForTesting
   static Future<int?> Function(String url, Map<String, String> headers)?
-      debugContentLengthOverride;
+  debugContentLengthOverride;
 
   static Map<String, String> _withUserAgent(Map<String, String> headers) {
     final hasUa = headers.keys.any((k) => k.toLowerCase() == 'user-agent');
@@ -111,15 +112,13 @@ class StreamSizeProbe {
     int? averageBitrate,
     int? runtimeSeconds,
     int? height,
-  }) async =>
-      (await probeSize(
-        url,
-        headers: headers,
-        averageBitrate: averageBitrate,
-        runtimeSeconds: runtimeSeconds,
-        height: height,
-      ))
-          .bytes;
+  }) async => (await probeSize(
+    url,
+    headers: headers,
+    averageBitrate: averageBitrate,
+    runtimeSeconds: runtimeSeconds,
+    height: height,
+  )).bytes;
 
   /// Size in bytes plus whether it is an estimate, so the UI can label it.
   ///
@@ -142,18 +141,19 @@ class StreamSizeProbe {
             _failureCooldown) {
       return Future.value(failed);
     }
-    return _inFlight[key] ??= _probeSize(
-      url,
-      headers,
-      averageBitrate,
-      runtimeSeconds,
-      height,
-    ).whenComplete(() {
-      // Must be a void body: `() => _inFlight.remove(key)` returns the in-flight
-      // future itself, and whenComplete awaits futures its callback returns —
-      // so every probe waited on itself forever and no size ever appeared.
-      _inFlight.remove(key);
-    });
+    return _inFlight[key] ??=
+        _probeSize(
+          url,
+          headers,
+          averageBitrate,
+          runtimeSeconds,
+          height,
+        ).whenComplete(() {
+          // Must be a void body: `() => _inFlight.remove(key)` returns the in-flight
+          // future itself, and whenComplete awaits futures its callback returns —
+          // so every probe waited on itself forever and no size ever appeared.
+          _inFlight.remove(key);
+        });
   }
 
   static Future<ProbeResult> _probeSize(
@@ -213,7 +213,10 @@ class StreamSizeProbe {
       }
     }
 
-    final result = (bytes: (bytes != null && bytes > 0) ? bytes : null, estimated: estimated);
+    final result = (
+      bytes: (bytes != null && bytes > 0) ? bytes : null,
+      estimated: estimated,
+    );
     if (result.bytes != null) {
       _cache[keyFor(url, headers)] = result;
       _failed.remove(keyFor(url, headers));
@@ -262,9 +265,9 @@ class StreamSizeProbe {
       );
       await done.future.timeout(_timeout, onTimeout: () {});
 
-      final text =
-          utf8.decode(bytes.take(_peekBytes).toList(), allowMalformed: true)
-              .trimLeft();
+      final text = utf8
+          .decode(bytes.take(_peekBytes).toList(), allowMalformed: true)
+          .trimLeft();
       return _classifyText(text);
     } catch (_) {
       return _Kind.unknown;
@@ -368,7 +371,8 @@ class StreamSizeProbe {
     // list the same file for every segment, and byte-range playlists share one
     // file across slices — counting those as separate samples would multiply
     // the same bytes by the number of times they appear.
-    final byKey = <String, ({String uri, double seconds, int? start, int? end})>{};
+    final byKey =
+        <String, ({String uri, double seconds, int? start, int? end})>{};
     for (final segment in _segmentsOf(text, mediaUrl)) {
       final key = segment.start == null
           ? segment.uri
@@ -439,19 +443,29 @@ class StreamSizeProbe {
           ) ??
           0;
       if (bandwidth <= 0) continue;
-      final resolution =
-          RegExp(r'(?:^|\s)height="(\d+)"').firstMatch(tag)?.group(1);
-      final entry = (bandwidth: bandwidth, height: int.tryParse(resolution ?? '') ?? 0);
+      final resolution = RegExp(
+        r'(?:^|\s)height="(\d+)"',
+      ).firstMatch(tag)?.group(1);
+      final entry = (
+        bandwidth: bandwidth,
+        height: int.tryParse(resolution ?? '') ?? 0,
+      );
       if (best == null || entry.bandwidth > best.bandwidth) best = entry;
     }
     // Prefer the ceiling the caller asked for when the manifest lists it.
     if (height != null && height > 0) {
       for (final tag in representations) {
         final entryHeight =
-            int.tryParse(RegExp(r'(?:^|\s)height="(\d+)"').firstMatch(tag)?.group(1) ?? '') ?? 0;
+            int.tryParse(
+              RegExp(r'(?:^|\s)height="(\d+)"').firstMatch(tag)?.group(1) ?? '',
+            ) ??
+            0;
         if (entryHeight != height) continue;
         final bandwidth =
-            int.tryParse(RegExp(r'bandwidth="(\d+)"').firstMatch(tag)?.group(1) ?? '') ?? 0;
+            int.tryParse(
+              RegExp(r'bandwidth="(\d+)"').firstMatch(tag)?.group(1) ?? '',
+            ) ??
+            0;
         if (bandwidth > 0) return (bandwidth * total) ~/ 8;
       }
     }
@@ -536,8 +550,7 @@ class StreamSizeProbe {
     String playlistUrl,
   ) {
     final Uri? base = Uri.tryParse(playlistUrl);
-    final variants =
-        <({String uri, int bandwidth, int height})>[];
+    final variants = <({String uri, int bandwidth, int height})>[];
     String? pendingUri;
     var pendingBandwidth = 0;
     var pendingHeight = 0;
@@ -568,8 +581,8 @@ class StreamSizeProbe {
         // BANDWIDTH is a peak and would overstate the file.
         pendingBandwidth =
             int.tryParse(_attribute(trimmed, 'AVERAGE-BANDWIDTH') ?? '') ??
-                int.tryParse(_attribute(trimmed, 'BANDWIDTH') ?? '') ??
-                0;
+            int.tryParse(_attribute(trimmed, 'BANDWIDTH') ?? '') ??
+            0;
         pendingHeight = _heightOf(trimmed);
         continue;
       }
@@ -613,8 +626,7 @@ class StreamSizeProbe {
     String playlistUrl,
   ) {
     final Uri? base = Uri.tryParse(playlistUrl);
-    final segments =
-        <({String uri, double seconds, int? start, int? end})>[];
+    final segments = <({String uri, double seconds, int? start, int? end})>[];
     var pendingSeconds = 0.0;
     var pendingLength = 0;
     var nextOffset = 0;
@@ -694,7 +706,8 @@ class StreamSizeProbe {
   static String format(int? bytes, {required bool estimated}) {
     if (bytes == null || bytes <= 0) return '';
     final prefix = estimated ? '~' : '';
-    if (bytes < 1024 * 1024) return '$prefix${(bytes / 1024).toStringAsFixed(0)} KB';
+    if (bytes < 1024 * 1024)
+      return '$prefix${(bytes / 1024).toStringAsFixed(0)} KB';
     if (bytes < 1024 * 1024 * 1024) {
       return '$prefix${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }

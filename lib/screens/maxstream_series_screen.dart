@@ -405,7 +405,9 @@ class _MaxStreamSeriesScreenState extends State<MaxStreamSeriesScreen> {
             expectedTotalBytes: await _expectedTotalBytes(
               url,
               headers,
-              int.tryParse(selectedStream['maxVariantHeight']?.toString() ?? ''),
+              int.tryParse(
+                selectedStream['maxVariantHeight']?.toString() ?? '',
+              ),
             ),
             subtitles: (selectedStream['subtitles'] as List? ?? const [])
                 .whereType<Map>()
@@ -1693,6 +1695,7 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
   /// from an extension-less URL (VixSrc) is still an estimate even though
   /// `isHls()` cannot tell.
   final Map<String, ProbeResult> _qualitySizes = {};
+
   /// URLs currently being probed, so a slow probe shows "sizing…" rather than
   /// an empty cell — and a stalled one can't pin the sheet in that state
   /// forever (see _probeQualitySizes' per-URL deadline).
@@ -1807,7 +1810,8 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
     required String url,
   }) {
     for (final stream in stream0) {
-      final matches = stream['url']?.toString() == url ||
+      final matches =
+          stream['url']?.toString() == url ||
           (stream['qualities'] as List? ?? const []).any(
             (q) => q is Map && q['url']?.toString() == url,
           );
@@ -1853,16 +1857,14 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
         _selectedServerIndex! >= _availableStreams.length) {
       return const [];
     }
-    return StreamAudioHelper.tracksOf(
-      _availableStreams[_selectedServerIndex!],
-    );
+    return StreamAudioHelper.tracksOf(_availableStreams[_selectedServerIndex!]);
   }
 
   Map<String, dynamic>? get _selectedAudio =>
       _selectedAudioIndex == null ||
-              _selectedAudioIndex! >= _selectedAudioTracks.length
-          ? null
-          : _selectedAudioTracks[_selectedAudioIndex!];
+          _selectedAudioIndex! >= _selectedAudioTracks.length
+      ? null
+      : _selectedAudioTracks[_selectedAudioIndex!];
 
   Map<String, dynamic>? get _selectedStream {
     if (_selectedServerIndex == null) return null;
@@ -1878,25 +1880,23 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
       required String url,
       required String label,
       int? maxVariantHeight,
-    }) =>
-        {
-          'url': url,
-          'source': server['source']?.toString() ?? 'Server',
-          'headers': server['headers'],
-          'referer': server['referer']?.toString(),
-          'type': server['type']?.toString() ?? '',
-          'subtitles': server['subtitles'],
-          'audioTracks': server['audioTracks'],
-          'label': label,
-          if (maxVariantHeight != null) 'maxVariantHeight': maxVariantHeight,
-          if (audio != null) ...{
-            'preferredAudioLanguage':
-                StreamAudioHelper.languageOf(audio).isNotEmpty
-                ? StreamAudioHelper.languageOf(audio)
-                : StreamAudioHelper.labelOf(audio),
-            'preferredAudioLabel': StreamAudioHelper.displayName(audio),
-          },
-        };
+    }) => {
+      'url': url,
+      'source': server['source']?.toString() ?? 'Server',
+      'headers': server['headers'],
+      'referer': server['referer']?.toString(),
+      'type': server['type']?.toString() ?? '',
+      'subtitles': server['subtitles'],
+      'audioTracks': server['audioTracks'],
+      'label': label,
+      if (maxVariantHeight != null) 'maxVariantHeight': maxVariantHeight,
+      if (audio != null) ...{
+        'preferredAudioLanguage': StreamAudioHelper.languageOf(audio).isNotEmpty
+            ? StreamAudioHelper.languageOf(audio)
+            : StreamAudioHelper.labelOf(audio),
+        'preferredAudioLabel': StreamAudioHelper.displayName(audio),
+      },
+    };
     if (qualities is List && qualities.isNotEmpty) {
       final idx = _selectedQualityIndex ?? 0;
       if (idx < qualities.length) {
@@ -2086,7 +2086,10 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
                             // Measure this server's variants now that its
                             // quality list is what the user is looking at.
                             unawaited(
-                              _probeServerQualities(_availableStreams, serverIdx),
+                              _probeServerQualities(
+                                _availableStreams,
+                                serverIdx,
+                              ),
                             );
                           },
                           child: Container(
@@ -2299,38 +2302,32 @@ class _EpisodeQualitySheetState extends State<_EpisodeQualitySheet> {
                                     () => _selectedAudioIndex = null,
                                   ),
                                 ),
-                                ...List.generate(
-                                  _selectedAudioTracks.length,
-                                  (aIdx) {
-                                    final track =
-                                        _selectedAudioTracks[aIdx];
-                                    final isSelected =
-                                        _selectedAudioIndex == aIdx;
-                                    return ChoiceChip(
-                                      label: Text(
-                                        StreamAudioHelper.displayName(
-                                          track,
-                                        ),
-                                        style: const TextStyle(fontSize: 12),
-                                      ),
-                                      selected: isSelected,
-                                      selectedColor: Colors.red.withValues(
-                                        alpha: 0.25,
-                                      ),
-                                      backgroundColor: const Color(
-                                        0xFF252525,
-                                      ),
-                                      labelStyle: TextStyle(
-                                        color: isSelected
-                                            ? Colors.white
-                                            : Colors.white70,
-                                      ),
-                                      onSelected: (_) => setState(
-                                        () => _selectedAudioIndex = aIdx,
-                                      ),
-                                    );
-                                  },
-                                ),
+                                ...List.generate(_selectedAudioTracks.length, (
+                                  aIdx,
+                                ) {
+                                  final track = _selectedAudioTracks[aIdx];
+                                  final isSelected =
+                                      _selectedAudioIndex == aIdx;
+                                  return ChoiceChip(
+                                    label: Text(
+                                      StreamAudioHelper.displayName(track),
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    selected: isSelected,
+                                    selectedColor: Colors.red.withValues(
+                                      alpha: 0.25,
+                                    ),
+                                    backgroundColor: const Color(0xFF252525),
+                                    labelStyle: TextStyle(
+                                      color: isSelected
+                                          ? Colors.white
+                                          : Colors.white70,
+                                    ),
+                                    onSelected: (_) => setState(
+                                      () => _selectedAudioIndex = aIdx,
+                                    ),
+                                  );
+                                }),
                               ],
                             ),
                           ),

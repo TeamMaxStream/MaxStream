@@ -1,195 +1,72 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'dart:math';
-import 'dart:async';
-import 'secure_password_service.dart';
+import 'package:flutter/foundation.dart';
 
+/// Creates the one-time code shown by the phone during TV pairing.
+///
+/// The code is the only credential the TV sends to the pairing Worker. It is
+/// never accompanied by a password; the Worker validates and burns the code and
+/// returns a Firebase custom token.
 class DeviceCodeService {
   static final FirebaseDatabase _rtdb = FirebaseDatabase.instance;
   static final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  /// Generate a 6-digit code and save to Realtime Database
+  static const Duration codeLifetime = Duration(minutes: 15);
+  static const int _maxAttempts = 5;
+
+  /// Six digits, never with a leading zero: 100000–999999. Exposed for tests so
+  /// the code format cannot drift from the TV's `\d{6}` validation.
+  @visibleForTesting
+  static String generateSixDigitCode(Random random) =>
+      (100000 + random.nextInt(900000)).toString();
+
   static Future<String> generateDeviceCode() async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) throw Exception('User not authenticated');
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('You need to be signed in to generate a pairing code.');
+    }
 
-      print('Starting device code generation for user: ${user.uid}');
+    final expiresAt = DateTime.now().add(codeLifetime).millisecondsSinceEpoch;
+    final random = Random.secure();
+    Object? lastError;
 
-      // Generate random 6-digit code
-      final code = (100000 + Random().nextInt(900000)).toString();
-      print('Generated code: $code');
+    for (var attempt = 0; attempt < _maxAttempts; attempt++) {
+      final code = generateSixDigitCode(random);
+      try {
+        await _rtdb
+            .ref('device_codes/$code')
+            .set({
+              'code': code,
+              'userId': user.uid,
+              'createdAt': ServerValue.timestamp,
+              'expiresAt': expiresAt,
+              'isUsed': false,
+            })
+            .timeout(const Duration(seconds: 15));
 
-      // Save to RTDB with 15-minute expiry (epoch millis)
-      final expiresAt = DateTime.now()
-          .add(const Duration(minutes: 15))
-          .millisecondsSinceEpoch;
-
-      print('Writing to RTDB path: device_codes/$code');
-
-      // Carry the user's password so the TV can sign in directly with the
-      // code (interim solution until a custom-token backend exists).
-      final savedPassword = await SecurePasswordService.getPassword(
-        user.email ?? '',
-      );
-
-      if (savedPassword == null || savedPassword.isEmpty) {
-        throw Exception(
-          'NO_PASSWORD: Your password is not saved on this device. '
-          'Please sign out and sign in again with your email and password '
-          '(not Google sign-in) to enable TV pairing.',
-        );
-      }
-
-      // Use exponential backoff retry logic
-      int retryCount = 0;
-      const maxRetries = 3;
-      const baseDelay = Duration(milliseconds: 500);
-
-      while (retryCount < maxRetries) {
-        try {
-          await _rtdb
-              .ref('device_codes/$code')
-              .set({
-                'code': code,
-                'userId': user.uid,
-                'email': user.email,
-                'displayName': user.displayName,
-                'password': savedPassword,
-                'createdAt': ServerValue.timestamp,
-                'expiresAt': expiresAt,
-                'isUsed': false,
-              })
-              .timeout(
-                const Duration(seconds: 30),
-                onTimeout: () {
-                  throw TimeoutException(
-                    'RTDB write operation timed out after 30 seconds',
-                  );
-                },
-              );
-
-          print('Successfully saved device code: $code');
-          return code;
-        } on TimeoutException {
-          retryCount++;
-          if (retryCount < maxRetries) {
-            final delay = baseDelay * (1 << (retryCount - 1));
-            print(
-              'Timeout on attempt $retryCount, retrying in ${delay.inMilliseconds}ms...',
-            );
-            await Future.delayed(delay);
-          } else {
-            print('Max retries reached. Failed to save device code.');
-            throw TimeoutException(
-              'Failed to generate pairing code after $maxRetries attempts. Please check your internet connection and try again.',
-            );
-          }
+        return code;
+      } catch (e) {
+        lastError = e;
+        final message = e.toString().toLowerCase();
+        if (message.contains('permission_denied') ||
+            message.contains('permission denied')) {
+          throw Exception(
+            'Could not create a pairing code. Make sure you are signed in '
+            'and try again.',
+          );
         }
+        // A collision (the same six digits already exist) or a transient
+        // network error: pick another code and retry.
+        await Future<void>.delayed(Duration(milliseconds: 200 * (attempt + 1)));
       }
-
-      throw Exception('Failed to generate device code');
-    } on TimeoutException catch (e) {
-      print('Timeout error: $e');
-      throw Exception(e.toString());
-    } catch (e) {
-      print('Error generating device code: $e');
-      rethrow;
     }
-  }
 
-  /// Validate code and return user email
-  static Future<Map<String, String>> validateDeviceCode(String code) async {
-    try {
-      final snapshot = await _rtdb.ref('device_codes/$code').get();
-
-      if (!snapshot.exists || snapshot.value == null) {
-        throw Exception('Invalid code');
-      }
-
-      final data = Map<String, dynamic>.from(snapshot.value as Map);
-      final expiresAt = data['expiresAt'] as int;
-      final isUsed = data['isUsed'] as bool;
-
-      // Check if expired
-      if (DateTime.now().millisecondsSinceEpoch > expiresAt) {
-        throw Exception('Code expired');
-      }
-
-      // Check if already used
-      if (isUsed) {
-        throw Exception('Code already used');
-      }
-
-      // Mark as used
-      await _rtdb.ref('device_codes/$code').update({
-        'isUsed': true,
-        'usedAt': ServerValue.timestamp,
-      });
-
-      return {
-        'email': data['email'] as String,
-        'userId': data['userId'] as String,
-        'displayName': data['displayName'] as String? ?? '',
-      };
-    } catch (e) {
-      print('Error validating device code: $e');
-      rethrow;
-    }
-  }
-
-  /// Get active codes for current user (to display)
-  static Future<List<Map<String, dynamic>>> getActiveCodes() async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return [];
-
-      // Query device_codes where userId matches and isUsed is false
-      final snapshot = await _rtdb
-          .ref('device_codes')
-          .orderByChild('userId')
-          .equalTo(user.uid)
-          .get();
-
-      if (!snapshot.exists || snapshot.value == null) return [];
-
-      final codes = <Map<String, dynamic>>[];
-      final entries = Map<String, dynamic>.from(snapshot.value as Map);
-      for (final entry in entries.values) {
-        final data = Map<String, dynamic>.from(entry as Map);
-        if (data['isUsed'] == false) {
-          codes.add({'code': data['code'], 'expiresAt': data['expiresAt']});
-        }
-      }
-      return codes;
-    } catch (e) {
-      print('Error fetching codes: $e');
-      return [];
-    }
-  }
-
-  /// Revoke a code before it expires
-  static Future<void> revokeCode(String code) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) throw Exception('User not authenticated');
-
-      final snapshot = await _rtdb.ref('device_codes/$code').get();
-      if (!snapshot.exists || snapshot.value == null) {
-        throw Exception('Code not found');
-      }
-
-      final data = Map<String, dynamic>.from(snapshot.value as Map);
-      final userId = data['userId'];
-      if (userId != user.uid) throw Exception('Unauthorized');
-
-      await _rtdb.ref('device_codes/$code').update({
-        'isUsed': true,
-        'revokedAt': ServerValue.timestamp,
-      });
-    } catch (e) {
-      print('Error revoking code: $e');
-      rethrow;
-    }
+    throw Exception(
+      'Could not create a pairing code after $_maxAttempts attempts. '
+      'Check your connection and try again.${lastError == null ? '' : ' ($lastError)'}',
+    );
   }
 }

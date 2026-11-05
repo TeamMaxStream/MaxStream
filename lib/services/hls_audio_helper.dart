@@ -76,10 +76,7 @@ class HlsAudioHelper {
           trimmed.toUpperCase().contains('TYPE=AUDIO')) {
         final languageAttr = _attribute(trimmed, 'LANGUAGE');
         final nameAttr = _attribute(trimmed, 'NAME');
-        final track = {
-          'language': languageAttr ?? '',
-          'label': nameAttr ?? '',
-        };
+        final track = {'language': languageAttr ?? '', 'label': nameAttr ?? ''};
         if (!StreamAudioHelper.matches(track, language)) continue;
         matched++;
         var kept = trimmed.replaceAll(
@@ -122,7 +119,9 @@ class HlsAudioHelper {
       caseSensitive: false,
     ).firstMatch(line);
     if (match == null) return null;
-    final value = match.group(1)!.isNotEmpty ? match.group(1)! : match.group(2)!;
+    final value = match.group(1)!.isNotEmpty
+        ? match.group(1)!
+        : match.group(2)!;
     return value.isEmpty ? null : value;
   }
 

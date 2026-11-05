@@ -38,8 +38,18 @@ class NotificationRouter {
     if (payload.startsWith('update:')) {
       final context = navigatorKey?.currentContext;
       if (context == null || !context.mounted) return;
-      final url = payload.substring('update:'.length);
-      UpdateService.downloadAndInstallUpdate(context, url);
+      // New payloads are `update:<apkUrl>|<checksumUrl>`. Notifications
+      // posted by older app versions carry only the APK URL.
+      final parts = payload.substring('update:'.length).split('|');
+      final url = parts.first;
+      final checksumUrl = parts.length > 1 && parts[1].isNotEmpty
+          ? parts[1]
+          : null;
+      UpdateService.downloadAndInstallUpdate(
+        context,
+        url,
+        checksumUrl: checksumUrl,
+      );
       return;
     }
 
@@ -70,9 +80,7 @@ class NotificationRouter {
       final item = Movie.fromJson({
         'id': id,
         'media_type': mediaType,
-        'title': isMovie
-            ? (details['title'] ?? ' ')
-            : (details['name'] ?? ' '),
+        'title': isMovie ? (details['title'] ?? ' ') : (details['name'] ?? ' '),
         'name': details['name'] ?? details['title'] ?? ' ',
         'overview': details['overview'] ?? '',
         'poster_path': details['poster_path'] ?? '',
@@ -81,8 +89,11 @@ class NotificationRouter {
         'release_date': details['release_date'] ?? '',
         'first_air_date': details['first_air_date'] ?? '',
         'genre_ids':
-            (details['genres'] as List?)?.whereType<Map>().map((g) => g['id']).toList() ??
-                <dynamic>[],
+            (details['genres'] as List?)
+                ?.whereType<Map>()
+                .map((g) => g['id'])
+                .toList() ??
+            <dynamic>[],
       });
       await Navigator.of(context).push(
         MaterialPageRoute<void>(

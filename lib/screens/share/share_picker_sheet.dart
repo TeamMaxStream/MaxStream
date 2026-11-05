@@ -70,8 +70,9 @@ class _SharePickerSheetState extends State<_SharePickerSheet> {
           (b['seasonNumber'] as num?)?.toInt() ?? 0,
         );
         if (season != 0) return season;
-        return ((a['episodeNumber'] as num?)?.toInt() ?? 0)
-            .compareTo((b['episodeNumber'] as num?)?.toInt() ?? 0);
+        return ((a['episodeNumber'] as num?)?.toInt() ?? 0).compareTo(
+          (b['episodeNumber'] as num?)?.toInt() ?? 0,
+        );
       });
     }
     return grouped;
@@ -100,7 +101,8 @@ class _SharePickerSheetState extends State<_SharePickerSheet> {
   int _sizeOf(Map<String, dynamic> row) =>
       _sizes[row['downloadKey']?.toString() ?? ''] ?? 0;
 
-  String _keyOf(Map<String, dynamic> row) => row['downloadKey']?.toString() ?? '';
+  String _keyOf(Map<String, dynamic> row) =>
+      row['downloadKey']?.toString() ?? '';
 
   bool _isSelected(Map<String, dynamic> row) => _selected.contains(_keyOf(row));
 
@@ -213,7 +215,7 @@ class _SharePickerSheetState extends State<_SharePickerSheet> {
                   _selected.isEmpty
                       ? 'Nothing selected'
                       : '${_selected.length} item${_selected.length == 1 ? '' : 's'} • '
-                          '${DownloadStorageService.formatBytes(_totalBytes)}',
+                            '${DownloadStorageService.formatBytes(_totalBytes)}',
                   style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
               ),
@@ -221,7 +223,10 @@ class _SharePickerSheetState extends State<_SharePickerSheet> {
                 onPressed: _selected.isEmpty
                     ? null
                     : () => setState(_selected.clear),
-                child: const Text('Clear', style: TextStyle(color: Colors.grey)),
+                child: const Text(
+                  'Clear',
+                  style: TextStyle(color: Colors.grey),
+                ),
               ),
             ],
           ),
@@ -230,9 +235,9 @@ class _SharePickerSheetState extends State<_SharePickerSheet> {
             child: ElevatedButton(
               onPressed: _selected.isEmpty
                   ? null
-                  : () => Navigator.of(context).pop(
-                        widget.rows.where(_isSelected).toList(),
-                      ),
+                  : () => Navigator.of(
+                      context,
+                    ).pop(widget.rows.where(_isSelected).toList()),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
@@ -316,7 +321,8 @@ class _SharePickerSheetState extends State<_SharePickerSheet> {
                   ),
                   // Whole series in one tap, then drill in.
                   TextButton(
-                    onPressed: () => _setSubtree(episodes, !_allSelected(episodes)),
+                    onPressed: () =>
+                        _setSubtree(episodes, !_allSelected(episodes)),
                     child: Text(
                       _allSelected(episodes) ? 'None' : 'Whole series',
                       style: const TextStyle(color: Colors.red, fontSize: 12),
@@ -346,15 +352,20 @@ class _SharePickerSheetState extends State<_SharePickerSheet> {
                     Text(
                       '${_countSelected(season.value)}/${season.value.length} • '
                       '${DownloadStorageService.formatBytes(season.value.fold<int>(0, (sum, e) => sum + _sizeOf(e)))}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
                     ),
                   ],
                 ),
                 for (final episode in season.value)
                   _EpisodeTile(
-                    title: episode['episodeName']?.toString() ??
+                    title:
+                        episode['episodeName']?.toString() ??
                         'S${episode['seasonNumber']}E${episode['episodeNumber']}',
-                    subtitle: 'S${episode['seasonNumber']}E${episode['episodeNumber']}',
+                    subtitle:
+                        'S${episode['seasonNumber']}E${episode['episodeNumber']}',
                     size: _sizeOf(episode),
                     selected: _isSelected(episode),
                     indent: true,
@@ -375,17 +386,17 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 4),
-        child: Text(
-          text,
-          style: const TextStyle(
-            color: Colors.white38,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 1.2,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(top: 8, bottom: 4),
+    child: Text(
+      text,
+      style: const TextStyle(
+        color: Colors.white38,
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.2,
+      ),
+    ),
+  );
 }
 
 class _EpisodeTile extends StatelessWidget {
@@ -410,7 +421,12 @@ class _EpisodeTile extends StatelessWidget {
     return InkWell(
       onTap: () => onChanged(!selected),
       child: Padding(
-        padding: EdgeInsets.only(left: indent ? 40 : 8, right: 8, top: 2, bottom: 2),
+        padding: EdgeInsets.only(
+          left: indent ? 40 : 8,
+          right: 8,
+          top: 2,
+          bottom: 2,
+        ),
         child: Row(
           children: [
             Checkbox(

@@ -22,7 +22,8 @@ class ProfileAvatar extends StatelessWidget {
         return ValueListenableBuilder<String>(
           valueListenable: userService.avatar,
           builder: (context, selectedAvatar, child) {
-            final hasProfilePicture = profilePictureUrl != null &&
+            final hasProfilePicture =
+                profilePictureUrl != null &&
                 File(profilePictureUrl).existsSync();
 
             final container = Container(
@@ -49,10 +50,7 @@ class ProfileAvatar extends StatelessWidget {
             );
 
             if (onTap != null) {
-              return GestureDetector(
-                onTap: onTap,
-                child: container,
-              );
+              return GestureDetector(onTap: onTap, child: container);
             }
 
             return container;

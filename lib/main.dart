@@ -8,6 +8,7 @@ import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'services/notification_router.dart';
 import 'services/download_storage_service.dart';
+import 'services/legacy_credential_cleanup.dart';
 import 'services/media_download_manager.dart';
 import 'services/theme_service.dart';
 import 'services/update_service.dart';
@@ -91,6 +92,7 @@ class _StartupGateState extends State<_StartupGate> {
         await DownloadStorageService.migrateLegacyDownloads();
         await MediaDownloadManager.instance.initialize();
       }
+      await LegacyCredentialCleanup.runOnce();
       await ThemeService.instance.loadTheme();
     } catch (e, stack) {
       recordCrash('Bootstrap', e, stack);

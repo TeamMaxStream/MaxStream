@@ -25,20 +25,15 @@ class AppShimmer extends StatelessWidget {
   Widget build(BuildContext context) {
     // Brighten the highlight a touch toward white so the glint actually pops
     // like a mirror catching light, regardless of the caller's grey choice.
-    final glint = Color.lerp(highlightColor, Colors.white, 0.45) ?? highlightColor;
+    final glint =
+        Color.lerp(highlightColor, Colors.white, 0.45) ?? highlightColor;
     return Shimmer(
       period: period,
       gradient: LinearGradient(
         begin: Alignment.centerLeft,
         end: Alignment.centerRight,
         stops: const [0.0, 0.42, 0.5, 0.58, 1.0],
-        colors: [
-          baseColor,
-          baseColor,
-          glint,
-          baseColor,
-          baseColor,
-        ],
+        colors: [baseColor, baseColor, glint, baseColor, baseColor],
         tileMode: TileMode.clamp,
       ),
       child: child,

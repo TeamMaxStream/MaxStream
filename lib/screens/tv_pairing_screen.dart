@@ -46,13 +46,11 @@ class _TVPairingScreenState extends State<TVPairingScreen> {
   }
 
   String _formatErrorMessage(String error) {
-    if (error.contains('NO_PASSWORD') ||
-        error.contains('password is not saved')) {
-      return 'Your password is not saved on this device.\n\n'
-          'Please sign out and sign in again with your email and password '
-          '(not Google sign-in) to enable TV pairing.\n\n'
-          'If you originally signed in with Google, you\'ll need to set '
-          'a password first via Account Settings.';
+    if (error.contains('permission_denied') ||
+        error.contains('permission denied') ||
+        error.contains('Could not create a pairing code')) {
+      return 'Could not create a pairing code.\n\n'
+          'Make sure you are signed in and try again.';
     } else if (error.contains('timed out') ||
         error.contains('Timeout') ||
         error.contains('timed out after')) {
@@ -260,7 +258,9 @@ class _TVPairingScreenState extends State<TVPairingScreen> {
             child: Text(
               '$number',
               style: TextStyle(
-                color: isCompleted ? Colors.white : (isDark ? Colors.red[300]! : Colors.red[600]!),
+                color: isCompleted
+                    ? Colors.white
+                    : (isDark ? Colors.red[300]! : Colors.red[600]!),
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
               ),
@@ -279,7 +279,9 @@ class _TVPairingScreenState extends State<TVPairingScreen> {
                     style: TextStyle(
                       color: isCompleted ? textColor : subTextColor,
                       fontSize: 14,
-                      fontWeight: isCompleted ? FontWeight.bold : FontWeight.w500,
+                      fontWeight: isCompleted
+                          ? FontWeight.bold
+                          : FontWeight.w500,
                       height: 1.3,
                     ),
                   ),
@@ -345,7 +347,10 @@ class _TVPairingScreenState extends State<TVPairingScreen> {
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _accentRed,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 16,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -503,9 +508,7 @@ class _TVPairingScreenState extends State<TVPairingScreen> {
                 ? Colors.red.withOpacity(0.1)
                 : Colors.red.withOpacity(0.05),
             borderRadius: BorderRadius.circular(8),
-            border: const Border(
-              left: BorderSide(color: Colors.red, width: 3),
-            ),
+            border: const Border(left: BorderSide(color: Colors.red, width: 3)),
           ),
           child: Text(
             _errorMessage!,

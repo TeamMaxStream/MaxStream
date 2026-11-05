@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:maxstream/services/stream_size_probe.dart';
 
 /// The VixSrc shape: a playlist served from a URL that gives nothing away —
-/// "/playlist/<id>?token=…&expires=…&lang=en", no `.m3u8` anywhere, and the
+/// `/playlist/<id>?token=…&expires=…&lang=en`, no `.m3u8` anywhere, and the
 /// extractor reports no `qualities` at all.
 ///
 /// Deciding by file extension sent that URL down the progressive path, where a
@@ -44,27 +44,33 @@ void main() {
     StreamSizeProbe.debugContentLengthOverride = null;
   });
 
-  test('an extension-less playlist is measured as a video, not as its own KB',
-      () async {
-    const url = 'https://vixsrc.to/playlist/abc123?token=t&expires=1&lang=en';
-    expect(
-      StreamSizeProbe.isHls(url),
-      isFalse,
-      reason: 'this is the whole problem: the URL gives nothing away',
-    );
-    expect(classifyStreamBody(master), StreamSizeKind.hls);
+  test(
+    'an extension-less playlist is measured as a video, not as its own KB',
+    () async {
+      const url = 'https://vixsrc.to/playlist/abc123?token=t&expires=1&lang=en';
+      expect(
+        StreamSizeProbe.isHls(url),
+        isFalse,
+        reason: 'this is the whole problem: the URL gives nothing away',
+      );
+      expect(classifyStreamBody(master), StreamSizeKind.hls);
 
-    final result = await StreamSizeProbe.probeSize(url);
+      final result = await StreamSizeProbe.probeSize(url);
 
-    expect(result.bytes, isNotNull);
-    expect(result.bytes, greaterThan(1024 * 1024));
-    expect(
-      result.bytes,
-      isNot(812),
-      reason: '812 is the playlist length — never the size of the film',
-    );
-    expect(result.estimated, isTrue, reason: 'a playlist size is an estimate');
-  });
+      expect(result.bytes, isNotNull);
+      expect(result.bytes, greaterThan(1024 * 1024));
+      expect(
+        result.bytes,
+        isNot(812),
+        reason: '812 is the playlist length — never the size of the film',
+      );
+      expect(
+        result.estimated,
+        isTrue,
+        reason: 'a playlist size is an estimate',
+      );
+    },
+  );
 
   test('a DASH manifest is measured from its duration and bandwidth', () async {
     StreamSizeProbe.debugFetchTextOverride = (url, _) async => dash;

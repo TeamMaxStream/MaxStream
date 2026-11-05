@@ -15,6 +15,13 @@ class TmdbApi(
     private val client: OkHttpClient = defaultClient,
     private val apiKey: String = Constants.TMDB_API_KEY,
 ) {
+    init {
+        check(apiKey.isNotBlank()) {
+            "TMDB_API_KEY is not configured. Rebuild with -PTMDB_API_KEY=<key> " +
+                "or set the TMDB_API_KEY environment variable."
+        }
+    }
+
     private fun get(path: String, params: Map<String, String> = emptyMap()): JSONObject {
         val url = buildString {
             append(Constants.TMDB_BASE_URL).append(path)

@@ -86,7 +86,9 @@ class WebStreamService {
           'subtitles': data['subtitles'] is List ? data['subtitles'] : null,
         });
       }
-      debugPrint('$_tag: API returned HTTP ${response.statusCode} for $serverId');
+      debugPrint(
+        '$_tag: API returned HTTP ${response.statusCode} for $serverId',
+      );
     } catch (e) {
       debugPrint('$_tag: API call failed: $e');
     }

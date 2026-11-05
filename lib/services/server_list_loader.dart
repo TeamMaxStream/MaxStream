@@ -12,10 +12,9 @@ class ServerListLoader {
   /// for download/playback).
   static List<Map<String, dynamic>> availableOnly(
     List<Map<String, dynamic>> streams,
-  ) =>
-      streams
-          .where((stream) => (stream['url']?.toString() ?? '').isNotEmpty)
-          .toList();
+  ) => streams
+      .where((stream) => (stream['url']?.toString() ?? '').isNotEmpty)
+      .toList();
 
   /// Runs the three phases, invoking [onUpdate] with
   /// `(available, loading, refreshing, error)`. [isCurrent] must return false
@@ -33,7 +32,8 @@ class ServerListLoader {
       bool loading,
       bool refreshing,
       Object? error,
-    ) onUpdate,
+    )
+    onUpdate,
   }) async {
     var painted = false;
 

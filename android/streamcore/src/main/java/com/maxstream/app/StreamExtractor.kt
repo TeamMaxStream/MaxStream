@@ -12,6 +12,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,13 +34,14 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.Cookie
 import okhttp3.CookieJar
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Dns
+import okhttp3.dnsoverhttps.DnsOverHttps
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetAddress
@@ -64,14 +67,62 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.experimental.xor
 
+/** Teardown handler for extractor WebViews (see [teardownWebView]). */
+private val MAIN_HANDLER: Handler = Handler(Looper.getMainLooper())
+
+/**
+ * Pauses and mutes every media element on the page. Injected into extractor
+ * pages so a server that autoplays its player is never audible, even while the
+ * extractor is still polling for the stream URL.
+ */
+private const val MUTE_ALL_MEDIA_JS =
+    "document.querySelectorAll('video,audio').forEach(function(m){" +
+        "try{m.pause();m.muted=true;m.volume=0;}catch(e){}});" +
+        "if(window.MutationObserver){new MutationObserver(function(){" +
+        "document.querySelectorAll('video,audio').forEach(function(m){" +
+        "try{m.muted=true;m.volume=0;}catch(e){}});}).observe(document.documentElement," +
+        "{childList:true,subtree:true});}"
+
+/**
+ * Tears down an extractor WebView.
+ *
+ * Extractors never attach their WebView to a window, so `View.post` is useless
+ * for cleanup: the runnable sits in the attach queue forever and the page keeps
+ * running with an unmuted, autoplaying `<video>`. Starting a download races
+ * every server with nothing on screen, which is when that leak was audible —
+ * the movie started playing in the background on its own. A Handler post does
+ * not depend on attachment, so teardown now always runs; media is muted and
+ * paused first as a second line of defence.
+ */
+private fun teardownWebView(webView: WebView?) {
+    if (webView == null) return
+    MAIN_HANDLER.post {
+        runCatching { webView.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
+        runCatching { webView.onPause() }
+        runCatching { webView.stopLoading() }
+        runCatching { webView.destroy() }
+    }
+}
+
 /** Resolves TMDB metadata through server providers and host-specific extractors. */
 class StreamExtractor(private val context: Context) {
     private val tag = "StreamExtractor"
 
     companion object {
+        // Each alternative server is bounded by its own budget so one slow
+        // source can never wipe out the rest of the server list. WebView
+        // extractors run one-at-a-time and get a shorter cap to keep the
+        // overall resolve time sane.
         private const val HTTP_SERVER_TIMEOUT_MS = 18_000L
         private const val WEBVIEW_SERVER_TIMEOUT_MS = 12_000L
         private const val ALL_SERVERS_TOTAL_TIMEOUT_MS = 75_000L
+        private const val PRIMARY_TIMEOUT_MS = 45_000L
+        // Fast mode (server picker): shorter budgets + light HLS validation so
+        // the first servers appear in ~2-5s instead of waiting for the slowest
+        // host. A full resolve runs in the background afterwards.
+        private const val FAST_HTTP_SERVER_TIMEOUT_MS = 9_000L
+        private const val FAST_WEBVIEW_SERVER_TIMEOUT_MS = 7_000L
+        private const val FAST_ALL_SERVERS_TOTAL_TIMEOUT_MS = 25_000L
 
         /** Standalone stream-extraction API (VixSrc + VidLink + Videasy + NetMirror). */
         private const val MAX_STREAM_API = "https://maxstream-api.maxstream123.workers.dev"
@@ -209,10 +260,7 @@ class StreamExtractor(private val context: Context) {
 
     private interface HostExtractor {
         val name: String
-        /** True when extraction needs a WebView. WebViews are heavy and crash
-         *  1GB-class boxes when several run at once, so they are skipped there. */
-        val usesWebView: Boolean
-            get() = false
+        val usesWebView: Boolean get() = false
         fun supports(server: StreamServer): Boolean
         suspend fun extract(server: StreamServer): ExtractionResult
     }
@@ -235,7 +283,15 @@ class StreamExtractor(private val context: Context) {
         .build()
 
     private val dns: Dns by lazy {
-        Dns.SYSTEM
+        try {
+            DnsOverHttps.Builder()
+                .client(bootstrapClient)
+                .url("https://dns.google/dns-query".toHttpUrl())
+                .build()
+        } catch (error: Throwable) {
+            Log.w(tag, "DNS-over-HTTPS unavailable; using system DNS", error)
+            Dns.SYSTEM
+        }
     }
 
     private val client = OkHttpClient.Builder()
@@ -290,15 +346,14 @@ class StreamExtractor(private val context: Context) {
             VidsrcRuExtractor(),
             PrimeSrcExtractor(),
             MultiEmbedExtractor(),
-            VidFastExtractor(),
             VideasyExtractor(),
+            VidFastExtractor(),
             VoeExtractor(),
             StreamtapeExtractor(),
             TwoEmbedExtractor(),
             VidemExtractor(),
             FilemoonExtractor(),
             StreamWishExtractor(),
-            VidLoveExtractor(),
             DoodLaExtractor(),
             VidMoLyExtractor(),
             LuluVdoExtractor(),
@@ -312,6 +367,8 @@ class StreamExtractor(private val context: Context) {
             VidflixExtractor(),
             VixcloudExtractor(),
             StreamrubyExtractor(),
+            VidLoveExtractor(),
+            VidNestExtractor(),
             StreamUpExtractor(),
             VidaraExtractor(),
             VidHideExtractor(),
@@ -343,16 +400,11 @@ class StreamExtractor(private val context: Context) {
         Log.i(tag, "Resolving TMDB $tmdbId (movie=$isMovie, S$season E$episode)")
 
         val servers = buildServerList(media)
-        if (servers.isEmpty()) {
-            Log.w(tag, "No servers found for TMDB $tmdbId")
-            return@withContext null
-        }
         Log.i(tag, "Built ${servers.size} servers: ${servers.joinToString { it.name }}")
 
         // Race every server in parallel and take the FIRST playable one instead
         // of walking them one at a time (a single dead server used to stall the
-        // whole chain on its 12-45s timeouts). WebView extractors are skipped on
-        // 1GB-class boxes so several never render at once and OOM the device.
+        // whole chain on its 12-45s timeouts).
         // HTTP and WebView extractors use separate semaphores so slow WebViews
         // never block fast HTTP extractors from producing the first result.
         val httpSlots = Semaphore(4)
@@ -374,7 +426,7 @@ class StreamExtractor(private val context: Context) {
                 }
             }
         }
-        val first = withTimeoutOrNull(45_000) { channel.receive() }
+        val first = withTimeoutOrNull(PRIMARY_TIMEOUT_MS) { channel.receive() }
         jobs.forEach { it.cancel() }
         scope.cancel()
         if (first != null) {
@@ -392,58 +444,134 @@ class StreamExtractor(private val context: Context) {
         season: Int = 1,
         episode: Int = 1,
         title: String = "",
+        fast: Boolean = false,
     ): List<Map<String, Any>> = withContext(Dispatchers.IO) {
         require(tmdbId.isNotBlank()) { "TMDB ID is required" }
         val media = MediaRequest(tmdbId, isMovie, season, episode, title)
         val servers = buildServerList(media)
         val httpSlots = Semaphore(4)
         val webViewSlots = Semaphore(1)
-        val collected = CopyOnWriteArrayList<StreamResult>()
+        // Each server is bounded on its own budget so a single slow/hung
+        // source can't drop every other result. Results accumulate as each
+        // server finishes; if the overall cap is hit we still return the
+        // partial list instead of wiping everything.
+        // Fast mode (picker first paint): shorter per-server/total budgets and
+        // light HLS validation (master parse only, no per-variant segment
+        // fetches) so servers appear in seconds.
+        val totalTimeout = if (fast) {
+            FAST_ALL_SERVERS_TOTAL_TIMEOUT_MS
+        } else {
+            ALL_SERVERS_TOTAL_TIMEOUT_MS
+        }
+        val collected = CopyOnWriteArrayList<Map<String, Any>>()
         val jobs = servers.map { server ->
             async(Dispatchers.IO) {
                 val webView = isWebViewServer(server)
                 val slots = if (webView) webViewSlots else httpSlots
                 slots.withPermit {
-                    val timeout = if (webView) WEBVIEW_SERVER_TIMEOUT_MS else HTTP_SERVER_TIMEOUT_MS
-                    withTimeoutOrNull(timeout) {
+                    val perServerTimeout = if (fast) {
+                        if (webView) {
+                            FAST_WEBVIEW_SERVER_TIMEOUT_MS
+                        } else {
+                            FAST_HTTP_SERVER_TIMEOUT_MS
+                        }
+                    } else if (webView) {
+                        WEBVIEW_SERVER_TIMEOUT_MS
+                    } else {
+                        HTTP_SERVER_TIMEOUT_MS
+                    }
+                    val attempt = withTimeoutOrNull(perServerTimeout) {
                         try {
-                            // Enrich fills HLS audio renditions for extractors
-                            // that early-return without validateHls (list path
-                            // only — the playback race never pays for it).
-                            extractServer(server)
+                            val stream = extractServer(server, lightValidation = fast)
                                 ?.let { enrichHlsAudioTracks(it) }
-                                ?.let(collected::add)
+                            if (stream != null) {
+                                stream.toMap() + mapOf("available" to true)
+                            } else {
+                                failedServerMap(server, "No playable stream extracted")
+                            }
                         } catch (error: Throwable) {
                             if (error is CancellationException) throw error
                             Log.w(tag, "Alternative server ${server.name} failed: ${error.message}")
+                            failedServerMap(server, error.message ?: "Unknown error")
                         }
-                    }
+                    } ?: failedServerMap(server, "Timed out")
+                    collected.add(attempt)
                 }
             }
         }
-        withTimeoutOrNull(ALL_SERVERS_TOTAL_TIMEOUT_MS) {
-            jobs.forEach { it.join() }
+        withTimeoutOrNull(totalTimeout) {
+            coroutineScope { jobs.forEach { it.join() } }
         }
-        jobs.forEach { it.cancel() }
-        collected.distinctBy { it.url }.map(StreamResult::toMap)
+        val attempts = collected.toList()
+        // Keep one row per server identity: prefer a successful stream, else
+        // surface the latest failure so every source is listed in the picker
+        // (even dead ones, which the UI can re-fetch on demand).
+        val byName = LinkedHashMap<String, MutableList<Map<String, Any>>>()
+        attempts.forEach { attempt ->
+            val name = attempt["server"]?.toString() ?: return@forEach
+            byName.getOrPut(name) { mutableListOf() }.add(attempt)
+        }
+        val result = mutableListOf<Map<String, Any>>()
+        val seenUrls = mutableSetOf<String>()
+        for ((_, entries) in byName) {
+            val success = entries.firstOrNull { it["available"] == true }
+            if (success != null) {
+                val url = success["url"]?.toString().orEmpty()
+                // Multiple providers can surface the same resolved URL; keep
+                // only the first so the list stays free of duplicates.
+                if (url.isEmpty() || !seenUrls.add(url)) continue
+                result.add(success)
+            } else {
+                result.add(entries.last())
+            }
+        }
+        result
     }
 
-    private var cachedServerListKey: String? = null
-    private var cachedServerList: List<StreamServer>? = null
-
-    /** Server discovery runs once per media request; the secondary call from
-     *  [resolveStreams] (server picker) reuses the list instead of re-hitting
-     *  every provider. */
-    private suspend fun buildServerList(media: MediaRequest): List<StreamServer> {
-        val key = "${media.tmdbId}|${media.isMovie}|${media.season}|${media.episode}"
-        cachedServerListKey?.let { if (it == key) return cachedServerList.orEmpty() }
-        val servers = buildServerListUncached(media)
-        cachedServerListKey = key
-        cachedServerList = servers
-        return servers
+    /** Re-resolves a single named server, used when the user taps a source
+     *  that failed during discovery so they can re-fetch just that one. */
+    suspend fun resolveServer(
+        name: String,
+        tmdbId: String,
+        isMovie: Boolean,
+        season: Int,
+        episode: Int,
+        title: String,
+    ): Map<String, Any>? = withContext(Dispatchers.IO) {
+        require(tmdbId.isNotBlank()) { "TMDB ID is required" }
+        val media = MediaRequest(tmdbId, isMovie, season, episode, title)
+        val server = buildServerList(media).firstOrNull { it.name == name }
+            ?: return@withContext null
+        val slots = if (isWebViewServer(server)) Semaphore(1) else Semaphore(4)
+        slots.withPermit {
+            try {
+                extractServer(server)?.let {
+                    enrichHlsAudioTracks(it).toMap() + mapOf("available" to true)
+                }
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                Log.w(tag, "Server $name retry failed: ${error.message}")
+                null
+            }
+        }
     }
 
-    private suspend fun buildServerListUncached(media: MediaRequest): List<StreamServer> = coroutineScope {
+    private fun failedServerMap(server: StreamServer, error: String): Map<String, Any> = mapOf(
+        "url" to "",
+        "source" to server.name,
+        "server" to server.name,
+        "type" to "",
+        "headers" to emptyMap<String, String>(),
+        "referer" to "",
+        "qualities" to emptyList<Map<String, Any>>(),
+        "subtitles" to emptyList<Map<String, Any>>(),
+        "audioTracks" to emptyList<Map<String, Any>>(),
+        "separateAudio" to false,
+        "available" to false,
+        "error" to error,
+    )
+
+    private suspend fun buildServerList(media: MediaRequest): List<StreamServer> = coroutineScope {
         serverProviders.map { provider ->
             async(Dispatchers.IO) {
                 try {
@@ -505,7 +633,10 @@ class StreamExtractor(private val context: Context) {
     private fun isWebViewServer(server: StreamServer): Boolean =
         extractorRegistry.firstOrNull { it.supports(server) }?.usesWebView == true
 
-    private suspend fun extractServer(initialServer: StreamServer): StreamResult? {
+    private suspend fun extractServer(
+        initialServer: StreamServer,
+        lightValidation: Boolean = false,
+    ): StreamResult? {
         var server = initialServer
         val visited = mutableSetOf<String>()
 
@@ -558,7 +689,7 @@ class StreamExtractor(private val context: Context) {
                         return stream
                     }
                     return try {
-                        validateStream(stream)
+                        if (lightValidation) validateStreamLight(stream) else validateStream(stream)
                     } catch (error: Throwable) {
                         if (error is CancellationException) throw error
                         Log.w(tag, "Validation failed for ${extractor.name}: ${error.message}")
@@ -580,8 +711,8 @@ class StreamExtractor(private val context: Context) {
             val id = request.tmdbId
             val servers = mutableListOf<StreamServer>()
 
-            // NetMirror keys everything by TMDB id and serves whole-file MP4s,
-            // so it resolves without any embed scraping. First in the race.
+            // NetMirror keys everything by TMDB id and serves whole-file MP4s, so it
+            // resolves without embed scraping. First in the race.
             servers += StreamServer(
                 "NetMirror",
                 "https://net79.cc/api/variants-tmdb/" +
@@ -628,20 +759,20 @@ class StreamExtractor(private val context: Context) {
             )
 
             servers += StreamServer(
-                "VidsrcRu",
-                if (request.isMovie) {
-                    "https://vidsrc.ru/movie/$id"
-                } else {
-                    "https://vidsrc.ru/tv/$id/${request.season}/${request.episode}"
-                },
-            )
-
-            servers += StreamServer(
                 "MultiEmbed",
                 if (request.isMovie) {
                     "https://multiembed.mov/?video_id=$id&tmdb=1"
                 } else {
                     "https://multiembed.mov/?video_id=$id&tmdb=1&s=${request.season}&e=${request.episode}"
+                },
+            )
+
+            servers += StreamServer(
+                "Videasy",
+                if (request.isMovie) {
+                    "https://player.videasy.to/movie/$id"
+                } else {
+                    "https://player.videasy.to/tv/$id/${request.season}/${request.episode}"
                 },
             )
 
@@ -655,11 +786,11 @@ class StreamExtractor(private val context: Context) {
             )
 
             servers += StreamServer(
-                "Videasy",
+                "VidsrcRu",
                 if (request.isMovie) {
-                    "https://player.videasy.to/movie/$id"
+                    "https://vidsrc.ru/movie/$id"
                 } else {
-                    "https://player.videasy.to/tv/$id/${request.season}/${request.episode}"
+                    "https://vidsrc.ru/tv/$id/${request.season}/${request.episode}"
                 },
             )
 
@@ -1166,6 +1297,7 @@ class StreamExtractor(private val context: Context) {
             val id = request.tmdbId
             val servers = mutableListOf<StreamServer>()
 
+            // Server 1: VenusLoader player — resolves streams client-side
             servers += StreamServer(
                 "Viduki-1",
                 if (request.isMovie) {
@@ -1175,6 +1307,7 @@ class StreamExtractor(private val context: Context) {
                 },
             )
 
+            // Server 2: Fetching page — resolves streams from external sources
             servers += StreamServer(
                 "Viduki-2",
                 if (request.isMovie) {
@@ -1184,6 +1317,7 @@ class StreamExtractor(private val context: Context) {
                 },
             )
 
+            // Server 3: Multi-language selector — embeds from sub-providers
             servers += StreamServer(
                 "Viduki-3",
                 if (request.isMovie) {
@@ -1193,6 +1327,7 @@ class StreamExtractor(private val context: Context) {
                 },
             )
 
+            // Server 4: Multi-server selector — embeds from sub-providers
             servers += StreamServer(
                 "Viduki-4",
                 if (request.isMovie) {
@@ -1249,6 +1384,7 @@ class StreamExtractor(private val context: Context) {
                 segments[typeIndex + 3]
             } else null
 
+            // Try each backend server via the player API
             for (srv in servers) {
                 val apiPath = if (isMovie) {
                     "/api/vidora/v1/movie/$tmdbId?source=$srv"
@@ -1266,6 +1402,7 @@ class StreamExtractor(private val context: Context) {
                     val source = json.optJSONArray("sources")?.optJSONObject(0) ?: continue
                     val streamUrl = source.optString("url").orEmpty()
                     if (streamUrl.isBlank()) continue
+                    val title = json.optString("title", "")
                     val tracks = source.optJSONArray("tracks")?.let { items ->
                         (0 until items.length()).mapNotNull { i ->
                             val item = items.optJSONObject(i) ?: return@mapNotNull null
@@ -1473,7 +1610,7 @@ class StreamExtractor(private val context: Context) {
                             refererHeaders(streamReferer) + entryHeaders
                         }
                     }
-                    // Skip H.265/HEVC — most Android TV boxes lack stable HW decoders.
+                    // Skip H.265/HEVC — most Android phones lack HW decoders.
                     // CDNs use many path patterns, so check for the common ones.
                     val isH265 = rawUrl.contains("/h265/", true) ||
                         rawUrl.contains("/h.265/", true) ||
@@ -1517,7 +1654,8 @@ class StreamExtractor(private val context: Context) {
                     else -> throw IllegalStateException("VidLink no quality URL")
                 }
                 val sortedQualities = qualityOptions.sortedByDescending { it.height }
-                // Use raw CDN extension for MIME, not the proxy's /mp/ path
+                // hakunaymatata.com streams are always MP4 (no HLS).
+                // noon.mooncase.online proxy path used to need special handling.
                 val finalMediaType = if (url.contains("noon.mooncase.online")) {
                     if (hasOriginalHls) "direct_m3u8" else "mp4"
                 } else mediaType(url)
@@ -1575,7 +1713,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         webView.addJavascriptInterface(object {
@@ -1612,7 +1750,7 @@ class StreamExtractor(private val context: Context) {
                                     }.orEmpty()
                                     val referer = if (host(playlist).endsWith("hakunaymatata.com")) {
                                         // hakunaymatata.com CDN rejects Referer — use empty headers.
-                                        ""
+                                        "" 
                                     } else {
                                         "https://vidlink.pro/"
                                     }
@@ -1655,6 +1793,8 @@ class StreamExtractor(private val context: Context) {
                                 return super.shouldInterceptRequest(view, request)
                             }
                             override fun onPageFinished(view: WebView, url: String) {
+                                // Extraction pages autoplay their player with sound; keep them silent.
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__nativeStreamHook) return;
@@ -1740,10 +1880,7 @@ class StreamExtractor(private val context: Context) {
                         }
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -1775,7 +1912,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         webView.addJavascriptInterface(object {
@@ -1807,6 +1944,10 @@ class StreamExtractor(private val context: Context) {
                             }
 
                             override fun onPageFinished(view: WebView, url: String) {
+
+                                // Extraction pages autoplay their player with sound; keep them silent.
+
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__vidukiHook) return;
@@ -1870,10 +2011,7 @@ class StreamExtractor(private val context: Context) {
 
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -2025,7 +2163,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         webView.addJavascriptInterface(object {
@@ -2053,6 +2191,8 @@ class StreamExtractor(private val context: Context) {
 
                         webView.webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
+                                // Extraction pages autoplay their player with sound; keep them silent.
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 val script = """
                                     (() => {
                                       if (window.__maxstreamHook) return;
@@ -2126,10 +2266,7 @@ class StreamExtractor(private val context: Context) {
 
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -2224,7 +2361,7 @@ class StreamExtractor(private val context: Context) {
                     return ExtractionResult.Final(validateStream(candidate))
                 } catch (error: Throwable) {
                     if (error is CancellationException) throw error
-                    Log.w(tag, "Alternate Vidflix route failed: ${error.message}")
+                    Log.w(tag, "Alternate Vidlix route failed: ${error.message}")
                 }
             }
             throw IllegalStateException("Alternate Vidflix source returned no playable route")
@@ -2248,7 +2385,7 @@ class StreamExtractor(private val context: Context) {
                                 onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
                                 onFailure = { continuation.resumeWithException(it) },
                             )
-                            webView.post { webView.destroy() }
+                            teardownWebView(webView)
                         }
 
                         val mediaPath = URI(server.url).rawPath.orEmpty()
@@ -2269,10 +2406,23 @@ class StreamExtractor(private val context: Context) {
                                     if (continuation.isActive) webView.loadUrl(embedUrl)
                                 }
                             }
+
+                            @JavascriptInterface
+                            fun onFrameUrl(frameUrl: String) {
+                                if (!continuation.isActive || frameUrl.isBlank()) return
+                                // Load the embed's player iframe as the main frame so
+                                // the invisible Turnstile challenge completes inside the
+                                // WebView and its media requests are reliably intercepted.
+                                webView.post {
+                                    if (continuation.isActive) webView.loadUrl(frameUrl)
+                                }
+                            }
                         }, "NativeBridge")
 
                         webView.webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
+                                // Extraction pages autoplay their player with sound; keep them silent.
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 if (host(url).endsWith("mov2day.xyz") && !url.contains("/embed", true)) {
                                     val script = """
                                         (() => {
@@ -2280,6 +2430,20 @@ class StreamExtractor(private val context: Context) {
                                             .map(s => s.textContent || '').join('\n');
                                           const m = text.match(/EMBED_BASE\s*=\s*['"]([^'"]+)['"]/);
                                           window.NativeBridge.onEmbedBase(m ? m[1] : '');
+                                        })();
+                                    """.trimIndent()
+                                    view.evaluateJavascript(script, null)
+                                    return
+                                }
+                                // The embed page (cdn.moviesapi.vip) holds the real
+                                // player in an iframe.  Promote that iframe to the
+                                // main frame so its Turnstile challenge and media
+                                // requests happen at the top level.
+                                if (url.contains("/embed", true) && url.startsWith("https://cdn.moviesapi.vip", true)) {
+                                    val script = """
+                                        (() => {
+                                          const iframe = document.querySelector('iframe[src*="embed"]');
+                                          window.NativeBridge.onFrameUrl(iframe ? iframe.src : '');
                                         })();
                                     """.trimIndent()
                                     view.evaluateJavascript(script, null)
@@ -2296,7 +2460,9 @@ class StreamExtractor(private val context: Context) {
                                     url.contains(".ts?", true) ||
                                     url.contains("/playlist", true) ||
                                     url.contains("/master.", true) ||
-                                    url.contains("videoplayback", true)
+                                    url.contains("videoplayback", true) ||
+                                    url.contains("hls", true) ||
+                                    url.contains("/stream/", true)
                                 if (isMediaRequest && continuation.isActive) {
                                     val origin = URI(url).let { "${it.scheme}://${it.host}" }
                                     val cookies = CookieManager.getInstance()
@@ -2324,10 +2490,7 @@ class StreamExtractor(private val context: Context) {
 
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -2735,7 +2898,7 @@ class StreamExtractor(private val context: Context) {
         override val name = "Videasy"
         override fun supports(server: StreamServer): Boolean {
             val domain = host(server.url)
-            return domain.endsWith("videasy.to") || domain.endsWith("videasy.net") || domain.endsWith("videasy.io")
+            return domain.endsWith("videasy.to") || domain.endsWith("videasy.net")
         }
 
         override suspend fun extract(server: StreamServer): ExtractionResult {
@@ -2948,10 +3111,7 @@ class StreamExtractor(private val context: Context) {
                                 val url = request?.url?.toString() ?: ""
                                 if (url.contains(".m3u8") && !url.contains("analytics") && !url.contains("cloudflare")) {
                                     if (continuation.isActive) {
-                                        webView.post {
-                                            webView.stopLoading()
-                                            webView.destroy()
-                                        }
+                                        teardownWebView(webView)
                                         continuation.resume(
                                             ExtractionResult.Final(
                                                 StreamResult(url, name, "direct_m3u8", refererHeaders(server.url)),
@@ -2964,10 +3124,7 @@ class StreamExtractor(private val context: Context) {
                         }
                         webView.loadUrl(server.url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 }
@@ -3202,112 +3359,6 @@ class StreamExtractor(private val context: Context) {
         }
     }
 
-    private inner class VidNestExtractor : HostExtractor {
-        override val name = "VidNest"
-        override fun supports(server: StreamServer) = host(server.url).contains("vidnest.fun")
-
-        override suspend fun extract(server: StreamServer): ExtractionResult {
-            val pathParts = server.url.removeSuffix("/").split("/")
-            val tmdbId = pathParts.getOrNull(pathParts.size - 3) ?: ""
-            val season = pathParts.getOrNull(pathParts.size - 2) ?: ""
-            val episode = pathParts.getOrNull(pathParts.size - 1) ?: ""
-            if (tmdbId.isBlank() || season.isBlank() || episode.isBlank()) {
-                throw IllegalStateException("VidNest: cannot parse tmdbId/season/episode from ${server.url}")
-            }
-
-            val isMovie = server.url.contains("/movie/")
-            val servers = listOf("alfa", "zeta", "filxer", "catflix", "lamda", "gama", "beta", "sigma")
-            val pathType = if (isMovie) "movie" else "tv"
-
-            for (s in servers) {
-                try {
-                    val apiUrl = "https://new.vidnest.fun/$s/$pathType/$tmdbId/$season/$episode"
-                    val resp = getJson(apiUrl)
-                    if (!resp.optBoolean("encrypted", false)) continue
-                    val encData = resp.optString("data", "")
-                    if (encData.isBlank()) continue
-
-                    val decrypted = decryptVidNestResponse(encData)
-                    val json = JSONObject(decrypted)
-                    val url = json.optString("url", "")
-                    if (url.isBlank()) continue
-
-                    val headers = mutableMapOf("Referer" to server.url)
-                    json.optJSONObject("headers")?.let { h ->
-                        val keys = h.keys()
-                        while (keys.hasNext()) {
-                            val key = keys.next()
-                            headers[key] = h.optString(key, "")
-                        }
-                    }
-
-                    val streams = mutableListOf(StreamResult(url, server.name, "application/vnd.apple.mpegurl", headers))
-                    if (json.has("all_urls")) {
-                        val allUrls = json.getJSONArray("all_urls")
-                        for (i in 0 until allUrls.length()) {
-                            val u = allUrls.optString(i, "")
-                            if (u.isNotBlank() && u != url) {
-                                streams.add(StreamResult(u, "${server.name} ${i + 1}", "application/vnd.apple.mpegurl", headers))
-                            }
-                        }
-                    }
-
-                    return ExtractionResult.Final(streams.first())
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                }
-            }
-            throw IllegalStateException("VidNest: all servers failed for $tmdbId")
-        }
-    }
-
-    private inner class VidLoveExtractor : HostExtractor {
-        override val name = "VidLove"
-        override val usesWebView = true
-        override fun supports(server: StreamServer) = host(server.url).contains("vidlove.cc")
-
-        override suspend fun extract(server: StreamServer): ExtractionResult {
-            return withContext(Dispatchers.Main) {
-                withTimeout(30_000) {
-                    suspendCancellableCoroutine { continuation ->
-                        val webView = WebView(context)
-                        webView.settings.javaScriptEnabled = true
-                        webView.settings.loadsImagesAutomatically = false
-                        webView.settings.blockNetworkImage = true
-                        webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
-                        webView.settings.domStorageEnabled = true
-
-                        webView.webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(
-                                view: WebView?,
-                                request: WebResourceRequest?,
-                            ): WebResourceResponse? {
-                                val url = request?.url?.toString() ?: ""
-                                if (url.endsWith(".m3u8") && !url.contains("master")) {
-                                    if (continuation.isActive) {
-                                        continuation.resume(
-                                            ExtractionResult.Final(
-                                                StreamResult(url, name, "direct_m3u8", refererHeaders(server.url)),
-                                            ),
-                                        )
-                                    }
-                                }
-                                return super.shouldInterceptRequest(view, request)
-                            }
-                        }
-                        webView.loadUrl(server.url)
-                        continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     private inner class AutoEmbedExtractor : HostExtractor {
         override val name = "AutoEmbed"
         override fun supports(server: StreamServer) = host(server.url).contains("autoembed")
@@ -3347,6 +3398,20 @@ class StreamExtractor(private val context: Context) {
                 ?: throw IllegalStateException("Embed.su iframe not found")
             val absolute = resolveUrl(server.url, iframe)
             return ExtractionResult.Redirect(StreamServer("EmbedSu host", absolute, refererHeaders(server.url)))
+        }
+    }
+
+    private inner class GenericIframeExtractor : HostExtractor {
+        override val name = "GenericIframe"
+        override fun supports(server: StreamServer) = server.name.contains("Iframe", true)
+
+        override suspend fun extract(server: StreamServer): ExtractionResult {
+            val html = httpGet(server.url)
+            val iframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(html)?.groupValues?.get(1)
+                ?: throw IllegalStateException("Iframe not found in ${server.name}")
+            val absolute = resolveUrl(server.url, iframe)
+            return ExtractionResult.Redirect(StreamServer("${server.name} host", absolute, refererHeaders(server.url)))
         }
     }
 
@@ -3444,20 +3509,6 @@ class StreamExtractor(private val context: Context) {
             return runCatching<Any> { JSONObject(result) }
                 .recoverCatching { JSONArray(result) }
                 .getOrElse { result }
-        }
-    }
-
-    private inner class GenericIframeExtractor : HostExtractor {
-        override val name = "GenericIframe"
-        override fun supports(server: StreamServer) = server.name.contains("Iframe", true)
-
-        override suspend fun extract(server: StreamServer): ExtractionResult {
-            val html = httpGet(server.url)
-            val iframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-                .find(html)?.groupValues?.get(1)
-                ?: throw IllegalStateException("Iframe not found in ${server.name}")
-            val absolute = resolveUrl(server.url, iframe)
-            return ExtractionResult.Redirect(StreamServer("${server.name} host", absolute, refererHeaders(server.url)))
         }
     }
 
@@ -3749,27 +3800,28 @@ class StreamExtractor(private val context: Context) {
                                 val newUrl = request?.url.toString()
                                 if (newUrl.contains(hostName) || newUrl.contains("/e/")) {
                                     if (continuation.isActive) continuation.resume(newUrl)
-                                    webView.post { webView.destroy() }
+                                    teardownWebView(webView)
                                     return true
                                 }
                                 return false
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
+
+                                // Extraction pages autoplay their player with sound; keep them silent.
+
+                                runCatching { view?.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
                                 if (url != null &&
                                     (url.contains(hostName) || url.contains("/e/") || !url.contains("about:blank"))
                                 ) {
                                     if (continuation.isActive) continuation.resume(url)
-                                    webView.post { webView.destroy() }
+                                    teardownWebView(webView)
                                 }
                             }
                         }
                         webView.loadUrl(url)
                         continuation.invokeOnCancellation {
-                            webView.post {
-                                webView.stopLoading()
-                                webView.destroy()
-                            }
+                            teardownWebView(webView)
                         }
                     }
                 } ?: url
@@ -3783,7 +3835,8 @@ class StreamExtractor(private val context: Context) {
 
         override fun supports(server: StreamServer): Boolean {
             val domain = host(server.url)
-            return domain.contains("dood") || domain.contains("d000d") || domain == "vide0.net"
+            return domain.contains("dood") || domain.contains("d000d") || domain == "vide0.net" ||
+                domain.contains("doodstream")
         }
 
         override suspend fun extract(server: StreamServer): ExtractionResult {
@@ -4519,7 +4572,7 @@ class StreamExtractor(private val context: Context) {
 
     private fun unpackObfuscatedJs(html: String): String? {
         val marker = "eval(function(p,a,c,k,e,d){"
-        val start = html.indexOf(marker)
+        val start = html.indexOf(marker) ?: return null
         if (start < 0) return null
 
         // Find closing } of function body
@@ -4886,8 +4939,29 @@ class StreamExtractor(private val context: Context) {
             url = validation.playbackUrl,
             qualities = validation.qualities,
             subtitles = (sanitizedStream.subtitles + validation.subtitles).distinctBy { it.url },
-            audioTracks = (sanitizedStream.audioTracks + validation.audioTracks)
-                .distinctBy { it.url.ifBlank { it.label } },
+            audioTracks = (sanitizedStream.audioTracks + validation.audioTracks).distinctBy { it.url.ifBlank { it.label } },
+            separateAudio = validation.separateAudio,
+        )
+    }
+
+    /**
+     * Light HLS check for fast picker mode: fetches the master playlist once
+     * and parses variants/subtitles/audio from its text without downloading
+     * any variant playlist or media segment. Fast but may list a server whose
+     * segments are dead; the full background resolve corrects that.
+     */
+    private suspend fun validateStreamLight(stream: StreamResult): StreamResult {
+        requireSafeOutboundUrl(stream.url)
+        val sanitizedStream = stream.copy(headers = safeHeaders(stream.headers))
+        if (stream.type != "direct_m3u8" && !stream.url.contains(".m3u8", true)) {
+            return sanitizedStream
+        }
+        val validation = validateHlsLight(sanitizedStream.url, sanitizedStream.headers)
+        return sanitizedStream.copy(
+            url = validation.playbackUrl,
+            qualities = validation.qualities,
+            subtitles = (sanitizedStream.subtitles + validation.subtitles).distinctBy { it.url },
+            audioTracks = (sanitizedStream.audioTracks + validation.audioTracks).distinctBy { it.url.ifBlank { it.label } },
             separateAudio = validation.separateAudio,
         )
     }
@@ -4920,6 +4994,7 @@ class StreamExtractor(private val context: Context) {
         // Validate one segment from every variant so dead RPM/CDN routes never
         // reach ExoPlayer as an apparently working server.
         // Limit to 2 concurrent variant checks to prevent OOM on low-memory devices
+        // (each check = 1 playlist request + 1 media request).
         val variantSlots = Semaphore(2)
         val playableVariants = coroutineScope {
             variants.map { variant ->
@@ -4963,13 +5038,32 @@ class StreamExtractor(private val context: Context) {
             allPlayable -> master.url
             else -> playableVariants.minByOrNull { it.height }?.url ?: master.url
         }
-        return HlsValidation(
-            pinnedUrl,
-            qualities,
-            subtitles,
-            audioTracks,
-            separateAudio = separateAudio,
-        )
+        return HlsValidation(pinnedUrl, qualities, subtitles, audioTracks, separateAudio = separateAudio)
+    }
+
+    /**
+     * Master-only HLS parse for fast picker mode. No variant/segment fetches:
+     * qualities come straight from `#EXT-X-STREAM-INF` lines (height may be 0
+     * when the master omits RESOLUTION; the full resolve fills those in).
+     */
+    private suspend fun validateHlsLight(url: String, headers: Map<String, String>): HlsValidation {
+        val master = getValidationResponse(url, headers)
+        require(master.body.startsWith("#EXTM3U")) {
+            "HLS endpoint did not return a playlist (${master.contentType})"
+        }
+        val variants = parseHlsVariants(master.url, master.body)
+        val subtitles = parseHlsSubtitles(master.url, master.body)
+        val audioTracks = parseHlsAudio(master.url, master.body)
+        val separateAudio = hasSeparateAudioGroups(master.body)
+        val qualities = buildList {
+            add(QualityOption("Auto", master.url, 0))
+            addAll(
+                variants.distinctBy { it.height }.sortedByDescending { it.height }.map {
+                    QualityOption(if (it.height > 0) "${it.height}p" else "Source", it.url, it.height, it.codec)
+                },
+            )
+        }
+        return HlsValidation(master.url, qualities, subtitles, audioTracks, separateAudio = separateAudio)
     }
 
     private fun validateMediaPlaylist(
@@ -5048,7 +5142,13 @@ class StreamExtractor(private val context: Context) {
         }.distinctBy { it.url }.toList()
     }
 
-    /** Fills HLS audio renditions for streams whose extractor skipped validateHls. */
+    /**
+     * Fills in HLS audio/subtitle tracks for extractors that return a master
+     * URL without running it through [validateHls] (VidLink/2Embed early
+     * return). Single cheap master GET; failures keep the original stream.
+     * Used in the list/retry paths only — never in the playback race, where
+     * it would add latency to the first playable result.
+     */
     private suspend fun enrichHlsAudioTracks(stream: StreamResult): StreamResult {
         if (stream.audioTracks.isNotEmpty()) return stream
         if (stream.type != "direct_m3u8" && !stream.url.contains(".m3u8", true)) {
@@ -5368,6 +5468,109 @@ class StreamExtractor(private val context: Context) {
                 }
                 return ret
             }
+        }
+    }
+
+    private inner class VidLoveExtractor : HostExtractor {
+        override val name = "VidLove"
+        override val usesWebView = true
+        override fun supports(server: StreamServer) = host(server.url).contains("vidlove.cc")
+
+        override suspend fun extract(server: StreamServer): ExtractionResult {
+            return withContext(Dispatchers.Main) {
+                withTimeout(30_000) {
+                    suspendCancellableCoroutine { continuation ->
+                        val webView = WebView(context)
+                        webView.settings.javaScriptEnabled = true
+                        webView.settings.loadsImagesAutomatically = false
+                        webView.settings.blockNetworkImage = true
+                        webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                        webView.settings.domStorageEnabled = true
+
+                        webView.webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                            ): WebResourceResponse? {
+                                val url = request?.url?.toString() ?: ""
+                                if (url.endsWith(".m3u8") && !url.contains("master")) {
+                                    if (continuation.isActive) {
+                                        continuation.resume(
+                                            ExtractionResult.Final(
+                                                StreamResult(url, name, "direct_m3u8", refererHeaders(server.url)),
+                                            ),
+                                        )
+                                    }
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
+                        }
+                        webView.loadUrl(server.url)
+                        continuation.invokeOnCancellation {
+                            teardownWebView(webView)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private inner class VidNestExtractor : HostExtractor {
+        override val name = "VidNest"
+        override fun supports(server: StreamServer) = host(server.url).contains("vidnest.fun")
+
+        override suspend fun extract(server: StreamServer): ExtractionResult {
+            val pathParts = server.url.removeSuffix("/").split("/")
+            val tmdbId = pathParts.getOrNull(pathParts.size - 3) ?: ""
+            val season = pathParts.getOrNull(pathParts.size - 2) ?: ""
+            val episode = pathParts.getOrNull(pathParts.size - 1) ?: ""
+            if (tmdbId.isBlank() || season.isBlank() || episode.isBlank()) {
+                throw IllegalStateException("VidNest: cannot parse tmdbId/season/episode from ${server.url}")
+            }
+
+            val isMovie = server.url.contains("/movie/")
+            val servers = listOf("alfa", "zeta", "filxer", "catflix", "lamda", "gama", "beta", "sigma")
+            val pathType = if (isMovie) "movie" else "tv"
+
+            for (s in servers) {
+                try {
+                    val apiUrl = "https://new.vidnest.fun/$s/$pathType/$tmdbId/$season/$episode"
+                    val resp = getJson(apiUrl)
+                    if (!resp.optBoolean("encrypted", false)) continue
+                    val encData = resp.optString("data", "")
+                    if (encData.isBlank()) continue
+
+                    val decrypted = decryptVidNestResponse(encData)
+                    val json = JSONObject(decrypted)
+                    val url = json.optString("url", "")
+                    if (url.isBlank()) continue
+
+                    val headers = mutableMapOf("Referer" to server.url)
+                    json.optJSONObject("headers")?.let { h ->
+                        val keys = h.keys()
+                        while (keys.hasNext()) {
+                            val key = keys.next()
+                            headers[key] = h.optString(key, "")
+                        }
+                    }
+
+                    val streams = mutableListOf(StreamResult(url, server.name, "application/vnd.apple.mpegurl", headers))
+                    if (json.has("all_urls")) {
+                        val allUrls = json.getJSONArray("all_urls")
+                        for (i in 0 until allUrls.length()) {
+                            val u = allUrls.optString(i, "")
+                            if (u.isNotBlank() && u != url) {
+                                streams.add(StreamResult(u, "${server.name} ${i + 1}", "application/vnd.apple.mpegurl", headers))
+                            }
+                        }
+                    }
+
+                    return ExtractionResult.Final(streams.first())
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                }
+            }
+            throw IllegalStateException("VidNest: all servers failed for $tmdbId")
         }
     }
 }

@@ -8,10 +8,7 @@ import 'dart:async';
 class ImageCropScreen extends StatefulWidget {
   final String imagePath;
 
-  const ImageCropScreen({
-    super.key,
-    required this.imagePath,
-  });
+  const ImageCropScreen({super.key, required this.imagePath});
 
   @override
   State<ImageCropScreen> createState() => _ImageCropScreenState();
@@ -53,7 +50,8 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
         displayImage = uiImage;
         isLoading = false;
         // Initialize crop center to center of image
-        cropSize = (originalImage.width < originalImage.height
+        cropSize =
+            (originalImage.width < originalImage.height
                 ? originalImage.width
                 : originalImage.height) *
             0.8;
@@ -74,22 +72,25 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     // Encode image to PNG/JPG bytes and decode back as ui.Image
     final encodedBytes = img.encodeJpg(image);
     final completer = Completer<ui.Image>();
-    
-    ui.decodeImageFromList(
-      Uint8List.fromList(encodedBytes),
-      (result) {
-        completer.complete(result);
-      },
-    );
-    
+
+    ui.decodeImageFromList(Uint8List.fromList(encodedBytes), (result) {
+      completer.complete(result);
+    });
+
     return completer.future;
   }
 
   Future<String?> _cropAndSave() async {
     try {
       // Calculate crop coordinates
-      final left = (cropCenter.dx - cropSize / 2).toInt().clamp(0, originalImage.width);
-      final top = (cropCenter.dy - cropSize / 2).toInt().clamp(0, originalImage.height);
+      final left = (cropCenter.dx - cropSize / 2).toInt().clamp(
+        0,
+        originalImage.width,
+      );
+      final top = (cropCenter.dy - cropSize / 2).toInt().clamp(
+        0,
+        originalImage.height,
+      );
       final size = cropSize.toInt();
 
       final croppedWidth = (left + size > originalImage.width)
@@ -146,97 +147,93 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-      backgroundColor: const Color(0xFF1A1A1A),
-      title: const Text(
-      'Crop Profile Picture',
-      style: TextStyle(color: Colors.white),
-      ),
-      iconTheme: const IconThemeData(color: Colors.white),
-      actions: [
-      TextButton(
-        onPressed: isLoading ? null : _onDonePressed,
-        child: const Text(
-          'Done',
-          style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: const Text(
+          'Crop Profile Picture',
+          style: TextStyle(color: Colors.white),
         ),
-      ),
-      ],
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          TextButton(
+            onPressed: isLoading ? null : _onDonePressed,
+            child: const Text(
+              'Done',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
       ),
       body: isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Colors.red),
-            )
+          ? const Center(child: CircularProgressIndicator(color: Colors.red))
           : errorMessage != null
-              ? Center(
-                  child: Text(
-                    errorMessage!,
-                    style: const TextStyle(color: Colors.white),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              : GestureDetector(
-                  onPanUpdate: (details) {
-                    setState(() {
-                      cropCenter = Offset(
-                        (cropCenter.dx + details.delta.dx)
-                            .clamp(0, originalImage.width.toDouble()),
-                        (cropCenter.dy + details.delta.dy)
-                            .clamp(0, originalImage.height.toDouble()),
-                      );
-                    });
-                  },
-                  child: Stack(
-                    children: [
-                      // Display the image
-                      Center(
-                        child: CustomPaint(
-                          painter: ImageCropPainter(
-                            image: originalImage,
-                            displayImage: displayImage,
-                            cropCenter: cropCenter,
-                            cropSize: cropSize,
-                          ),
-                          size: Size.infinite,
-                        ),
+          ? Center(
+              child: Text(
+                errorMessage!,
+                style: const TextStyle(color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+            )
+          : GestureDetector(
+              onPanUpdate: (details) {
+                setState(() {
+                  cropCenter = Offset(
+                    (cropCenter.dx + details.delta.dx).clamp(
+                      0,
+                      originalImage.width.toDouble(),
+                    ),
+                    (cropCenter.dy + details.delta.dy).clamp(
+                      0,
+                      originalImage.height.toDouble(),
+                    ),
+                  );
+                });
+              },
+              child: Stack(
+                children: [
+                  // Display the image
+                  Center(
+                    child: CustomPaint(
+                      painter: ImageCropPainter(
+                        image: originalImage,
+                        displayImage: displayImage,
+                        cropCenter: cropCenter,
+                        cropSize: cropSize,
                       ),
-                      // Crop overlay with instructions
-                      Positioned(
-                        bottom: 40,
-                        left: 20,
-                        right: 20,
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.black87,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Drag to position your face in the center',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                              SizedBox(height: 8),
-                              Text(
-                                'The red square shows what will be saved',
-                                style: TextStyle(
-                                  color: Colors.grey,
-                                  fontSize: 12,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                      size: Size.infinite,
+                    ),
                   ),
-                ),
+                  // Crop overlay with instructions
+                  Positioned(
+                    bottom: 40,
+                    left: 20,
+                    right: 20,
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Drag to position your face in the center',
+                            style: TextStyle(color: Colors.white, fontSize: 14),
+                            textAlign: TextAlign.center,
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'The red square shows what will be saved',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
@@ -267,13 +264,7 @@ class ImageCropPainter extends CustomPainter {
     final offsetY = (size.height - scaledHeight) / 2;
 
     // Draw the image preview
-    _drawImagePreview(
-      canvas,
-      size,
-      offsetX,
-      offsetY,
-      scale,
-    );
+    _drawImagePreview(canvas, size, offsetX, offsetY, scale);
 
     // Draw crop area (red square)
     final cropLeft = offsetX + (cropCenter.dx - cropSize / 2) * scale;

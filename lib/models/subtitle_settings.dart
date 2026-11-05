@@ -60,19 +60,21 @@ class SubtitleSettings {
     'subtitleOffsetMs': subtitleOffsetMs,
   };
 
-  factory SubtitleSettings.fromJson(Map<String, dynamic> json) => SubtitleSettings(
-    textColor: json['textColor']?.toString() ?? '#FFFFFF',
-    backgroundColor: json['backgroundColor']?.toString() ?? '#000000',
-    backgroundOpacity: (json['backgroundOpacity'] as num?)?.toDouble() ?? 0.55,
-    fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
-    fontFamily: json['fontFamily']?.toString() ?? '',
-    textShadow: json['textShadow'] == true,
-    textShadowColor: json['textShadowColor']?.toString() ?? '#000000',
-    edgeType: json['edgeType']?.toString() ?? 'outline',
-    edgeColor: json['edgeColor']?.toString() ?? '#000000',
-    position: json['position']?.toString() ?? 'bottom',
-    subtitleOffsetMs: (json['subtitleOffsetMs'] as num?)?.toDouble() ?? 0,
-  );
+  factory SubtitleSettings.fromJson(Map<String, dynamic> json) =>
+      SubtitleSettings(
+        textColor: json['textColor']?.toString() ?? '#FFFFFF',
+        backgroundColor: json['backgroundColor']?.toString() ?? '#000000',
+        backgroundOpacity:
+            (json['backgroundOpacity'] as num?)?.toDouble() ?? 0.55,
+        fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
+        fontFamily: json['fontFamily']?.toString() ?? '',
+        textShadow: json['textShadow'] == true,
+        textShadowColor: json['textShadowColor']?.toString() ?? '#000000',
+        edgeType: json['edgeType']?.toString() ?? 'outline',
+        edgeColor: json['edgeColor']?.toString() ?? '#000000',
+        position: json['position']?.toString() ?? 'bottom',
+        subtitleOffsetMs: (json['subtitleOffsetMs'] as num?)?.toDouble() ?? 0,
+      );
 
   SubtitleSettings copy() => SubtitleSettings.fromJson(toJson());
 

@@ -6,9 +6,7 @@ import 'package:local_auth/local_auth.dart';
 class BiometricAuthResult {
   final bool success;
   final String? error;
-  const BiometricAuthResult.success()
-      : success = true,
-        error = null;
+  const BiometricAuthResult.success() : success = true, error = null;
   const BiometricAuthResult.failure(this.error) : success = false;
 }
 
@@ -21,8 +19,9 @@ class BiometricService {
   /// BiometricAuthActivity (a FragmentActivity with no FlutterEngine) because
   /// androidx.biometric requires a FragmentActivity host and local_auth's
   /// plugin cannot use one without breaking audio_service's shared engine.
-  static const MethodChannel _biometricChannel =
-      MethodChannel('com.maxstream.app/biometric');
+  static const MethodChannel _biometricChannel = MethodChannel(
+    'com.maxstream.app/biometric',
+  );
 
   /// Check if biometric is available on device
   static Future<bool> isBiometricAvailable() async {
@@ -67,8 +66,7 @@ class BiometricService {
       reason: reason,
       stickyAuth: stickyAuth,
       biometricOnly: biometricOnly,
-    ))
-        .success;
+    )).success;
   }
 
   /// Same as [authenticate], but reports WHY it failed.
@@ -90,7 +88,8 @@ class BiometricService {
       final isAvailable = await canUseBiometric();
       if (!isAvailable) {
         return const BiometricAuthResult.failure(
-            'No screen lock set up. Add a PIN, pattern or fingerprint in Android Settings first.');
+          'No screen lock set up. Add a PIN, pattern or fingerprint in Android Settings first.',
+        );
       }
 
       final response = await _biometricChannel.invokeMapMethod<String, dynamic>(

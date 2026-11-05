@@ -124,7 +124,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
             linearGradient: LinearGradient(
               colors: [
                 Colors.white.withValues(alpha: 0.1),
-                Colors.white.withValues(alpha: 0.05)
+                Colors.white.withValues(alpha: 0.05),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -138,7 +138,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: Colors.red))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: Colors.red),
+                    )
                   : Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -182,7 +184,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
                           ),
                           child: const Text(
                             "Send Reset Link",
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -202,4 +208,3 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     );
   }
 }
-

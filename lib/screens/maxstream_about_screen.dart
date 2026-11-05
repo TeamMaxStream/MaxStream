@@ -27,8 +27,11 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
       String variant = 'unknown';
       try {
         if (Platform.isAndroid) {
-          variant = await const MethodChannel('com.maxstream.app/install')
-              .invokeMethod<String>('getArch') ?? _getArchFromAbi();
+          variant =
+              await const MethodChannel(
+                'com.maxstream.app/install',
+              ).invokeMethod<String>('getArch') ??
+              _getArchFromAbi();
         }
       } catch (_) {
         variant = _getArchFromAbi();
@@ -139,7 +142,9 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
                     icon: Icons.code,
                     title: 'GitHub Repository',
                     subtitle: 'https://github.com/TeamMaxStream/MaxStream',
-                    onTap: () => _launchUrl('https://github.com/TeamMaxStream/MaxStream'),
+                    onTap: () => _launchUrl(
+                      'https://github.com/TeamMaxStream/MaxStream',
+                    ),
                   ),
                   const SizedBox(height: 32),
                   _buildSectionTitle('Legal'),
@@ -176,9 +181,7 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.red.withValues(alpha: 0.2),
-        ),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.2)),
       ),
       child: Column(
         children: [
@@ -194,11 +197,8 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
               child: Image.asset(
                 'assets/images/app_icon.png',
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => const Icon(
-                  Icons.play_arrow,
-                  color: Colors.white,
-                  size: 40,
-                ),
+                errorBuilder: (context, error, stackTrace) =>
+                    const Icon(Icons.play_arrow, color: Colors.white, size: 40),
               ),
             ),
           ),
@@ -214,18 +214,12 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
           const SizedBox(height: 4),
           Text(
             _version,
-            style: TextStyle(
-              color: Colors.grey[500],
-              fontSize: 14,
-            ),
+            style: TextStyle(color: Colors.grey[500], fontSize: 14),
           ),
           const SizedBox(height: 12),
           Text(
             'Discover. Watch. Enjoy.',
-            style: TextStyle(
-              color: Colors.grey[400],
-              fontSize: 14,
-            ),
+            style: TextStyle(color: Colors.grey[400], fontSize: 14),
           ),
         ],
       ),
@@ -304,9 +298,7 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
         decoration: BoxDecoration(
           color: const Color(0xFF1A1A1A),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.08),
-          ),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
         ),
         child: Row(
           children: [
@@ -335,19 +327,12 @@ class _MaxStreamAboutScreenState extends State<MaxStreamAboutScreen> {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(
-                      color: Colors.grey[500],
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: Colors.grey[500], fontSize: 13),
                   ),
                 ],
               ),
             ),
-            Icon(
-              Icons.arrow_forward_ios,
-              color: Colors.grey[600],
-              size: 14,
-            ),
+            Icon(Icons.arrow_forward_ios, color: Colors.grey[600], size: 14),
           ],
         ),
       ),

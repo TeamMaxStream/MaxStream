@@ -21,19 +21,29 @@ void main() {
       'https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4';
   const progressiveBytes = 4372373;
 
-  test('master playlist resolves RELATIVE variants and yields a size', () async {
-    final size = await StreamSizeProbe.probe(master);
-    expect(size, isNotNull, reason: 'master must produce a size');
-    expect(size!, greaterThan(1024 * 1024), reason: 'must be plausible bytes');
-  });
+  test(
+    'master playlist resolves RELATIVE variants and yields a size',
+    () async {
+      final size = await StreamSizeProbe.probe(master);
+      expect(size, isNotNull, reason: 'master must produce a size');
+      expect(
+        size!,
+        greaterThan(1024 * 1024),
+        reason: 'must be plausible bytes',
+      );
+    },
+  );
 
-  test('media playlist with no BANDWIDTH is measured from real segments', () async {
-    // This is the shape every extractor returns: a per-quality media playlist
-    // with no bitrate published. Reading bitrate alone left these rows at "—".
-    final size = await StreamSizeProbe.probe(media);
-    expect(size, isNotNull, reason: 'media playlist must produce a size');
-    expect(size!, greaterThan(0));
-  });
+  test(
+    'media playlist with no BANDWIDTH is measured from real segments',
+    () async {
+      // This is the shape every extractor returns: a per-quality media playlist
+      // with no bitrate published. Reading bitrate alone left these rows at "—".
+      final size = await StreamSizeProbe.probe(media);
+      expect(size, isNotNull, reason: 'media playlist must produce a size');
+      expect(size!, greaterThan(0));
+    },
+  );
 
   test('a master and its lowest variant agree within 2x', () async {
     // The master path derives the first (lowest) variant; the media path

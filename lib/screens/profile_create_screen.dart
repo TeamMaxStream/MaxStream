@@ -123,11 +123,7 @@ class _ProfileCreateScreenState extends State<ProfileCreateScreen> {
                     ),
                   ],
                 ),
-                child: Icon(
-                  previewIcon,
-                  color: Colors.white,
-                  size: 52,
-                ),
+                child: Icon(previewIcon, color: Colors.white, size: 52),
               ),
               const SizedBox(height: 28),
 
@@ -137,7 +133,9 @@ class _ProfileCreateScreenState extends State<ProfileCreateScreen> {
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   labelText: 'Profile Name',
-                  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+                  labelStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                  ),
                   enabledBorder: OutlineInputBorder(
                     borderSide: const BorderSide(color: Colors.white24),
                   ),
@@ -211,7 +209,9 @@ class _ProfileCreateScreenState extends State<ProfileCreateScreen> {
                           shape: BoxShape.circle,
                           color: color,
                           border: Border.all(
-                            color: isSelected ? Colors.white : Colors.transparent,
+                            color: isSelected
+                                ? Colors.white
+                                : Colors.transparent,
                             width: 3,
                           ),
                           boxShadow: isSelected
@@ -224,7 +224,11 @@ class _ProfileCreateScreenState extends State<ProfileCreateScreen> {
                               : null,
                         ),
                         child: isSelected
-                            ? const Icon(Icons.check, color: Colors.white, size: 20)
+                            ? const Icon(
+                                Icons.check,
+                                color: Colors.white,
+                                size: 20,
+                              )
                             : null,
                       ),
                     );
@@ -258,9 +262,11 @@ class _ProfileCreateScreenState extends State<ProfileCreateScreen> {
                 itemBuilder: (context, index) {
                   final icon = ProfileAvatar.icons[index];
                   final isSelected = icon.codePoint == _selectedIconCodePoint;
-                  final currentColor = ProfileAvatar.palette[_selectedColorIndex];
+                  final currentColor =
+                      ProfileAvatar.palette[_selectedColorIndex];
                   return GestureDetector(
-                    onTap: () => setState(() => _selectedIconCodePoint = icon.codePoint),
+                    onTap: () =>
+                        setState(() => _selectedIconCodePoint = icon.codePoint),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       decoration: BoxDecoration(

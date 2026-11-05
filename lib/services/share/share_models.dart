@@ -23,10 +23,10 @@ class ShareFileEntry {
   Map<String, dynamic> toJson() => {'i': index, 'n': name, 's': size};
 
   static ShareFileEntry fromJson(Map<String, dynamic> json) => ShareFileEntry(
-        index: (json['i'] as num?)?.toInt() ?? 0,
-        name: json['n']?.toString() ?? '',
-        size: (json['s'] as num?)?.toInt() ?? 0,
-      );
+    index: (json['i'] as num?)?.toInt() ?? 0,
+    name: json['n']?.toString() ?? '',
+    size: (json['s'] as num?)?.toInt() ?? 0,
+  );
 }
 
 /// One downloaded movie/episode, described well enough that the receiving
@@ -74,36 +74,35 @@ class ShareItem {
   }
 
   Map<String, dynamic> toJson() => {
-        'k': downloadKey,
-        'm': mediaId,
-        't': mediaType,
-        'n': title,
-        'p': thumbnail,
-        if (seriesId != null) 'r': seriesId,
-        if (seasonNumber != null) 'sn': seasonNumber,
-        if (episodeNumber != null) 'en': episodeNumber,
-        'e': entryFile,
-        'sub': subtitleNames,
-        'f': files.map((f) => f.toJson()).toList(),
-      };
+    'k': downloadKey,
+    'm': mediaId,
+    't': mediaType,
+    'n': title,
+    'p': thumbnail,
+    if (seriesId != null) 'r': seriesId,
+    if (seasonNumber != null) 'sn': seasonNumber,
+    if (episodeNumber != null) 'en': episodeNumber,
+    'e': entryFile,
+    'sub': subtitleNames,
+    'f': files.map((f) => f.toJson()).toList(),
+  };
 
   static ShareItem fromJson(Map<String, dynamic> json) => ShareItem(
-        downloadKey: json['k']?.toString() ?? '',
-        mediaId: json['m']?.toString() ?? '',
-        mediaType: json['t']?.toString() ?? 'movie',
-        title: json['n']?.toString() ?? 'Shared video',
-        thumbnail: json['p']?.toString() ?? '',
-        entryFile: json['e']?.toString() ?? '',
-        seriesId: json['r']?.toString(),
-        seasonNumber: (json['sn'] as num?)?.toInt(),
-        episodeNumber: (json['en'] as num?)?.toInt(),
-        subtitleNames:
-            (json['sub'] as List? ?? const []).map((e) => '$e').toList(),
-        files: (json['f'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => ShareFileEntry.fromJson(e.cast<String, dynamic>()))
-            .toList(),
-      );
+    downloadKey: json['k']?.toString() ?? '',
+    mediaId: json['m']?.toString() ?? '',
+    mediaType: json['t']?.toString() ?? 'movie',
+    title: json['n']?.toString() ?? 'Shared video',
+    thumbnail: json['p']?.toString() ?? '',
+    entryFile: json['e']?.toString() ?? '',
+    seriesId: json['r']?.toString(),
+    seasonNumber: (json['sn'] as num?)?.toInt(),
+    episodeNumber: (json['en'] as num?)?.toInt(),
+    subtitleNames: (json['sub'] as List? ?? const []).map((e) => '$e').toList(),
+    files: (json['f'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => ShareFileEntry.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+  );
 }
 
 /// The bundle header exchanged before any bytes move.
@@ -124,15 +123,15 @@ class ShareManifest {
   int get fileCount => items.fold(0, (sum, item) => sum + item.files.length);
 
   Map<String, dynamic> toJson({String? token}) => {
-        'v': version,
-        'from': senderName,
-        'at': createdAt.toIso8601String(),
-        'items': items.map((i) => i.toJson()).toList(),
-        // Echoed back so the receiver can authenticate the sender. Nearby
-        // cannot carry a token in the connection handshake, so the code is
-        // proved here instead — before any file is served.
-        if (token != null && token.isNotEmpty) 'hello': token,
-      };
+    'v': version,
+    'from': senderName,
+    'at': createdAt.toIso8601String(),
+    'items': items.map((i) => i.toJson()).toList(),
+    // Echoed back so the receiver can authenticate the sender. Nearby
+    // cannot carry a token in the connection handshake, so the code is
+    // proved here instead — before any file is served.
+    if (token != null && token.isNotEmpty) 'hello': token,
+  };
 
   String encode({String? token}) => jsonEncode(toJson(token: token));
 
@@ -158,10 +157,7 @@ class ShareManifest {
 /// it a stream for a file (optionally byte-ranged), which is what makes the LAN
 /// and Nearby implementations interchangeable.
 class ShareSession {
-  const ShareSession({
-    required this.manifest,
-    required this.openFile,
-  });
+  const ShareSession({required this.manifest, required this.openFile});
 
   final ShareManifest manifest;
 
@@ -172,7 +168,8 @@ class ShareSession {
     ShareFileEntry file, {
     int? start,
     int? end,
-  }) openFile;
+  })
+  openFile;
 }
 
 /// How a receiver reaches a sender. [code] is what gets rendered as a QR and
@@ -195,8 +192,10 @@ class ShareDescriptor {
   final String label;
   final Map<String, String> data;
 
-  static final RegExp _pattern =
-      RegExp(r'^maxstream:(lan|nearby):(.+)$', caseSensitive: false);
+  static final RegExp _pattern = RegExp(
+    r'^maxstream:(lan|nearby):(.+)$',
+    caseSensitive: false,
+  );
 
   /// Parses a scanned/typed code. Null when it isn't one of ours.
   static ShareDescriptor? tryParse(String raw) {

@@ -146,12 +146,8 @@ class _MaxStreamWatchlistScreenState extends State<MaxStreamWatchlistScreen>
               watchlistItems.isEmpty
                   ? _buildEmptyState()
                   : _buildWatchlistGrid(watchlistItems),
-              movies.isEmpty
-                  ? _buildEmptyState()
-                  : _buildWatchlistGrid(movies),
-              series.isEmpty
-                  ? _buildEmptyState()
-                  : _buildWatchlistGrid(series),
+              movies.isEmpty ? _buildEmptyState() : _buildWatchlistGrid(movies),
+              series.isEmpty ? _buildEmptyState() : _buildWatchlistGrid(series),
             ],
           );
 
@@ -233,11 +229,11 @@ class _MaxStreamWatchlistScreenState extends State<MaxStreamWatchlistScreen>
   Widget _buildWatchlistGrid(List<Movie> items) {
     return GridView.builder(
       padding: EdgeInsets.fromLTRB(
-                16,
-                16,
-                16,
-                16 + FloatingNavBar.clearance(context),
-              ),
+        16,
+        16,
+        16,
+        16 + FloatingNavBar.clearance(context),
+      ),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
         childAspectRatio: 0.6,
@@ -299,10 +295,7 @@ class _MaxStreamWatchlistScreenState extends State<MaxStreamWatchlistScreen>
                           fit: BoxFit.cover,
                           errorWidget: Container(
                             color: Colors.grey[800],
-                            child: const Icon(
-                              Icons.movie,
-                              color: Colors.grey,
-                            ),
+                            child: const Icon(Icons.movie, color: Colors.grey),
                           ),
                         )
                       : Container(

@@ -87,23 +87,27 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
       for (final m in movies) {
         final backdrop = m['backdrop_path'];
         if (backdrop == null) continue;
-        items.add(_HeroItem(
-          imageUrl: 'https://image.tmdb.org/t/p/w1280$backdrop',
-          title: m['title']?.toString() ?? '',
-          subtitle: _movieSubtitle(m),
-          isSeries: false,
-        ));
+        items.add(
+          _HeroItem(
+            imageUrl: 'https://image.tmdb.org/t/p/w1280$backdrop',
+            title: m['title']?.toString() ?? '',
+            subtitle: _movieSubtitle(m),
+            isSeries: false,
+          ),
+        );
       }
 
       for (final s in series) {
         final backdrop = s['backdrop_path'];
         if (backdrop == null) continue;
-        items.add(_HeroItem(
-          imageUrl: 'https://image.tmdb.org/t/p/w1280$backdrop',
-          title: s['name']?.toString() ?? '',
-          subtitle: _seriesSubtitle(s),
-          isSeries: true,
-        ));
+        items.add(
+          _HeroItem(
+            imageUrl: 'https://image.tmdb.org/t/p/w1280$backdrop',
+            title: s['name']?.toString() ?? '',
+            subtitle: _seriesSubtitle(s),
+            isSeries: true,
+          ),
+        );
       }
 
       items.shuffle();
@@ -175,7 +179,9 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
     if (_profiles.length >= ProfileService.maxProfiles) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Maximum ${ProfileService.maxProfiles} profiles allowed.'),
+          content: Text(
+            'Maximum ${ProfileService.maxProfiles} profiles allowed.',
+          ),
           backgroundColor: Colors.red.shade700,
         ),
       );
@@ -418,11 +424,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
                 ),
               ],
             ),
-            child: Icon(
-              avatarIcon,
-              color: Colors.white,
-              size: 44,
-            ),
+            child: Icon(avatarIcon, color: Colors.white, size: 44),
           ),
           const SizedBox(height: 10),
           Text(
@@ -468,10 +470,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
             height: 100,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white24,
-                width: 2,
-              ),
+              border: Border.all(color: Colors.white24, width: 2),
               color: Colors.white.withValues(alpha: 0.05),
             ),
             child: Icon(
@@ -506,8 +505,10 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.edit, color: Colors.white),
-              title: const Text('Edit Profile',
-                  style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'Edit Profile',
+                style: TextStyle(color: Colors.white),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
                 _editProfile(profile);
@@ -516,8 +517,10 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
             if (_profiles.length > 1)
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('Delete Profile',
-                    style: TextStyle(color: Colors.red)),
+                title: const Text(
+                  'Delete Profile',
+                  style: TextStyle(color: Colors.red),
+                ),
                 onTap: () {
                   Navigator.pop(ctx);
                   _deleteProfile(profile);
@@ -525,8 +528,10 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> {
               ),
             ListTile(
               leading: const Icon(Icons.close, color: Colors.white54),
-              title: const Text('Cancel',
-                  style: TextStyle(color: Colors.white54)),
+              title: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.white54),
+              ),
               onTap: () => Navigator.pop(ctx),
             ),
           ],

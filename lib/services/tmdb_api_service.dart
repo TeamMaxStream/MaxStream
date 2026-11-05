@@ -16,7 +16,7 @@ class TmdbApiException implements Exception {
 }
 
 class TmdbApiService {
-  static const String _apiKey = ApiConfig.tmdbApiKey;
+  static String get _apiKey => ApiConfig.requireTmdbApiKey();
   static const Duration _timeout = Duration(seconds: 10);
   static http.Client _client = http.Client();
 
@@ -179,7 +179,8 @@ class TmdbApiService {
     };
   }
 
-  static Future<List<Map<String, dynamic>>> fetchGenreList() => results('/genre/movie/list', {'language': 'en-US'});
+  static Future<List<Map<String, dynamic>>> fetchGenreList() =>
+      results('/genre/movie/list', {'language': 'en-US'});
 
   static Future<List<Map<String, dynamic>>> getMoviesByGenre(
     int genreId, {

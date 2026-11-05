@@ -83,7 +83,10 @@ class DownloadStorageService {
   static Future<int> _directorySize(Directory dir) async {
     var total = 0;
     try {
-      await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      await for (final entity in dir.list(
+        recursive: true,
+        followLinks: false,
+      )) {
         if (entity is File) {
           try {
             total += await entity.length();

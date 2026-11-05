@@ -34,6 +34,7 @@ class RecommendationService {
   // unrelated entries fresh and one stale entry marked all of them stale.
   static final Map<String, List<Map<String, dynamic>>> _cache = {};
   static final Map<String, DateTime> _cacheTimes = {};
+
   /// Top-genre ids are cached separately from the row cache (different type).
   static final Map<int, List<int>> _topGenresCache = {};
   static const Duration _cacheTtl = Duration(minutes: 30);
@@ -60,7 +61,10 @@ class RecommendationService {
   ///
   /// Enrichment now runs concurrently and is cached permanently per item, so a
   /// repeat visit costs zero requests.
-  static Future<List<int>> getTopGenres({int limit = 5, bool refresh = false}) async {
+  static Future<List<int>> getTopGenres({
+    int limit = 5,
+    bool refresh = false,
+  }) async {
     if (!refresh) {
       if (!_isStale('topGenres')) {
         // Any wider computed list can serve a narrower limit.
@@ -214,7 +218,9 @@ class RecommendationService {
       if (_genreCache.length > _maxGenreEntries) {
         // Oldest insertion order first; keep the most recent lookups.
         final keep = _genreCache.keys.toList()
-          ..sort((a, b) => _genreCache[a]!.length.compareTo(_genreCache[b]!.length));
+          ..sort(
+            (a, b) => _genreCache[a]!.length.compareTo(_genreCache[b]!.length),
+          );
         while (_genreCache.length > _maxGenreEntries) {
           _genreCache.remove(keep.removeAt(0));
         }
@@ -344,7 +350,8 @@ class RecommendationService {
         'vote_count.gte': 200,
       });
       for (final item in [...movies, ...series]) {
-        item['mediaType'] = item['media_type'] ??
+        item['mediaType'] =
+            item['media_type'] ??
             (item.containsKey('first_air_date') ? 'tv' : 'movie');
         results.add(item);
       }
@@ -420,19 +427,19 @@ class RecommendationService {
   /// Keeps only the fields the screen renders, so the snapshot stays small
   /// (a full TMDB payload would be megabytes of credits and videos).
   static Map<String, dynamic> _encodeItem(Map<String, dynamic> item) => {
-        'id': item['id'],
-        'media_type': item['mediaType'] ?? item['media_type'],
-        if ((item['title'] ?? item['name']) != null)
-          'title': item['title'] ?? item['name'],
-        if (item['poster_path'] != null) 'poster_path': item['poster_path'],
-        if (item['vote_average'] != null) 'vote_average': item['vote_average'],
-        if ((item['release_date'] ?? item['first_air_date']) != null)
-          'release_date': item['release_date'] ?? item['first_air_date'],
-        if (item['recommendedFrom'] != null)
-          'recommendedFrom': item['recommendedFrom'],
-        if (item['recommendedMediaType'] != null)
-          'recommendedMediaType': item['recommendedMediaType'],
-      };
+    'id': item['id'],
+    'media_type': item['mediaType'] ?? item['media_type'],
+    if ((item['title'] ?? item['name']) != null)
+      'title': item['title'] ?? item['name'],
+    if (item['poster_path'] != null) 'poster_path': item['poster_path'],
+    if (item['vote_average'] != null) 'vote_average': item['vote_average'],
+    if ((item['release_date'] ?? item['first_air_date']) != null)
+      'release_date': item['release_date'] ?? item['first_air_date'],
+    if (item['recommendedFrom'] != null)
+      'recommendedFrom': item['recommendedFrom'],
+    if (item['recommendedMediaType'] != null)
+      'recommendedMediaType': item['recommendedMediaType'],
+  };
 
   static List<Map<String, dynamic>> _decodeItems(Object? value) {
     if (value is! List) return const [];

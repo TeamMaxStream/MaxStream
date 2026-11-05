@@ -54,8 +54,11 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
       String arch = 'unknown';
       try {
         if (Platform.isAndroid) {
-          arch = await const MethodChannel('com.maxstream.app/install')
-              .invokeMethod<String>('getArch') ?? _getArchFromAbi();
+          arch =
+              await const MethodChannel(
+                'com.maxstream.app/install',
+              ).invokeMethod<String>('getArch') ??
+              _getArchFromAbi();
         }
       } catch (_) {
         arch = _getArchFromAbi();
@@ -110,11 +113,6 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final matchedVariant = variantNames.entries.firstWhere(
-      (e) => _installedVariant.contains(e.key),
-      orElse: () => const MapEntry('unknown', ''),
-    );
-
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
       appBar: AppBar(
@@ -183,7 +181,10 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
                       )
                     : const Text(
                         'Check for Updates',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
               ),
             ),
@@ -212,7 +213,10 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
                 filename: entry.value,
                 isInstalled: isInstalled,
                 downloadUrl: _availableUpdate != null
-                    ? _getVariantDownloadUrl(_availableUpdate!.downloadUrl, entry.value)
+                    ? _getVariantDownloadUrl(
+                        _availableUpdate!.downloadUrl,
+                        entry.value,
+                      )
                     : null,
               );
             }),
@@ -223,11 +227,18 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
     );
   }
 
-  String _getVariantDownloadUrl(String baseDownloadUrl, String variantFilename) {
+  String _getVariantDownloadUrl(
+    String baseDownloadUrl,
+    String variantFilename,
+  ) {
     // GitHub release URL pattern:
     // https://github.com/TeamMaxStream/MaxStream/releases/download/v1.6.0/maxstream-arm64-v8a.apk
     // The base URL points to the release tag; we construct the variant URL from the tag
-    final tag = baseDownloadUrl.split('/releases/download/').last.split('/').first;
+    final tag = baseDownloadUrl
+        .split('/releases/download/')
+        .last
+        .split('/')
+        .first;
     return 'https://github.com/TeamMaxStream/MaxStream/releases/download/$tag/$variantFilename';
   }
 
@@ -322,11 +333,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
               ],
             ),
           ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: Colors.red,
-          ),
+          Switch(value: value, onChanged: onChanged, activeColor: Colors.red),
         ],
       ),
     );
@@ -362,7 +369,11 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
             const SizedBox(height: 10),
             Text(
               update.changelog,
-              style: TextStyle(color: Colors.grey[400], fontSize: 13, height: 1.4),
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 13,
+                height: 1.4,
+              ),
               maxLines: 5,
               overflow: TextOverflow.ellipsis,
             ),
@@ -372,7 +383,11 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
             width: double.infinity,
             child: ElevatedButton(
               onPressed: () {
-                UpdateService.downloadAndInstallUpdate(context, update.downloadUrl);
+                UpdateService.downloadAndInstallUpdate(
+                  context,
+                  update.downloadUrl,
+                  checksumUrl: update.checksumUrl,
+                );
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red,
@@ -443,14 +458,22 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
               ),
               child: const Text(
                 'Installed',
-                style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.green,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             )
           else if (downloadUrl != null)
             IconButton(
               icon: const Icon(Icons.download, color: Colors.red, size: 20),
               onPressed: () {
-                UpdateService.downloadAndInstallUpdate(context, downloadUrl);
+                UpdateService.downloadAndInstallUpdate(
+                  context,
+                  downloadUrl,
+                  checksumUrl: _availableUpdate?.checksumUrl,
+                );
               },
             ),
         ],

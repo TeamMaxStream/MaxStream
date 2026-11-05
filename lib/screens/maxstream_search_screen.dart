@@ -55,14 +55,33 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
   double? _filterRatingMin;
   bool _filtersActive = false;
   static const Map<int, String> _genreMap = {
-    28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy',
-    80: 'Crime', 99: 'Documentary', 18: 'Drama', 10751: 'Family',
-    14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
-    9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie',
-    53: 'Thriller', 10752: 'War', 37: 'Western',
-    10759: 'Action & Adventure', 10762: 'Kids', 10763: 'News',
-    10764: 'Reality', 10765: 'Sci-Fi & Fantasy', 10766: 'Soap',
-    10767: 'Talk', 10768: 'War & Politics',
+    28: 'Action',
+    12: 'Adventure',
+    16: 'Animation',
+    35: 'Comedy',
+    80: 'Crime',
+    99: 'Documentary',
+    18: 'Drama',
+    10751: 'Family',
+    14: 'Fantasy',
+    36: 'History',
+    27: 'Horror',
+    10402: 'Music',
+    9648: 'Mystery',
+    10749: 'Romance',
+    878: 'Sci-Fi',
+    10770: 'TV Movie',
+    53: 'Thriller',
+    10752: 'War',
+    37: 'Western',
+    10759: 'Action & Adventure',
+    10762: 'Kids',
+    10763: 'News',
+    10764: 'Reality',
+    10765: 'Sci-Fi & Fantasy',
+    10766: 'Soap',
+    10767: 'Talk',
+    10768: 'War & Politics',
   };
 
   @override
@@ -109,7 +128,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     if (status.isDenied || status.isPermanentlyDenied) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Microphone permission needed for voice search')),
+          const SnackBar(
+            content: Text('Microphone permission needed for voice search'),
+          ),
         );
       }
       return;
@@ -119,7 +140,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
       if (!_speechEnabled) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Voice search not available on this device')),
+            const SnackBar(
+              content: Text('Voice search not available on this device'),
+            ),
           );
         }
         return;
@@ -147,7 +170,12 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
   String _cleanVoiceQuery(String raw) {
     var q = raw.trim().toLowerCase();
     // Strip common fillers: "search for", "find", "show me", "play", "open"
-    q = q.replaceFirst(RegExp(r'^(search\s+(for\s+)?|find\s+(for\s+)?|show me\s+|play\s+|open\s+)'), '');
+    q = q.replaceFirst(
+      RegExp(
+        r'^(search\s+(for\s+)?|find\s+(for\s+)?|show me\s+|play\s+|open\s+)',
+      ),
+      '',
+    );
     // Title-case for display but keep lower for search – search is case-insensitive
     final cleaned = q.trim();
     if (cleaned.isEmpty) return raw.trim();
@@ -160,7 +188,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     if (raw.isEmpty) return;
     final words = _cleanVoiceQuery(raw);
     _searchController.text = words;
-    _searchController.selection = TextSelection.fromPosition(TextPosition(offset: words.length));
+    _searchController.selection = TextSelection.fromPosition(
+      TextPosition(offset: words.length),
+    );
     setState(() {});
     // Fire on partial after short debounce so results appear instantly while speaking;
     // finalResult always fires immediately for reliability.
@@ -192,7 +222,8 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     setState(() {
       _searchHistory.remove(trimmed);
       _searchHistory.insert(0, trimmed);
-      if (_searchHistory.length > 20) _searchHistory = _searchHistory.sublist(0, 20);
+      if (_searchHistory.length > 20)
+        _searchHistory = _searchHistory.sublist(0, 20);
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('search_history', jsonEncode(_searchHistory));
@@ -214,10 +245,18 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     setState(() => isLoadingRecommendations = true);
     try {
       final results = await Future.wait([
-        TmdbApiService.fetchTrendingMovies().catchError((_) => <Map<String, dynamic>>[]),
-        TmdbApiService.fetchTrendingSeries().catchError((_) => <Map<String, dynamic>>[]),
-        TmdbApiService.fetchPopularMovies().catchError((_) => <Map<String, dynamic>>[]),
-        TmdbApiService.fetchPopularSeries().catchError((_) => <Map<String, dynamic>>[]),
+        TmdbApiService.fetchTrendingMovies().catchError(
+          (_) => <Map<String, dynamic>>[],
+        ),
+        TmdbApiService.fetchTrendingSeries().catchError(
+          (_) => <Map<String, dynamic>>[],
+        ),
+        TmdbApiService.fetchPopularMovies().catchError(
+          (_) => <Map<String, dynamic>>[],
+        ),
+        TmdbApiService.fetchPopularSeries().catchError(
+          (_) => <Map<String, dynamic>>[],
+        ),
       ]);
       if (!mounted) return;
       final trending = filterForKids([...results[0], ...results[1]])..shuffle();
@@ -307,19 +346,23 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
       if (item['media_type'] == 'person') return true;
       // Kids profile: only show kid-friendly content
       if (isKidsProfile && item['media_type'] != 'person') {
-        final genreIds = (item['genre_ids'] as List<dynamic>?)?.cast<int>() ?? [];
+        final genreIds =
+            (item['genre_ids'] as List<dynamic>?)?.cast<int>() ?? [];
         if (!genreIds.contains(16) && !genreIds.contains(10751)) return false;
       }
       if (_filterGenreId != null) {
-        final genreIds = (item['genre_ids'] as List<dynamic>?)?.cast<int>() ?? [];
+        final genreIds =
+            (item['genre_ids'] as List<dynamic>?)?.cast<int>() ?? [];
         if (!genreIds.contains(_filterGenreId)) return false;
       }
       if (_filterYearFrom != null || _filterYearTo != null) {
-        final dateStr = (item['release_date'] ?? item['first_air_date'] ?? '') as String;
+        final dateStr =
+            (item['release_date'] ?? item['first_air_date'] ?? '') as String;
         if (dateStr.length >= 4) {
           final year = int.tryParse(dateStr.substring(0, 4));
           if (year != null) {
-            if (_filterYearFrom != null && year < _filterYearFrom!) return false;
+            if (_filterYearFrom != null && year < _filterYearFrom!)
+              return false;
             if (_filterYearTo != null && year > _filterYearTo!) return false;
           }
         }
@@ -358,7 +401,8 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                 children: [
                   Center(
                     child: Container(
-                      width: 40, height: 4,
+                      width: 40,
+                      height: 4,
                       decoration: BoxDecoration(
                         color: Colors.grey[700],
                         borderRadius: BorderRadius.circular(2),
@@ -369,7 +413,14 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                   Row(
                     children: [
                       const Expanded(
-                        child: Text('Filters', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+                        child: Text(
+                          'Filters',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                       ),
                       if (_filtersActive)
                         TextButton(
@@ -382,12 +433,22 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                               temp['rating'] = null;
                             });
                           },
-                          child: const Text('Clear All', style: TextStyle(color: Colors.red, fontSize: 13)),
+                          child: const Text(
+                            'Clear All',
+                            style: TextStyle(color: Colors.red, fontSize: 13),
+                          ),
                         ),
                     ],
                   ),
                   const SizedBox(height: 16),
-                  const Text('Genre', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                  const Text(
+                    'Genre',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   SizedBox(
                     height: 40,
@@ -395,27 +456,49 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                       scrollDirection: Axis.horizontal,
                       children: [
                         _buildGenreChip(setSheetState, temp, null, null),
-                        ..._genreMap.entries.map((e) =>
-                          _buildGenreChip(setSheetState, temp, e.key, e.value)),
+                        ..._genreMap.entries.map(
+                          (e) => _buildGenreChip(
+                            setSheetState,
+                            temp,
+                            e.key,
+                            e.value,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 20),
-                  const Text('Release Year', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                  const Text(
+                    'Release Year',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
-                        child: _buildYearField('From', temp['yearFrom'] as int?, (v) {
-                          setSheetState(() => temp['yearFrom'] = v);
-                        }),
+                        child: _buildYearField(
+                          'From',
+                          temp['yearFrom'] as int?,
+                          (v) {
+                            setSheetState(() => temp['yearFrom'] = v);
+                          },
+                        ),
                       ),
                       const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 12),
-                        child: Text('–', style: TextStyle(color: Colors.grey, fontSize: 18)),
+                        child: Text(
+                          '–',
+                          style: TextStyle(color: Colors.grey, fontSize: 18),
+                        ),
                       ),
                       Expanded(
-                        child: _buildYearField('To', temp['yearTo'] as int?, (v) {
+                        child: _buildYearField('To', temp['yearTo'] as int?, (
+                          v,
+                        ) {
                           setSheetState(() => temp['yearTo'] = v);
                         }),
                       ),
@@ -424,10 +507,24 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                   const SizedBox(height: 20),
                   Row(
                     children: [
-                      const Text('Min Rating', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                      const Text(
+                        'Min Rating',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       const Spacer(),
                       if (temp['rating'] != null)
-                        Text('${(temp['rating'] as double).toStringAsFixed(1)}+', style: const TextStyle(color: Colors.red, fontSize: 13, fontWeight: FontWeight.w600)),
+                        Text(
+                          '${(temp['rating'] as double).toStringAsFixed(1)}+',
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -455,7 +552,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       onPressed: () {
                         Navigator.pop(ctx);
@@ -465,13 +564,23 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                           _filterYearFrom = temp['yearFrom'] as int?;
                           _filterYearTo = temp['yearTo'] as int?;
                           _filterRatingMin = temp['rating'] as double?;
-                          _filtersActive = _filterGenreId != null || _filterYearFrom != null || _filterYearTo != null || _filterRatingMin != null;
+                          _filtersActive =
+                              _filterGenreId != null ||
+                              _filterYearFrom != null ||
+                              _filterYearTo != null ||
+                              _filterRatingMin != null;
                         });
                         if (_searchController.text.trim().length >= 2) {
                           _performSearch(_searchController.text);
                         }
                       },
-                      child: const Text('Apply Filters', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                      child: const Text(
+                        'Apply Filters',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -483,8 +592,12 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     );
   }
 
-  Widget _buildGenreChip(StateSetter setSheetState, Map<String, dynamic> temp,
-      int? genreId, String? genreName) {
+  Widget _buildGenreChip(
+    StateSetter setSheetState,
+    Map<String, dynamic> temp,
+    int? genreId,
+    String? genreName,
+  ) {
     final selected = temp['genreId'] == genreId;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
@@ -506,7 +619,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
             color: selected ? Colors.red : const Color(0xFF2A2A2A),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: selected ? Colors.red : Colors.white.withValues(alpha: 0.1),
+              color: selected
+                  ? Colors.red
+                  : Colors.white.withValues(alpha: 0.1),
             ),
           ),
           child: Text(
@@ -536,7 +651,10 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
           borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide.none,
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
       ),
       onChanged: (v) {
         onChanged(int.tryParse(v));
@@ -555,15 +673,33 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
           children: [
             Container(
               padding: const EdgeInsets.all(7),
-              decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(8)),
-              child: const Icon(Icons.search_rounded, color: Colors.white, size: 18),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.search_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
             ),
             const SizedBox(width: 10),
-            const Text('Search', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 20, letterSpacing: -0.5)),
+            const Text(
+              'Search',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 20,
+                letterSpacing: -0.5,
+              ),
+            ),
           ],
         ),
         actions: const [
-          Padding(padding: EdgeInsets.only(right: 12), child: ProfileMenuButton()),
+          Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: ProfileMenuButton(),
+          ),
         ],
       ),
       body: Column(
@@ -602,12 +738,18 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
             children: [
               Icon(Icons.search, size: 48, color: Colors.grey[700]),
               const SizedBox(height: 12),
-              Text('No recommendations yet', style: TextStyle(color: Colors.grey[500])),
+              Text(
+                'No recommendations yet',
+                style: TextStyle(color: Colors.grey[500]),
+              ),
               const SizedBox(height: 8),
               ElevatedButton(
                 onPressed: _loadSearchRecommendations,
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text('Retry', style: TextStyle(color: Colors.white)),
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
             ],
           ),
@@ -642,16 +784,29 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                         decoration: BoxDecoration(
                           color: const Color(0xFF1E1E1E),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.08),
+                          ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(item, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                            Text(
+                              item,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                             const SizedBox(width: 6),
                             GestureDetector(
                               onTap: () => _removeFromHistory(item),
-                              child: Icon(Icons.close_rounded, color: Colors.grey[500], size: 14),
+                              child: Icon(
+                                Icons.close_rounded,
+                                color: Colors.grey[500],
+                                size: 14,
+                              ),
                             ),
                           ],
                         ),
@@ -694,7 +849,10 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               itemBuilder: (_, __) => Container(
                 width: 152,
                 margin: const EdgeInsets.only(right: 10),
-                decoration: BoxDecoration(color: Colors.grey[800], borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(
+                  color: Colors.grey[800],
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
@@ -712,7 +870,10 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               itemBuilder: (_, __) => Container(
                 width: 152,
                 margin: const EdgeInsets.only(right: 10),
-                decoration: BoxDecoration(color: Colors.grey[800], borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(
+                  color: Colors.grey[800],
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
@@ -735,7 +896,8 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
             onTap: () {
               _tabController.animateTo(i);
               setState(() => _currentTabIndex = i);
-              if (_searchController.text.isNotEmpty) _performSearch(_searchController.text);
+              if (_searchController.text.isNotEmpty)
+                _performSearch(_searchController.text);
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
@@ -743,7 +905,11 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               decoration: BoxDecoration(
                 color: selected ? Colors.red : const Color(0xFF1E1E1E),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: selected ? Colors.red : Colors.white.withValues(alpha: 0.08)),
+                border: Border.all(
+                  color: selected
+                      ? Colors.red
+                      : Colors.white.withValues(alpha: 0.08),
+                ),
               ),
               child: Center(
                 child: Text(
@@ -773,10 +939,22 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _isListening ? Colors.red.withValues(alpha: 0.4) : Colors.white.withValues(alpha: 0.09)),
+          border: Border.all(
+            color: _isListening
+                ? Colors.red.withValues(alpha: 0.4)
+                : Colors.white.withValues(alpha: 0.09),
+          ),
           boxShadow: [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6)),
-            BoxShadow(color: Colors.red.withValues(alpha: _isListening ? 0.15 : 0.06), blurRadius: 20, offset: const Offset(0, 2)),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+            BoxShadow(
+              color: Colors.red.withValues(alpha: _isListening ? 0.15 : 0.06),
+              blurRadius: 20,
+              offset: const Offset(0, 2),
+            ),
           ],
         ),
         child: Row(
@@ -784,12 +962,27 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
             Expanded(
               child: TextField(
                 controller: _searchController,
-                style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
                 decoration: InputDecoration(
-                  hintText: _isListening ? 'Listening… speak now' : 'Search movies, TV shows, actors…',
-                  hintStyle: TextStyle(color: _isListening ? Colors.red[300] : const Color(0xFF6B7280), fontSize: 14, fontWeight: FontWeight.w400),
+                  hintText: _isListening
+                      ? 'Listening… speak now'
+                      : 'Search movies, TV shows, actors…',
+                  hintStyle: TextStyle(
+                    color: _isListening
+                        ? Colors.red[300]
+                        : const Color(0xFF6B7280),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                  ),
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 16,
+                    horizontal: 16,
+                  ),
                 ),
                 onChanged: (value) {
                   setState(() {});
@@ -824,8 +1017,15 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                 },
                 icon: Container(
                   padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.08), shape: BoxShape.circle),
-                  child: const Icon(Icons.close_rounded, color: Colors.grey, size: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    color: Colors.grey,
+                    size: 14,
+                  ),
                 ),
                 splashRadius: 18,
               ),
@@ -834,7 +1034,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               duration: const Duration(milliseconds: 200),
               margin: const EdgeInsets.only(right: 6),
               decoration: BoxDecoration(
-                color: _isListening ? Colors.red : Colors.white.withValues(alpha: 0.08),
+                color: _isListening
+                    ? Colors.red
+                    : Colors.white.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: IconButton(
@@ -855,7 +1057,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               duration: const Duration(milliseconds: 200),
               margin: const EdgeInsets.only(right: 6),
               decoration: BoxDecoration(
-                color: _filtersActive ? Colors.red : Colors.white.withValues(alpha: 0.08),
+                color: _filtersActive
+                    ? Colors.red
+                    : Colors.white.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: IconButton(
@@ -918,10 +1122,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     }
     return SingleChildScrollView(
       child: Column(
-        children: [
-          _buildMovieGrid(searchResults),
-          const SizedBox(height: 100),
-        ],
+        children: [_buildMovieGrid(searchResults), const SizedBox(height: 100)],
       ),
     );
   }
@@ -933,10 +1134,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     }
     return SingleChildScrollView(
       child: Column(
-        children: [
-          _buildMovieGrid(searchResults),
-          const SizedBox(height: 100),
-        ],
+        children: [_buildMovieGrid(searchResults), const SizedBox(height: 100)],
       ),
     );
   }
@@ -948,10 +1146,7 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     }
     return SingleChildScrollView(
       child: Column(
-        children: [
-          _buildActorGrid(actorResults),
-          const SizedBox(height: 100),
-        ],
+        children: [_buildActorGrid(actorResults), const SizedBox(height: 100)],
       ),
     );
   }
@@ -960,14 +1155,14 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     final icon = title == 'Recent Searches'
         ? Icons.history_rounded
         : title == 'Top Searched'
-            ? Icons.trending_up_rounded
-            : title == 'Most Watched'
-                ? Icons.local_fire_department_rounded
-                : title == 'Movies'
-                    ? Icons.movie_rounded
-                    : title == 'TV Shows'
-                        ? Icons.tv_rounded
-                        : Icons.people_rounded;
+        ? Icons.trending_up_rounded
+        : title == 'Most Watched'
+        ? Icons.local_fire_department_rounded
+        : title == 'Movies'
+        ? Icons.movie_rounded
+        : title == 'TV Shows'
+        ? Icons.tv_rounded
+        : Icons.people_rounded;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
       child: Row(
@@ -975,14 +1170,22 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
           Container(
             width: 3,
             height: 16,
-            decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+              color: Colors.red,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
           const SizedBox(width: 8),
           Icon(icon, color: Colors.red, size: 16),
           const SizedBox(width: 6),
           Text(
             title,
-            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: 0.2),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
           ),
         ],
       ),
@@ -1015,7 +1218,8 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: items.length,
-        itemBuilder: (context, index) => _buildRecommendationComingSoonCard(items[index]),
+        itemBuilder: (context, index) =>
+            _buildRecommendationComingSoonCard(items[index]),
       ),
     );
   }
@@ -1025,9 +1229,11 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     final backdropPath = item['backdrop_path'];
     final posterPath = item['poster_path'];
     final rating = (item['vote_average'] as num?)?.toDouble();
-    final date = (item['release_date'] ?? item['first_air_date'])?.toString() ?? '';
+    final date =
+        (item['release_date'] ?? item['first_air_date'])?.toString() ?? '';
     final overview = item['overview']?.toString() ?? '';
-    final isTv = item['media_type'] == 'tv' || item.containsKey('first_air_date');
+    final isTv =
+        item['media_type'] == 'tv' || item.containsKey('first_air_date');
     return GestureDetector(
       onTap: () {
         if (!mounted) return;
@@ -1036,7 +1242,10 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
           MaterialPageRoute(
             builder: (_) => isTv
                 ? MaxStreamSeriesScreen(seriesItem: Movie.fromJson(item))
-                : MaxStreamDetailsScreen(item: Movie.fromJson(item), mediaType: isTv ? 'tv' : 'movie'),
+                : MaxStreamDetailsScreen(
+                    item: Movie.fromJson(item),
+                    mediaType: isTv ? 'tv' : 'movie',
+                  ),
           ),
         );
       },
@@ -1049,7 +1258,11 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
             fit: StackFit.expand,
             children: [
               if (backdropPath != null)
-                AppNetworkImage(url: TmdbApiService.getBackdropUrl(backdropPath), fit: BoxFit.cover, errorWidget: _posterFallback(posterPath))
+                AppNetworkImage(
+                  url: TmdbApiService.getBackdropUrl(backdropPath),
+                  fit: BoxFit.cover,
+                  errorWidget: _posterFallback(posterPath),
+                )
               else
                 _posterFallback(posterPath),
               Positioned.fill(
@@ -1058,7 +1271,10 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Colors.black.withValues(alpha: 0.88)],
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.88),
+                      ],
                       stops: const [0.3, 1.0],
                     ),
                   ),
@@ -1070,16 +1286,34 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                   bottom: 12,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: AppNetworkImage(url: TmdbApiService.getPosterUrl(posterPath), width: 56, height: 82, fit: BoxFit.cover),
+                    child: AppNetworkImage(
+                      url: TmdbApiService.getPosterUrl(posterPath),
+                      width: 56,
+                      height: 82,
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ),
               Positioned(
                 top: 10,
                 left: 10,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(color: isTv ? Colors.teal : Colors.red, borderRadius: BorderRadius.circular(6)),
-                  child: Text(isTv ? 'TV' : 'MOVIE', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isTv ? Colors.teal : Colors.red,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    isTv ? 'TV' : 'MOVIE',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
               if (rating != null && rating > 0)
@@ -1087,13 +1321,36 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                   top: 10,
                   right: 10,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.65), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withValues(alpha: 0.12))),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.star_rounded, color: Colors.amber, size: 11),
-                      const SizedBox(width: 3),
-                      Text(rating.toStringAsFixed(1), style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
-                    ]),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.12),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.star_rounded,
+                          color: Colors.amber,
+                          size: 11,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          rating.toStringAsFixed(1),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               Positioned(
@@ -1104,22 +1361,65 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(name, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     if (date.isNotEmpty) ...[
                       const SizedBox(height: 3),
-                      Row(children: [
-                        const Icon(Icons.calendar_today_rounded, color: Colors.white70, size: 11),
-                        const SizedBox(width: 4),
-                        Text(date.length >= 4 ? date.substring(0, 4) : date, style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500)),
-                        if (rating != null && rating > 0) ...[
-                          const Text('  ·  ', style: TextStyle(color: Colors.white38, fontSize: 11)),
-                          Text('${rating.toStringAsFixed(1)}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.calendar_today_rounded,
+                            color: Colors.white70,
+                            size: 11,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            date.length >= 4 ? date.substring(0, 4) : date,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          if (rating != null && rating > 0) ...[
+                            const Text(
+                              '  ·  ',
+                              style: TextStyle(
+                                color: Colors.white38,
+                                fontSize: 11,
+                              ),
+                            ),
+                            Text(
+                              '${rating.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                         ],
-                      ]),
+                      ),
                     ],
                     if (overview.isNotEmpty) ...[
                       const SizedBox(height: 4),
-                      Text(overview, style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.3), maxLines: 2, overflow: TextOverflow.ellipsis),
+                      Text(
+                        overview,
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ],
                   ],
                 ),
@@ -1133,14 +1433,24 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
 
   Widget _posterFallback(String? posterPath) {
     if (posterPath != null) {
-      return AppNetworkImage(url: TmdbApiService.getPosterUrl(posterPath), fit: BoxFit.cover, errorWidget: _placeholderBox());
+      return AppNetworkImage(
+        url: TmdbApiService.getPosterUrl(posterPath),
+        fit: BoxFit.cover,
+        errorWidget: _placeholderBox(),
+      );
     }
     return _placeholderBox();
   }
 
   Widget _placeholderBox() {
     return Container(
-      decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.grey[850]!, Colors.grey[900]!], begin: Alignment.topLeft, end: Alignment.bottomRight)),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.grey[850]!, Colors.grey[900]!],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
       child: const Icon(Icons.movie_rounded, color: Colors.grey, size: 42),
     );
   }
@@ -1164,7 +1474,10 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
     );
   }
 
-  Widget _buildMovieCard(Map<String, dynamic> item, {bool isRecommendation = false}) {
+  Widget _buildMovieCard(
+    Map<String, dynamic> item, {
+    bool isRecommendation = false,
+  }) {
     final card = GestureDetector(
       onTap: () {
         if (!mounted) return;
@@ -1209,7 +1522,11 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 8, offset: const Offset(0, 4)),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
                 ],
               ),
               child: ClipRRect(
@@ -1218,7 +1535,9 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                   children: [
                     item['poster_path'] != null
                         ? AppNetworkImage(
-                            url: TmdbApiService.getPosterUrl(item['poster_path']),
+                            url: TmdbApiService.getPosterUrl(
+                              item['poster_path'],
+                            ),
                             width: double.infinity,
                             height: double.infinity,
                             fit: BoxFit.cover,
@@ -1227,7 +1546,11 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                             width: double.infinity,
                             height: double.infinity,
                             color: Colors.grey[800],
-                            child: const Icon(Icons.movie, color: Colors.grey, size: 32),
+                            child: const Icon(
+                              Icons.movie,
+                              color: Colors.grey,
+                              size: 32,
+                            ),
                           ),
                     Positioned(
                       left: 0,
@@ -1239,30 +1562,49 @@ class _MaxStreamSearchScreenState extends State<MaxStreamSearchScreen>
                           gradient: LinearGradient(
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
-                            colors: [Colors.transparent, Colors.black.withValues(alpha: 0.75)],
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withValues(alpha: 0.75),
+                            ],
                           ),
                         ),
                       ),
                     ),
-                    if (item['vote_average'] != null && (item['vote_average'] as num) > 0)
+                    if (item['vote_average'] != null &&
+                        (item['vote_average'] as num) > 0)
                       Positioned(
                         top: 6,
                         right: 6,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.75),
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.15),
+                            ),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.star_rounded, color: Colors.amber, size: 11),
+                              const Icon(
+                                Icons.star_rounded,
+                                color: Colors.amber,
+                                size: 11,
+                              ),
                               const SizedBox(width: 3),
                               Text(
-                                (item['vote_average'] as num).toStringAsFixed(1),
-                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                                (item['vote_average'] as num).toStringAsFixed(
+                                  1,
+                                ),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ],
                           ),

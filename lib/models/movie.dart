@@ -38,7 +38,8 @@ class Movie {
     // series results expose `name` and `first_air_date`, movies expose
     // `title` and `release_date`.
     final rawType = json['media_type']?.toString();
-    final resolvedType = rawType ??
+    final resolvedType =
+        rawType ??
         ((json['first_air_date'] != null || json['name'] != null)
             ? 'tv'
             : 'movie');
@@ -49,13 +50,17 @@ class Movie {
       parsedGenres = ids.map((id) => _genreMap[id] ?? 'Unknown').toList();
     } else if (json['genres'] is List) {
       parsedGenres = json['genres']
-          .map<String>((genre) =>
-              (genre is Map && genre.containsKey('name')) ? genre['name'] : genre.toString())
+          .map<String>(
+            (genre) => (genre is Map && genre.containsKey('name'))
+                ? genre['name']
+                : genre.toString(),
+          )
           .toList();
     }
 
     final List productionCountries = json['production_countries'] ?? [];
-    final country = productionCountries.isNotEmpty && productionCountries[0] is Map
+    final country =
+        productionCountries.isNotEmpty && productionCountries[0] is Map
         ? (productionCountries[0]['name'] ?? '')
         : '';
 
@@ -68,7 +73,8 @@ class Movie {
       title: json['title'] ?? json['name'] ?? 'Untitled',
       description: json['overview'] ?? 'No description available.',
       thumbnail: 'https://image.tmdb.org/t/p/w500${json['poster_path'] ?? ''}',
-      backdrop: 'https://image.tmdb.org/t/p/original${json['backdrop_path'] ?? ''}',
+      backdrop:
+          'https://image.tmdb.org/t/p/original${json['backdrop_path'] ?? ''}',
       videoUrl: '', // Will be populated by VideoService
       trailerUrl: json['trailerUrl'] ?? '',
       genres: parsedGenres,

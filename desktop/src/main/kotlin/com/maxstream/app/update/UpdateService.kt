@@ -24,6 +24,11 @@ data class UpdateInfo(
     val assetName: String,
     val assetUrl: String,
     val assetSize: Long,
+    /**
+     * URL of the release's `SHA256SUMS` asset. Null on releases that predate
+     * update verification; the download then fails closed.
+     */
+    val checksumUrl: String? = null,
 ) {
     val isExecutable: Boolean get() = assetName.endsWith(".exe", ignoreCase = true)
 }
@@ -156,6 +161,7 @@ object UpdateService {
                         }
                     }
                 }
+                verifyChecksum(part, info)
                 if (!part.renameTo(target)) {
                     part.copyTo(target, overwrite = true)
                     part.delete()
@@ -252,6 +258,7 @@ object UpdateService {
                         assetName = asset.optString("name"),
                         assetUrl = asset.optString("browser_download_url"),
                         assetSize = asset.optLong("size", 0L),
+                        checksumUrl = findChecksumUrl(release.optJSONArray("assets")),
                     )
                 }
             }
@@ -288,6 +295,50 @@ object UpdateService {
             }
         }
         return preferredExe ?: namedExe ?: anyExe ?: namedMsi ?: anyMsi
+    }
+
+    private fun findChecksumUrl(assets: JSONArray?): String? {
+        if (assets == null) return null
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            if (asset.optString("name").equals("SHA256SUMS", ignoreCase = true)) {
+                return asset.optString("browser_download_url").takeIf { it.isNotBlank() }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Fails closed: a release without `SHA256SUMS`, or without an entry for the
+     * chosen installer, aborts the download. An unverified installer must never
+     * be executed — that is exactly the path a tampered download would take.
+     */
+    private fun verifyChecksum(file: File, info: UpdateInfo) {
+        val checksumUrl = info.checksumUrl?.takeIf { it.isNotBlank() }
+            ?: error(
+                "This release does not publish SHA256SUMS, so the download " +
+                    "cannot be verified. Download it manually from GitHub instead.",
+            )
+        val request = Request.Builder()
+            .url(checksumUrl)
+            .header("User-Agent", USER_AGENT)
+            .build()
+        val sums = downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                error("Could not fetch SHA256SUMS (HTTP ${response.code})")
+            }
+            response.body?.string().orEmpty()
+        }
+        val fileName = Checksum.assetNameFromUrl(info.assetUrl)
+        val expected = Checksum.findForFile(sums, fileName)
+            ?: error("SHA256SUMS does not list $fileName")
+        val actual = Checksum.sha256Of(file)
+        if (!actual.equals(expected, ignoreCase = true)) {
+            error(
+                "Checksum mismatch for $fileName — the download is corrupted " +
+                    "or was tampered with",
+            )
+        }
     }
 
     private fun versionFromTag(tag: String): String? {

@@ -34,9 +34,14 @@ class TmdbClient {
     private var genreCache: Map<String, Map<Int, String>> = emptyMap()
 
     suspend fun json(path: String, vararg query: Pair<String, String>): JSONObject = withContextIO {
+        val apiKey = AppConfig.TMDB_API_KEY
+        check(apiKey.isNotBlank()) {
+            "TMDB_API_KEY is not configured. Build with -PTMDB_API_KEY=<key> " +
+                "or set the TMDB_API_KEY environment variable."
+        }
         val url = AppConfig.TMDB_BASE_URL.toHttpUrl().newBuilder()
             .addPathSegments(path.trimStart('/'))
-            .addQueryParameter("api_key", AppConfig.TMDB_API_KEY)
+            .addQueryParameter("api_key", apiKey)
             .apply { query.forEach { addQueryParameter(it.first, it.second) } }
             .build()
         val request = Request.Builder()

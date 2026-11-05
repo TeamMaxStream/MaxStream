@@ -35,7 +35,8 @@ class RecommendationNotificationService {
 
       for (final item in newItems) {
         final id = item['id'] as int;
-        final title = item['title'] as String? ?? item['name'] as String? ?? 'New';
+        final title =
+            item['title'] as String? ?? item['name'] as String? ?? 'New';
         final mediaType = item['mediaType'] ?? 'movie';
         final posterPath = item['poster_path'] as String? ?? '';
 
@@ -122,9 +123,7 @@ class RecommendationNotificationService {
         payload: 'content:$mediaType:$tmdbId',
       );
 
-      debugPrint(
-        'RecommendationNotificationService: Notified "$title"',
-      );
+      debugPrint('RecommendationNotificationService: Notified "$title"');
     } catch (e) {
       debugPrint('RecommendationNotificationService: Send error: $e');
     }
@@ -148,9 +147,6 @@ class RecommendationNotificationService {
 
   static Set<int> _getStoredIds(SharedPreferences prefs) {
     final stored = prefs.getStringList(_notifiedKey) ?? [];
-    return stored
-        .map((id) => int.tryParse(id))
-        .whereType<int>()
-        .toSet();
+    return stored.map((id) => int.tryParse(id)).whereType<int>().toSet();
   }
 }

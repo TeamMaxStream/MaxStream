@@ -29,13 +29,13 @@ class _ProfileMenuButtonState extends State<ProfileMenuButton> {
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => const MaxStreamMoreScreen(),
         transitionsBuilder: (_, animation, __, child) => SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(1.0, 0.0),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(
-            parent: animation,
-            curve: Curves.fastOutSlowIn,
-          )),
+          position:
+              Tween<Offset>(
+                begin: const Offset(1.0, 0.0),
+                end: Offset.zero,
+              ).animate(
+                CurvedAnimation(parent: animation, curve: Curves.fastOutSlowIn),
+              ),
           child: child,
         ),
         transitionDuration: const Duration(milliseconds: 250),
@@ -79,11 +79,7 @@ class _ProfileMenuButtonState extends State<ProfileMenuButton> {
                 ),
               ],
             ),
-            child: Icon(
-              avatarIcon,
-              color: Colors.white,
-              size: 18,
-            ),
+            child: Icon(avatarIcon, color: Colors.white, size: 18),
           ),
         );
       },
@@ -165,8 +161,9 @@ class _ProfileMenuButtonState extends State<ProfileMenuButton> {
                             style: TextStyle(
                               color: isActive ? Colors.white70 : Colors.white,
                               fontSize: 14,
-                              fontWeight:
-                                  isActive ? FontWeight.bold : FontWeight.w500,
+                              fontWeight: isActive
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
                             ),
                           ),
                           if (profile.isKids)
@@ -273,10 +270,7 @@ class _ProfileMenuButtonState extends State<ProfileMenuButton> {
                 ),
                 const Text(
                   'Currently watching',
-                  style: TextStyle(
-                    color: Colors.grey,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
                 ),
               ],
             ),

@@ -158,7 +158,10 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           backgroundColor: const Color(0xFF1A1A1A),
-          title: const Text('Authentication Required', style: TextStyle(color: Colors.white)),
+          title: const Text(
+            'Authentication Required',
+            style: TextStyle(color: Colors.white),
+          ),
           content: Text(
             result.error ??
                 'You must authenticate to use MaxStream. Would you like to try again or exit?',
@@ -248,7 +251,11 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
           ElevatedButton(
             onPressed: () {
               Navigator.of(context).pop();
-              UpdateService.downloadAndInstallUpdate(context, info.downloadUrl);
+              UpdateService.downloadAndInstallUpdate(
+                context,
+                info.downloadUrl,
+                checksumUrl: info.checksumUrl,
+              );
             },
             child: const Text('Update Now'),
           ),
@@ -323,7 +330,9 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
                     child: Icon(
                       icons[i],
                       size: 22,
-                      color: isSelected ? KidsTheme.navSelected : KidsTheme.navUnselected,
+                      color: isSelected
+                          ? KidsTheme.navSelected
+                          : KidsTheme.navUnselected,
                     ),
                   ),
                 );

@@ -18,6 +18,7 @@ jobs:
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
       EXCLUDE_TV: "true"
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +67,8 @@ jobs:
           # below still handles one if a future toolchain adds it, but never
           # fails the build when it is absent.
           # Flutter's post-build check looks for app-release.apk (single) and fails, so || true
-          flutter build apk --release --split-per-abi || true
+          flutter build apk --release --split-per-abi \
+            --dart-define=TMDB_API_KEY="$TMDB_API_KEY" || true
           APKS=build/app/outputs/flutter-apk
           # Verify the splits we depend on actually exist
           ls -lh $APKS/app-arm64-v8a-release.apk
@@ -123,6 +125,8 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      # Read by tvapp/build.gradle.kts for BuildConfig.TMDB_API_KEY.
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -174,6 +178,9 @@ jobs:
       - name: Compile Kotlin (Foss / Universal) — ./gradlew compileFossUniversalReleaseKotlin
         run: cd android && ./gradlew compileFossUniversalReleaseKotlin --no-daemon
 
+      - name: Unit tests (shared extractor + SHA-256)
+        run: cd android && ./gradlew :streamcore:testDebugUnitTest --no-daemon
+
       - name: List tvapp assemble tasks
         run: cd android && ./gradlew :tvapp:tasks --all | grep -i "assemble" || true
 
@@ -207,6 +214,8 @@ jobs:
       # Authenticates the fallback lookup for mpv's rolling git-release assets,
       # avoiding shared-IP API rate limits on hosted runners.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Read by generateBuildSecrets in desktop/build.gradle.kts.
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -276,6 +285,47 @@ jobs:
           path: dist/*
           retention-days: 7
 
+  # Fast, sign-free gates. These run on every push/PR so formatting, analysis,
+  # unit tests, and the pairing Worker's tests fail before an APK build does.
+  check-flutter:
+    name: Flutter Analyze & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  check-worker:
+    name: Pairing Worker Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker/pairing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run node --test
+        run: npm test
+
   # One tag publishes all three apps to one release. This is what the phone,
   # TV, and desktop updaters read: the same vX.Y.Z tag, with one asset per
   # platform. Run it only for tags; normal branch/PR builds stay as artifacts.
@@ -332,7 +382,8 @@ jobs:
             maxstream-x86_64.apk \
             maxstream-tv.apk \
             MaxStream-Dex.exe \
-            MaxStream-Desktop.msi; do
+            MaxStream-Desktop.msi \
+            SHA256SUMS; do
             if [ ! -s "release-assets/$f" ]; then
               echo "::error::Release is missing $f"
               missing=1
@@ -350,6 +401,17 @@ jobs:
             missing=1
           fi
           exit "$missing"
+
+      # Every updater (phone, TV, desktop) requires this sidecar and refuses to
+      # install a download it cannot verify, so a release published without it
+      # would be un-updatable.
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort \
+            | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Create/update GitHub release
         uses: softprops/action-gh-release@v2

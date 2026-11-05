@@ -344,9 +344,7 @@ class MediaDownloadService {
         final mediaText = await _getText(mediaUri, headers);
         _validateEncryption(mediaText);
         if (_isMaster(mediaText)) {
-          throw const FormatException(
-            'Unexpected nested HLS master playlist',
-          );
+          throw const FormatException('Unexpected nested HLS master playlist');
         }
         if (!mediaText.contains('#EXT-X-ENDLIST')) {
           throw const FormatException(
@@ -356,8 +354,7 @@ class MediaDownloadService {
         final hasMediaSegment = const LineSplitter()
             .convert(mediaText)
             .any(
-              (line) =>
-                  line.trim().isNotEmpty && !line.trim().startsWith('#'),
+              (line) => line.trim().isNotEmpty && !line.trim().startsWith('#'),
             );
         if (!hasMediaSegment) {
           throw const FormatException(
@@ -365,8 +362,12 @@ class MediaDownloadService {
           );
         }
         final localName = localFileName(mediaUri);
-        rewrittenPlaylists[localName] =
-            _rewriteMediaPlaylist(mediaText, mediaUri, localFileName, byteResources);
+        rewrittenPlaylists[localName] = _rewriteMediaPlaylist(
+          mediaText,
+          mediaUri,
+          localFileName,
+          byteResources,
+        );
       }
 
       // Build the local master: only the chosen video variant plus the
@@ -380,10 +381,13 @@ class MediaDownloadService {
         }
         if (trimmed.startsWith('#EXT-X-MEDIA:')) {
           final uri = _attribute(trimmed, 'URI');
-          if (uri == null || !seenPlaylists.contains(playlistUri.resolve(_unquote(uri)))) {
+          if (uri == null ||
+              !seenPlaylists.contains(playlistUri.resolve(_unquote(uri)))) {
             continue;
           }
-          masterLines.add(_rewriteAttributeUri(trimmed, playlistUri, localFileName));
+          masterLines.add(
+            _rewriteAttributeUri(trimmed, playlistUri, localFileName),
+          );
           continue;
         }
         masterLines.add(line);
@@ -393,9 +397,7 @@ class MediaDownloadService {
         'RESOLUTION=${chosen.width}x${chosen.height}'
         '${audioGroup == null || audioGroup.isEmpty ? '' : ',AUDIO="$audioGroup"'}',
       );
-      masterLines.add(
-        localFileName(chosenUri),
-      );
+      masterLines.add(localFileName(chosenUri));
       rewrittenPlaylists['playlist.m3u8'] = '${masterLines.join('\n')}\n';
     } else {
       // Single media playlist (muxed audio, no master).
@@ -407,14 +409,17 @@ class MediaDownloadService {
       final hasMediaSegment = const LineSplitter()
           .convert(playlist)
           .any(
-            (line) =>
-                line.trim().isNotEmpty && !line.trim().startsWith('#'),
+            (line) => line.trim().isNotEmpty && !line.trim().startsWith('#'),
           );
       if (!hasMediaSegment) {
         throw const FormatException('HLS playlist contains no media segments');
       }
-      rewrittenPlaylists['playlist.m3u8'] =
-          _rewriteMediaPlaylist(playlist, playlistUri, localFileName, byteResources);
+      rewrittenPlaylists['playlist.m3u8'] = _rewriteMediaPlaylist(
+        playlist,
+        playlistUri,
+        localFileName,
+        byteResources,
+      );
     }
 
     if (byteResources.length > maxHlsResources) {
@@ -496,9 +501,23 @@ class MediaDownloadService {
             !trimmed.toUpperCase().contains('KEYFORMAT="IDENTITY"')) {
           throw UnsupportedError('DRM HLS key formats are not supported');
         }
-        rewritten.add(_rewriteUriAttributeToLocal(trimmed, base, localFileName, byteResources));
+        rewritten.add(
+          _rewriteUriAttributeToLocal(
+            trimmed,
+            base,
+            localFileName,
+            byteResources,
+          ),
+        );
       } else if (trimmed.startsWith('#EXT-X-MAP:')) {
-        rewritten.add(_rewriteUriAttributeToLocal(trimmed, base, localFileName, byteResources));
+        rewritten.add(
+          _rewriteUriAttributeToLocal(
+            trimmed,
+            base,
+            localFileName,
+            byteResources,
+          ),
+        );
       } else if (trimmed.isNotEmpty && !trimmed.startsWith('#')) {
         final uri = base.resolve(trimmed);
         rewritten.add(localFileName(uri));
@@ -562,8 +581,7 @@ class MediaDownloadService {
     List<({String uri, int width, int height, int bandwidth})> variants, {
     int? maxVariantHeightPixels,
   }) {
-    final withResolution =
-        variants.where((v) => v.height > 0).toList();
+    final withResolution = variants.where((v) => v.height > 0).toList();
     final pool = withResolution.isNotEmpty ? withResolution : variants;
     if (maxVariantHeightPixels != null) {
       final fitting = pool
@@ -571,9 +589,7 @@ class MediaDownloadService {
           .toList();
       if (fitting.isNotEmpty) {
         // Highest variant that still fits under the requested ceiling.
-        return fitting.reduce(
-          (a, b) => a.height >= b.height ? a : b,
-        );
+        return fitting.reduce((a, b) => a.height >= b.height ? a : b);
       }
       // Nothing fits: lowest available is the best match for a ceiling.
       return pool.reduce((a, b) => a.height <= b.height ? a : b);
@@ -589,9 +605,7 @@ class MediaDownloadService {
       if (!trimmed.startsWith('#EXT-X-MEDIA:')) continue;
       final type = _attribute(trimmed, 'TYPE')?.toLowerCase();
       final raw = _attribute(trimmed, 'URI');
-      if (type != null &&
-          type != 'audio' &&
-          type != 'subtitles') {
+      if (type != null && type != 'audio' && type != 'subtitles') {
         continue;
       }
       if (raw != null && raw.isNotEmpty) {
@@ -613,9 +627,7 @@ class MediaDownloadService {
   }
 
   String _unquote(String value) {
-    if (value.length >= 2 &&
-        value.startsWith('"') &&
-        value.endsWith('"')) {
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
       return value.substring(1, value.length - 1);
     }
     return value;

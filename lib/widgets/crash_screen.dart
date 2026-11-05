@@ -224,8 +224,7 @@ bool isBenignImageNetworkError(Object error) {
 
 bool isRenderFlexOverflowError(Object error) {
   final msg = error.toString();
-  return msg.contains('RenderFlex overflowed') ||
-      msg.contains('overflowed by');
+  return msg.contains('RenderFlex overflowed') || msg.contains('overflowed by');
 }
 
 bool isBenignFvpStreamError(Object error) {
@@ -451,8 +450,7 @@ class CrashScreen extends StatelessWidget {
                               'Time: ${report.time}\n'
                               'Error: ${report.error}\n\n'
                               'Stack Trace:\n${report.stack}';
-                          Clipboard.setData(
-                              ClipboardData(text: fullReport));
+                          Clipboard.setData(ClipboardData(text: fullReport));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Error copied to clipboard'),

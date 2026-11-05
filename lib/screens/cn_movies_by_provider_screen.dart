@@ -407,7 +407,9 @@ class _CnMoviesByProviderScreenState extends State<CnMoviesByProviderScreen> {
                   borderRadius: BorderRadius.circular(8),
                   child: movie['poster_path'] != null
                       ? AppNetworkImage(
-                          url: TmdbApiService.getPosterUrl(movie['poster_path']),
+                          url: TmdbApiService.getPosterUrl(
+                            movie['poster_path'],
+                          ),
                           width: double.infinity,
                           fit: BoxFit.cover,
                           errorWidget: Container(

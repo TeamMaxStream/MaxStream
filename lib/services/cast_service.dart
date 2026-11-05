@@ -57,8 +57,9 @@ class CastService {
   /// Connect to a specific Cast device.
   Future<bool> connectToDevice(GoogleCastDevice device) async {
     try {
-      return await GoogleCastSessionManager.instance
-          .startSessionWithDevice(device);
+      return await GoogleCastSessionManager.instance.startSessionWithDevice(
+        device,
+      );
     } catch (e) {
       debugPrint('Failed to connect to Cast device: $e');
       return false;
@@ -86,21 +87,14 @@ class CastService {
         subtitle: subtitle,
         images: [
           if (imageUrl != null)
-            GoogleCastImage(
-              url: Uri.parse(imageUrl),
-              width: 480,
-              height: 1920,
-            ),
+            GoogleCastImage(url: Uri.parse(imageUrl), width: 480, height: 1920),
         ],
       ),
     );
 
-    final queueItem = GoogleCastQueueItem(
-      mediaInformation: mediaInfo,
-    );
+    final queueItem = GoogleCastQueueItem(mediaInformation: mediaInfo);
 
-    await GoogleCastRemoteMediaClient.instance
-        .queueLoadItems([queueItem]);
+    await GoogleCastRemoteMediaClient.instance.queueLoadItems([queueItem]);
   }
 
   /// Play on Cast device.

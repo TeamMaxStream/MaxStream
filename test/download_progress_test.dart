@@ -52,8 +52,10 @@ void main() {
 
   test('a total the server reports itself wins over the measured one', () {
     expect(
-      _task(totalBytes: 200 * 1024 * 1024, expectedTotalBytes: 170 * 1024 * 1024)
-          .sizeLabel,
+      _task(
+        totalBytes: 200 * 1024 * 1024,
+        expectedTotalBytes: 170 * 1024 * 1024,
+      ).sizeLabel,
       '10.0 MB / 200.0 MB',
     );
   });

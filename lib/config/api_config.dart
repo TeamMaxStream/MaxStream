@@ -1,52 +1,25 @@
+/// TMDb metadata configuration.
+///
+/// The API key is a build-time secret. Supply it with
+/// `--dart-define=TMDB_API_KEY=<key>` (CI/Vercel) or
+/// `--dart-define-from-file=config/secrets.json` locally. The key is public
+/// once shipped inside the binary; never commit it to the repository.
 class ApiConfig {
-  // ==================== TMDb Configuration ====================
-  // TMDb API Configuration (for movie/series metadata)
-  static const String tmdbApiKey = '3b65c5fdee212a85a4e4ef208d31d74e';
+  static const String tmdbApiKey = String.fromEnvironment('TMDB_API_KEY');
   static const String tmdbBaseUrl = 'https://api.themoviedb.org/3';
 
-  // ==================== WebRTC P2P Torrent Configuration ====================
-  // WebRTC P2P streaming configuration
-  static const int webrtcP2pTimeout = 30;
-  static const String webrtcProtocol = 'webrtc-stream://';
-
-  // DHT nodes for peer discovery
-  static const List<String> dhtNodes = [
-    'dht.transmissionbt.com:6881',
-    'router.bittorrent.gdn:6881',
-    'router.utorrent.com:6881',
-  ];
-
-  // ==================== Stream Extraction Strategy ====================
-  // WebRTC P2P Torrent is the primary method for stream extraction
-  static const List<String> extractionMethodPriority = ['webrtc_p2p'];
-
-  // ==================== Validation & Configuration Status ====================
   static bool get isTmdbConfigured => tmdbApiKey.isNotEmpty;
 
-  static bool get isWebRTCAvailable => dhtNodes.isNotEmpty;
-
-  // Get configured services
-  static List<String> get configuredServices {
-    final services = <String>[];
-    if (isTmdbConfigured) services.add('TMDb');
-    if (isWebRTCAvailable) services.add('WebRTC P2P Torrent'); // Primary extraction method
-    return services;
-  }
-
-  // ==================== URL Generators ====================
-  // WebRTC stream URL generator
-  static String getWebRTCStreamUrl(String infoHash) {
-    return '$webrtcProtocol$infoHash';
-  }
-
-  // Legacy VidSrc URL generators (for backward compatibility)
-  static String getMovieStreamUrl(String id) {
-    // Now redirects to torrent stream
-    return getWebRTCStreamUrl(id);
-  }
-
-  static String getTvStreamUrl(String id, {int? season, int? episode}) {
-    // Now redirects to torrent stream
-    return getWebRTCStreamUrl(id);
+  /// Returns the TMDb key or throws a message that tells the developer how to
+  /// supply it. Services call this instead of reading [tmdbApiKey] directly.
+  static String requireTmdbApiKey() {
+    if (tmdbApiKey.isEmpty) {
+      throw StateError(
+        'TMDB_API_KEY is not configured. Rebuild with '
+        '--dart-define=TMDB_API_KEY=<key> or '
+        '--dart-define-from-file=config/secrets.json.',
+      );
+    }
+    return tmdbApiKey;
   }
 }

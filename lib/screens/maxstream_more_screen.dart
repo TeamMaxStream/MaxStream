@@ -439,9 +439,7 @@ class _MaxStreamMoreScreenState extends State<MaxStreamMoreScreen> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(
-                        result.error ?? 'Authentication failed.',
-                      ),
+                      content: Text(result.error ?? 'Authentication failed.'),
                       backgroundColor: Colors.orange,
                     ),
                   );

@@ -92,14 +92,18 @@ class _WebVideoPlayerScreenState extends State<WebVideoPlayerScreen> {
     if (type == 'embed') {
       // Load embed URL in iframe
       _createAdBlockingCss(container);
-      final iframe = web.document.createElement('iframe') as web.HTMLIFrameElement;
+      final iframe =
+          web.document.createElement('iframe') as web.HTMLIFrameElement;
       iframe.src = url;
       iframe.style
         ..width = '100%'
         ..height = '100%'
         ..border = 'none'
         ..backgroundColor = 'black';
-      iframe.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
+      iframe.setAttribute(
+        'allow',
+        'autoplay; fullscreen; encrypted-media; picture-in-picture',
+      );
       iframe.setAttribute('allowfullscreen', 'true');
       container.appendChild(iframe);
       return;

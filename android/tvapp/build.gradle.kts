@@ -30,6 +30,18 @@ if (keystoreFile.exists()) {
     keystoreProps.load(FileInputStream(keystoreFile))
 }
 
+// Injected from CI (`-PTMDB_API_KEY=...` or env TMDB_API_KEY); never committed.
+val tmdbApiKey = providers.gradleProperty("TMDB_API_KEY")
+    .orElse(providers.environmentVariable("TMDB_API_KEY"))
+    .orElse("")
+    .get()
+if (tmdbApiKey.isBlank()) {
+    logger.warn(
+        "TMDB_API_KEY is not set; TV metadata requests will fail until it is " +
+            "passed with -PTMDB_API_KEY or the TMDB_API_KEY environment variable.",
+    )
+}
+
 @Suppress("Deprecation")
 android {
     namespace = "com.maxstream.app"
@@ -42,6 +54,11 @@ android {
         versionCode = 10
         versionName = "1.8.0"
         vectorDrawables.useSupportLibrary = true
+        buildConfigField(
+            "String",
+            "TMDB_API_KEY",
+            "\"${tmdbApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"",
+        )
     }
 
     signingConfigs {
@@ -120,6 +137,7 @@ repositories {
 }
 
 dependencies {
+    implementation(project(":streamcore"))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")

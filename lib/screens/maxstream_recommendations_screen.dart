@@ -23,7 +23,8 @@ class MaxStreamRecommendationsScreen extends StatefulWidget {
 }
 
 class _MaxStreamRecommendationsScreenState
-    extends State<MaxStreamRecommendationsScreen> with WidgetsBindingObserver {
+    extends State<MaxStreamRecommendationsScreen>
+    with WidgetsBindingObserver {
   List<Map<String, dynamic>> _forYou = [];
   List<Map<String, dynamic>> _becauseYouWatched = [];
   Map<String, List<Map<String, dynamic>>> _byGenre = {};
@@ -34,9 +35,11 @@ class _MaxStreamRecommendationsScreenState
   bool _loadingMoreForYou = false;
   final Map<String, int> _genrePage = {};
   final Map<String, bool> _loadingMoreGenre = {};
+
   /// Guards against a slow load overwriting a newer one (history can change
   /// while the first build is still in flight).
   int _loadGeneration = 0;
+
   /// When the on-screen rows were last refreshed from the network, so a slow
   /// snapshot read can't replace fresher data.
   DateTime? _lastNetworkUpdate;
@@ -133,7 +136,10 @@ class _MaxStreamRecommendationsScreenState
     // historyRevision listener will auto-reload when new data lands.
     unawaited(CloudSyncService.pullToDevice().catchError((_) {}));
     final generation = ++_loadGeneration;
-    final bool hasCached = _forYou.isNotEmpty || _becauseYouWatched.isNotEmpty || _byGenre.isNotEmpty;
+    final bool hasCached =
+        _forYou.isNotEmpty ||
+        _becauseYouWatched.isNotEmpty ||
+        _byGenre.isNotEmpty;
     if (showLoading) {
       if (!hasCached) {
         if (mounted) setState(() => _loading = true);
@@ -145,18 +151,23 @@ class _MaxStreamRecommendationsScreenState
 
     // Genre names run alongside everything else instead of gating the spinner.
     final genreNamesFuture = TmdbApiService.fetchGenres('movie')
-        .then((movie) async => {
-              ...movie,
-              ...await TmdbApiService.fetchGenres('tv'),
-            })
+        .then(
+          (movie) async => {
+            ...movie,
+            ...await TmdbApiService.fetchGenres('tv'),
+          },
+        )
         .catchError((_) => <int, String>{});
 
     try {
       // Both are started together: genre profiling used to be awaited FIRST,
       // so the whole chain stood between the screen and its first row.
-      final topGenresFuture =
-          RecommendationService.getTopGenres(limit: 4).catchError((_) => <int>[]);
-      final bywFuture = _safeRec(() => RecommendationService.getBecauseYouWatched());
+      final topGenresFuture = RecommendationService.getTopGenres(
+        limit: 4,
+      ).catchError((_) => <int>[]);
+      final bywFuture = _safeRec(
+        () => RecommendationService.getBecauseYouWatched(),
+      );
 
       // Because You Watched is usually a single request and is the row people
       // look at first — show it the moment it lands.
@@ -178,14 +189,12 @@ class _MaxStreamRecommendationsScreenState
         () => RecommendationService.getForYou(topGenres: topGenres),
       );
       final genreFutures = _hasHistory
-          ? topGenres
-              .map((genre) async {
-                final items = await _safeRec(
-                  () => RecommendationService.getByGenre(genre),
-                );
-                return (genre, items);
-              })
-              .toList()
+          ? topGenres.map((genre) async {
+              final items = await _safeRec(
+                () => RecommendationService.getByGenre(genre),
+              );
+              return (genre, items);
+            }).toList()
           : <Future<(int, List<Map<String, dynamic>>)>>[];
 
       final forYou = await forYouFuture;
@@ -237,7 +246,8 @@ class _MaxStreamRecommendationsScreenState
     try {
       _forYouPage++;
       final more = await RecommendationService.getForYou(page: _forYouPage);
-      if (mounted) setState(() => _forYou = [..._forYou, ...filterForKids(more)]);
+      if (mounted)
+        setState(() => _forYou = [..._forYou, ...filterForKids(more)]);
     } catch (_) {}
     if (mounted) setState(() => _loadingMoreForYou = false);
   }
@@ -255,8 +265,10 @@ class _MaxStreamRecommendationsScreenState
       return;
     }
     try {
-      final more =
-          await RecommendationService.getByGenre(genreId, page: current + 1);
+      final more = await RecommendationService.getByGenre(
+        genreId,
+        page: current + 1,
+      );
       if (mounted) {
         setState(() {
           _genrePage[genreName] = current + 1;
@@ -274,20 +286,23 @@ class _MaxStreamRecommendationsScreenState
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             mediaType == 'tv'
-                ? MaxStreamSeriesScreen(seriesItem: Movie.fromJson(item))
-                : MaxStreamDetailsScreen(
-                    item: Movie.fromJson(item),
-                    mediaType: mediaType,
-                  ),
+            ? MaxStreamSeriesScreen(seriesItem: Movie.fromJson(item))
+            : MaxStreamDetailsScreen(
+                item: Movie.fromJson(item),
+                mediaType: mediaType,
+              ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(1.0, 0.0),
-              end: Offset.zero,
-            ).animate(CurvedAnimation(
-              parent: animation,
-              curve: Curves.fastOutSlowIn,
-            )),
+            position:
+                Tween<Offset>(
+                  begin: const Offset(1.0, 0.0),
+                  end: Offset.zero,
+                ).animate(
+                  CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.fastOutSlowIn,
+                  ),
+                ),
             child: child,
           );
         },
@@ -334,8 +349,7 @@ class _MaxStreamRecommendationsScreenState
                           entry.key,
                           entry.value,
                           onLoadMore: () => _loadMoreGenre(entry.key),
-                          loadingMore:
-                              _loadingMoreGenre[entry.key] == true,
+                          loadingMore: _loadingMoreGenre[entry.key] == true,
                         ),
                     const SliverToBoxAdapter(child: SizedBox(height: 100)),
                   ],
@@ -437,7 +451,8 @@ class _MaxStreamRecommendationsScreenState
                   return _buildLoadMoreTile(onLoadMore!, loadingMore);
                 }
                 final item = items[index];
-                final mediaType = item['mediaType'] ??
+                final mediaType =
+                    item['mediaType'] ??
                     (item.containsKey('first_air_date') ? 'tv' : 'movie');
                 return _buildCard(item, mediaType);
               },
@@ -472,8 +487,11 @@ class _MaxStreamRecommendationsScreenState
               : Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.add_circle_outline,
-                        color: Colors.grey[500], size: 28),
+                    Icon(
+                      Icons.add_circle_outline,
+                      color: Colors.grey[500],
+                      size: 28,
+                    ),
                     const SizedBox(height: 8),
                     Text(
                       'More',
@@ -522,8 +540,11 @@ class _MaxStreamRecommendationsScreenState
                             width: 135,
                             height: 200,
                             color: Colors.grey[850],
-                            child: const Icon(Icons.movie,
-                                color: Colors.grey, size: 40),
+                            child: const Icon(
+                              Icons.movie,
+                              color: Colors.grey,
+                              size: 40,
+                            ),
                           ),
                         )
                       : Container(
@@ -531,23 +552,25 @@ class _MaxStreamRecommendationsScreenState
                           height: 200,
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
-                              colors: [
-                                Colors.grey[850]!,
-                                Colors.grey[900]!,
-                              ],
+                              colors: [Colors.grey[850]!, Colors.grey[900]!],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
                           ),
-                          child: const Icon(Icons.movie,
-                              color: Colors.grey, size: 40),
+                          child: const Icon(
+                            Icons.movie,
+                            color: Colors.grey,
+                            size: 40,
+                          ),
                         ),
                   Positioned(
                     top: 6,
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.red,
                         borderRadius: BorderRadius.circular(4),
@@ -568,7 +591,9 @@ class _MaxStreamRecommendationsScreenState
                       right: 6,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 2),
+                          horizontal: 5,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.75),
                           borderRadius: BorderRadius.circular(4),
@@ -576,8 +601,11 @@ class _MaxStreamRecommendationsScreenState
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.star,
-                                color: Colors.amber, size: 10),
+                            const Icon(
+                              Icons.star,
+                              color: Colors.amber,
+                              size: 10,
+                            ),
                             const SizedBox(width: 2),
                             Text(
                               rating.toStringAsFixed(1),
@@ -626,10 +654,7 @@ class _MaxStreamRecommendationsScreenState
             if (year.isNotEmpty)
               Text(
                 year,
-                style: TextStyle(
-                  color: Colors.grey[500],
-                  fontSize: 11,
-                ),
+                style: TextStyle(color: Colors.grey[500], fontSize: 11),
               ),
           ],
         ),
@@ -649,11 +674,7 @@ class _MaxStreamRecommendationsScreenState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 200,
-                  height: 24,
-                  color: Colors.white,
-                ),
+                Container(width: 200, height: 24, color: Colors.white),
                 const SizedBox(height: 12),
                 SizedBox(
                   height: 280,
@@ -691,11 +712,7 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.explore,
-              size: 80,
-              color: Colors.grey[700],
-            ),
+            Icon(Icons.explore, size: 80, color: Colors.grey[700]),
             const SizedBox(height: 16),
             Text(
               'No recommendations yet',
@@ -709,10 +726,7 @@ class _EmptyState extends StatelessWidget {
             Text(
               'Watch some movies and series to get\npersonalized recommendations',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 14,
-              ),
+              style: TextStyle(color: Colors.grey[600], fontSize: 14),
             ),
           ],
         ),

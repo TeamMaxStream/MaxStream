@@ -69,9 +69,7 @@ class StreamSecurity {
     if (result['qualities'] is List) {
       output['qualities'] = (result['qualities'] as List)
           .whereType<Map>()
-          .map(
-            (q) => q.map((key, value) => MapEntry(key.toString(), value)),
-          )
+          .map((q) => q.map((key, value) => MapEntry(key.toString(), value)))
           .toList();
     }
     if (result['audioTracks'] is List) {
@@ -79,9 +77,7 @@ class StreamSecurity {
       // without a separate URI), so keep every entry and only normalize keys.
       output['audioTracks'] = (result['audioTracks'] as List)
           .whereType<Map>()
-          .map(
-            (a) => a.map((key, value) => MapEntry(key.toString(), value)),
-          )
+          .map((a) => a.map((key, value) => MapEntry(key.toString(), value)))
           .toList();
     }
     return output;
@@ -91,7 +87,8 @@ class StreamSecurity {
     final host = rawHost.toLowerCase().replaceAll(RegExp(r'^\[|\]$'), '');
     // Videasy and related HLS hosts must never be blocked — they are the
     // actual CDN for episode downloads (m3u8.videasy.to, etc.).
-    if (host.contains('videasy') || host.contains('speedracelight.com')) return false;
+    if (host.contains('videasy') || host.contains('speedracelight.com'))
+      return false;
     if (host == 'localhost' || host.endsWith('.localhost')) return true;
     final parts = host.split('.');
     if (parts.length == 4) {

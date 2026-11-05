@@ -17,8 +17,14 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+// Flutter's app module configures itself from the Flutter plugin; evaluating it
+// eagerly is what keeps plugin subprojects consistent. :app and :streamcore are
+// excluded because :app now depends on :streamcore (a cycle), and :app
+// evaluating itself is a no-op at best.
 subprojects {
-    project.evaluationDependsOn(":app")
+    if (name != "app" && name != "streamcore") {
+        project.evaluationDependsOn(":app")
+    }
 }
 
 subprojects {

@@ -8,27 +8,39 @@ class KidsTheme {
   static bool get isKids => ProfileScope.activeProfile.value?.isKids ?? false;
 
   // ── Accent Colors ──────────────────────────────────────────────────
-  static Color get primary => isKids ? const Color(0xFF10B981) : const Color(0xFFE50914);
-  static Color get secondary => isKids ? const Color(0xFF06B6D4) : const Color(0xFFE50914);
-  static Color get accent => isKids ? const Color(0xFFF59E0B) : const Color(0xFFE50914);
+  static Color get primary =>
+      isKids ? const Color(0xFF10B981) : const Color(0xFFE50914);
+  static Color get secondary =>
+      isKids ? const Color(0xFF06B6D4) : const Color(0xFFE50914);
+  static Color get accent =>
+      isKids ? const Color(0xFFF59E0B) : const Color(0xFFE50914);
 
   // ── Background ─────────────────────────────────────────────────────
-  static Color get background => isKids ? const Color(0xFF0A1628) : const Color(0xFF121212);
-  static Color get surface => isKids ? const Color(0xFF0F2035) : const Color(0xFF1A1A1A);
-  static Color get cardBg => isKids ? const Color(0xFF132A42) : const Color(0xFF1E1E1E);
+  static Color get background =>
+      isKids ? const Color(0xFF0A1628) : const Color(0xFF121212);
+  static Color get surface =>
+      isKids ? const Color(0xFF0F2035) : const Color(0xFF1A1A1A);
+  static Color get cardBg =>
+      isKids ? const Color(0xFF132A42) : const Color(0xFF1E1E1E);
 
   // ── Text ───────────────────────────────────────────────────────────
   static Color get textPrimary => isKids ? Colors.white : Colors.white;
-  static Color get textSecondary => isKids ? const Color(0xFF94D2BD) : const Color(0xFFAAAAAA);
-  static Color get textMuted => isKids ? const Color(0xFF6B9080) : const Color(0xFF666666);
+  static Color get textSecondary =>
+      isKids ? const Color(0xFF94D2BD) : const Color(0xFFAAAAAA);
+  static Color get textMuted =>
+      isKids ? const Color(0xFF6B9080) : const Color(0xFF666666);
 
   // ── Buttons ────────────────────────────────────────────────────────
-  static Color get buttonPrimary => isKids ? const Color(0xFF10B981) : const Color(0xFFE50914);
-  static Color get buttonSecondary => isKids ? const Color(0xFF06B6D4) : Colors.white;
+  static Color get buttonPrimary =>
+      isKids ? const Color(0xFF10B981) : const Color(0xFFE50914);
+  static Color get buttonSecondary =>
+      isKids ? const Color(0xFF06B6D4) : Colors.white;
 
   // ── Navigation ─────────────────────────────────────────────────────
-  static Color get navSelected => isKids ? const Color(0xFF10B981) : const Color(0xFFE50914);
-  static Color get navUnselected => isKids ? const Color(0xFF4A7C6F) : const Color(0xFF888888);
+  static Color get navSelected =>
+      isKids ? const Color(0xFF10B981) : const Color(0xFFE50914);
+  static Color get navUnselected =>
+      isKids ? const Color(0xFF4A7C6F) : const Color(0xFF888888);
 
   // ── Gradients ──────────────────────────────────────────────────────
   static LinearGradient get heroGradient => isKids

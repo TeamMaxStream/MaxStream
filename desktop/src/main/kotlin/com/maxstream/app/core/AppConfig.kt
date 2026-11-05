@@ -11,8 +11,8 @@ object AppConfig {
     // All three apps share this product version and GitHub release tag.
     const val APP_VERSION = "1.8.0"
 
-    // TMDB (same key as mobile lib/config/api_config.dart and TV core/Constants.kt)
-    const val TMDB_API_KEY = "3b65c5fdee212a85a4e4ef208d31d74e"
+    // TMDB key is generated at build time from -PTMDB_API_KEY / TMDB_API_KEY.
+    const val TMDB_API_KEY = BuildSecrets.TMDB_API_KEY
     const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
     const val TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p"
 

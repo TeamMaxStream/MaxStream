@@ -70,7 +70,11 @@ class UpdateInstallController {
         job = scope.launch {
             try {
                 val file = withContext(Dispatchers.IO) {
-                    UpdateRepository.downloadUpdate(appContext, info.downloadUrl) { received, total ->
+                    UpdateRepository.downloadUpdate(
+                        appContext,
+                        info.downloadUrl,
+                        info.checksumUrl,
+                    ) { received, total ->
                         val fraction = if (total > 0L) received.toFloat() / total.toFloat() else -1f
                         scope.launch { phase = UpdatePhase.Downloading(fraction) }
                     }

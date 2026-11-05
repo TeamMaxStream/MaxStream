@@ -5,7 +5,8 @@ import 'package:dio/dio.dart';
 class ProviderStatus {
   final String name;
   final String domain;
-  final String type; // 'server', 'extractor-api', 'extractor-webview', 'extractor-native'
+  final String
+  type; // 'server', 'extractor-api', 'extractor-webview', 'extractor-native'
   final bool? healthy;
   final String? error;
   final int? responseMs;
@@ -47,11 +48,19 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
     ProviderStatus(name: 'VixSrc', domain: 'vixsrc.to', type: 'server'),
     ProviderStatus(name: 'VidLink', domain: 'vidlink.pro', type: 'server'),
     ProviderStatus(name: '2Embed', domain: '2embed.cc', type: 'server'),
-    ProviderStatus(name: 'Videasy', domain: 'player.videasy.to', type: 'server'),
+    ProviderStatus(
+      name: 'Videasy',
+      domain: 'player.videasy.to',
+      type: 'server',
+    ),
     ProviderStatus(name: 'VidFast', domain: 'vidfast.io', type: 'server'),
     ProviderStatus(name: 'VidsrcRu', domain: 'vidsrc.ru', type: 'server'),
     ProviderStatus(name: 'Moflix', domain: 'moflix-stream.xyz', type: 'server'),
-    ProviderStatus(name: 'Community', domain: 'streamingunity.dog', type: 'server'),
+    ProviderStatus(
+      name: 'Community',
+      domain: 'streamingunity.dog',
+      type: 'server',
+    ),
     ProviderStatus(name: 'Vidrock', domain: 'vidrock.net', type: 'server'),
     ProviderStatus(name: 'Vidzee', domain: 'player.vidzee.wtf', type: 'server'),
     ProviderStatus(name: 'PrimeSrc', domain: 'primesrc.me', type: 'server'),
@@ -62,55 +71,223 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
   // ── Extractors (active registry + inactive/defined ones) ──
   final List<ProviderStatus> _extractors = const [
     // Active – WebView-based
-    ProviderStatus(name: 'VidLink', domain: 'vidlink.pro', type: 'extractor-webview'),
-    ProviderStatus(name: 'Viduki', domain: 'www.viduki.net', type: 'extractor-webview'),
-    ProviderStatus(name: 'Mov2Day', domain: 'mov2day.xyz', type: 'extractor-webview'),
-    ProviderStatus(name: 'VidsrcRu', domain: 'vidsrc.ru', type: 'extractor-webview'),
-    ProviderStatus(name: 'StreamWish', domain: 'streamwish.com', type: 'extractor-webview'),
-    ProviderStatus(name: 'VidLove', domain: 'player.vidlove.cc', type: 'extractor-webview'),
+    ProviderStatus(
+      name: 'VidLink',
+      domain: 'vidlink.pro',
+      type: 'extractor-webview',
+    ),
+    ProviderStatus(
+      name: 'Viduki',
+      domain: 'www.viduki.net',
+      type: 'extractor-webview',
+    ),
+    ProviderStatus(
+      name: 'Mov2Day',
+      domain: 'mov2day.xyz',
+      type: 'extractor-webview',
+    ),
+    ProviderStatus(
+      name: 'VidsrcRu',
+      domain: 'vidsrc.ru',
+      type: 'extractor-webview',
+    ),
+    ProviderStatus(
+      name: 'StreamWish',
+      domain: 'streamwish.com',
+      type: 'extractor-webview',
+    ),
+    ProviderStatus(
+      name: 'VidLove',
+      domain: 'player.vidlove.cc',
+      type: 'extractor-webview',
+    ),
     // Active – API / native
-    ProviderStatus(name: 'VixSrc', domain: 'vixsrc.to', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidsrc', domain: 'vidsrc-embed.ru', type: 'extractor-native'),
-    ProviderStatus(name: 'PrimeSrc', domain: 'primesrc.me', type: 'extractor-api'),
-    ProviderStatus(name: 'Videasy', domain: 'player.videasy.to', type: 'extractor-native'),
-    ProviderStatus(name: 'VidFast', domain: 'vidfast.io', type: 'extractor-native'),
+    ProviderStatus(
+      name: 'VixSrc',
+      domain: 'vixsrc.to',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Vidsrc',
+      domain: 'vidsrc-embed.ru',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'PrimeSrc',
+      domain: 'primesrc.me',
+      type: 'extractor-api',
+    ),
+    ProviderStatus(
+      name: 'Videasy',
+      domain: 'player.videasy.to',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'VidFast',
+      domain: 'vidfast.io',
+      type: 'extractor-native',
+    ),
     ProviderStatus(name: 'Voe', domain: 'voe.sx', type: 'extractor-native'),
-    ProviderStatus(name: 'Streamtape', domain: 'streamtape.com', type: 'extractor-native'),
-    ProviderStatus(name: '2Embed', domain: '2embed.cc', type: 'extractor-native'),
-    ProviderStatus(name: 'Videm', domain: 'videm.xyz', type: 'extractor-native'),
-    ProviderStatus(name: 'Filemoon', domain: 'filemoon.sx', type: 'extractor-native'),
-    ProviderStatus(name: 'Dood', domain: 'doodstream.com', type: 'extractor-native'),
-    ProviderStatus(name: 'VidMoLy', domain: 'vidmoly.to', type: 'extractor-native'),
-    ProviderStatus(name: 'LuluVdo', domain: 'luluvdo.com', type: 'extractor-native'),
-    ProviderStatus(name: 'MixDrop', domain: 'mixdrop.to', type: 'extractor-native'),
-    ProviderStatus(name: 'Supervideo', domain: 'supervideo.cc', type: 'extractor-native'),
-    ProviderStatus(name: 'Rabbitstream', domain: 'rabbitstream.net', type: 'extractor-native'),
-    ProviderStatus(name: 'Megacloud', domain: 'megacloud.co', type: 'extractor-native'),
-    ProviderStatus(name: 'GxPlayer', domain: 'gxplayer.xyz', type: 'extractor-native'),
+    ProviderStatus(
+      name: 'Streamtape',
+      domain: 'streamtape.com',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: '2Embed',
+      domain: '2embed.cc',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Videm',
+      domain: 'videm.xyz',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Filemoon',
+      domain: 'filemoon.sx',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Dood',
+      domain: 'doodstream.com',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'VidMoLy',
+      domain: 'vidmoly.to',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'LuluVdo',
+      domain: 'luluvdo.com',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'MixDrop',
+      domain: 'mixdrop.to',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Supervideo',
+      domain: 'supervideo.cc',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Rabbitstream',
+      domain: 'rabbitstream.net',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Megacloud',
+      domain: 'megacloud.co',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'GxPlayer',
+      domain: 'gxplayer.xyz',
+      type: 'extractor-native',
+    ),
     ProviderStatus(name: 'Veev', domain: 'veev.to', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidplay', domain: 'vidplay.net', type: 'extractor-native'),
-    ProviderStatus(name: 'Streamruby', domain: 'streamruby.com', type: 'extractor-native'),
-    ProviderStatus(name: 'VidNest', domain: 'vidnest.fun', type: 'extractor-native'),
-    ProviderStatus(name: 'StreamUp', domain: 'strmup.to', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidara', domain: 'vidara.to', type: 'extractor-native'),
-    ProviderStatus(name: 'VidHide', domain: 'dhtpre.com', type: 'extractor-native'),
-    ProviderStatus(name: 'Nekostream', domain: 'vidtube.site', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidora', domain: 'vidora.stream', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidsonic', domain: 'vidsonic.net', type: 'extractor-native'),
+    ProviderStatus(
+      name: 'Vidplay',
+      domain: 'vidplay.net',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Streamruby',
+      domain: 'streamruby.com',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'VidNest',
+      domain: 'vidnest.fun',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'StreamUp',
+      domain: 'strmup.to',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Vidara',
+      domain: 'vidara.to',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'VidHide',
+      domain: 'dhtpre.com',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Nekostream',
+      domain: 'vidtube.site',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Vidora',
+      domain: 'vidora.stream',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Vidsonic',
+      domain: 'vidsonic.net',
+      type: 'extractor-native',
+    ),
     ProviderStatus(name: 'Vtube', domain: 'vtbe.to', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidflix', domain: 'vidflix.club', type: 'extractor-native'),
-    ProviderStatus(name: 'Vixcloud', domain: 'vixcloud.co (under construction)', type: 'extractor-native'),
+    ProviderStatus(
+      name: 'Vidflix',
+      domain: 'vidflix.club',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Vixcloud',
+      domain: 'vixcloud.co (under construction)',
+      type: 'extractor-native',
+    ),
     ProviderStatus(name: 'Okru', domain: 'ok.ru', type: 'extractor-native'),
-    ProviderStatus(name: 'Dailymotion', domain: 'dailymotion.com', type: 'extractor-native'),
-    ProviderStatus(name: 'MaxStream API', domain: 'maxstream-api.maxstream123.workers.dev', type: 'extractor-api'),
+    ProviderStatus(
+      name: 'Dailymotion',
+      domain: 'dailymotion.com',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'MaxStream API',
+      domain: 'maxstream-api.maxstream123.workers.dev',
+      type: 'extractor-api',
+    ),
     ProviderStatus(name: 'GenericMedia', domain: '-', type: 'extractor-native'),
     // Inactive / defined but not registered
-    ProviderStatus(name: 'Moflix', domain: 'moflix-stream.xyz', type: 'extractor-native'),
-    ProviderStatus(name: 'Community', domain: 'streamingunity.dog', type: 'extractor-native'),
-    ProviderStatus(name: 'VidsrcTo', domain: 'vidsrc.to', type: 'extractor-native'),
-    ProviderStatus(name: 'Frembed', domain: 'frembed.click', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidrock', domain: 'vidrock.net', type: 'extractor-native'),
-    ProviderStatus(name: 'Vidzee', domain: 'player.vidzee.wtf', type: 'extractor-native'),
+    ProviderStatus(
+      name: 'Moflix',
+      domain: 'moflix-stream.xyz',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Community',
+      domain: 'streamingunity.dog',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'VidsrcTo',
+      domain: 'vidsrc.to',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Frembed',
+      domain: 'frembed.click',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Vidrock',
+      domain: 'vidrock.net',
+      type: 'extractor-native',
+    ),
+    ProviderStatus(
+      name: 'Vidzee',
+      domain: 'player.vidzee.wtf',
+      type: 'extractor-native',
+    ),
     ProviderStatus(name: 'MaxstreamVideo', domain: '-', type: 'extractor-api'),
   ];
 
@@ -195,7 +372,11 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
 
   // ── Generic provider test ──
 
-  Future<void> _testProvider(Dio dio, int index, {required bool isServer}) async {
+  Future<void> _testProvider(
+    Dio dio,
+    int index, {
+    required bool isServer,
+  }) async {
     final results = isServer ? _serverResults : _extractorResults;
     final provider = results[index];
     final domain = provider.domain;
@@ -315,10 +496,7 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _buildServersTab(),
-          _buildExtractorsTab(),
-        ],
+        children: [_buildServersTab(), _buildExtractorsTab()],
       ),
     );
   }
@@ -327,7 +505,9 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
 
   Widget _buildServersTab() {
     final healthyCount = _serverResults.where((s) => s.healthy == true).length;
-    final unhealthyCount = _serverResults.where((s) => s.healthy == false).length;
+    final unhealthyCount = _serverResults
+        .where((s) => s.healthy == false)
+        .length;
     final pendingCount = _serverResults.where((s) => s.healthy == null).length;
 
     return Column(
@@ -337,7 +517,8 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: _serverResults.length,
-            itemBuilder: (context, index) => _buildProviderCard(_serverResults[index]),
+            itemBuilder: (context, index) =>
+                _buildProviderCard(_serverResults[index]),
           ),
         ),
         if (!_serversComplete && !_testingServers)
@@ -349,14 +530,26 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
   // ── Extractors tab ──
 
   Widget _buildExtractorsTab() {
-    final healthyCount = _extractorResults.where((s) => s.healthy == true).length;
-    final unhealthyCount = _extractorResults.where((s) => s.healthy == false).length;
-    final pendingCount = _extractorResults.where((s) => s.healthy == null).length;
+    final healthyCount = _extractorResults
+        .where((s) => s.healthy == true)
+        .length;
+    final unhealthyCount = _extractorResults
+        .where((s) => s.healthy == false)
+        .length;
+    final pendingCount = _extractorResults
+        .where((s) => s.healthy == null)
+        .length;
 
     // Group by type
-    final webviewExtractors = _extractorResults.where((e) => e.type == 'extractor-webview').toList();
-    final apiExtractors = _extractorResults.where((e) => e.type == 'extractor-api').toList();
-    final nativeExtractors = _extractorResults.where((e) => e.type == 'extractor-native').toList();
+    final webviewExtractors = _extractorResults
+        .where((e) => e.type == 'extractor-webview')
+        .toList();
+    final apiExtractors = _extractorResults
+        .where((e) => e.type == 'extractor-api')
+        .toList();
+    final nativeExtractors = _extractorResults
+        .where((e) => e.type == 'extractor-native')
+        .toList();
 
     return Column(
       children: [
@@ -366,7 +559,11 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
             padding: const EdgeInsets.symmetric(horizontal: 16),
             children: [
               if (webviewExtractors.isNotEmpty) ...[
-                _buildSectionHeader('WebView-Based', Icons.web, webviewExtractors),
+                _buildSectionHeader(
+                  'WebView-Based',
+                  Icons.web,
+                  webviewExtractors,
+                ),
                 ...webviewExtractors.map((e) => _buildProviderCard(e)),
               ],
               if (apiExtractors.isNotEmpty) ...[
@@ -374,7 +571,11 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
                 ...apiExtractors.map((e) => _buildProviderCard(e)),
               ],
               if (nativeExtractors.isNotEmpty) ...[
-                _buildSectionHeader('Native / HTTP', Icons.code, nativeExtractors),
+                _buildSectionHeader(
+                  'Native / HTTP',
+                  Icons.code,
+                  nativeExtractors,
+                ),
                 ...nativeExtractors.map((e) => _buildProviderCard(e)),
               ],
               const SizedBox(height: 80),
@@ -420,15 +621,16 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-        ),
+        Text(label, style: TextStyle(color: Colors.grey[500], fontSize: 12)),
       ],
     );
   }
 
-  Widget _buildSectionHeader(String title, IconData icon, List<ProviderStatus> items) {
+  Widget _buildSectionHeader(
+    String title,
+    IconData icon,
+    List<ProviderStatus> items,
+  ) {
     final healthy = items.where((s) => s.healthy == true).length;
     return Padding(
       padding: const EdgeInsets.only(top: 16, bottom: 8),
@@ -462,7 +664,9 @@ class _ProviderHealthScreenState extends State<ProviderHealthScreen>
     if (provider.healthy == true) {
       statusColor = Colors.green;
       statusIcon = Icons.check_circle;
-      statusText = provider.responseMs != null ? '${provider.responseMs}ms' : 'OK';
+      statusText = provider.responseMs != null
+          ? '${provider.responseMs}ms'
+          : 'OK';
     } else if (provider.healthy == false) {
       statusColor = Colors.red;
       statusIcon = Icons.error;

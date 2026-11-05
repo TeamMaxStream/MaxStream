@@ -5,7 +5,7 @@ import '../models/series.dart';
 import '../config/api_config.dart';
 
 class ApiService {
-  static const String _apiKey = ApiConfig.tmdbApiKey;
+  static String get _apiKey => ApiConfig.requireTmdbApiKey();
   static const String _baseUrl = ApiConfig.tmdbBaseUrl;
   static const Duration _timeout = Duration(seconds: 10);
 

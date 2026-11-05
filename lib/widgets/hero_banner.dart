@@ -299,15 +299,12 @@ class _HeroBannerState extends State<HeroBanner> {
                             fit: BoxFit.cover,
                           )
                         : null,
-                    color:
-                        item.backdrop.isEmpty ? Colors.grey.shade800 : null,
+                    color: item.backdrop.isEmpty ? Colors.grey.shade800 : null,
                   ),
                   child: item.backdrop.isEmpty
                       ? Center(
                           child: Icon(
-                            item.mediaType == 'tv'
-                                ? Icons.tv
-                                : Icons.movie,
+                            item.mediaType == 'tv' ? Icons.tv : Icons.movie,
                             size: 100,
                             color: Colors.white54,
                           ),
@@ -386,11 +383,7 @@ class _HeroBannerState extends State<HeroBanner> {
                       // Metadata row
                       Row(
                         children: [
-                          const Icon(
-                            Icons.star,
-                            color: Colors.amber,
-                            size: 16,
-                          ),
+                          const Icon(Icons.star, color: Colors.amber, size: 16),
                           const SizedBox(width: 4),
                           Text(
                             item.rating.toStringAsFixed(1),
@@ -564,15 +557,14 @@ class _HeroBannerState extends State<HeroBanner> {
                                           context,
                                           animation,
                                           secondaryAnimation,
-                                        ) =>
-                                            item.mediaType == 'tv'
-                                            ? MaxStreamSeriesScreen(
-                                                seriesItem: item,
-                                              )
-                                            : MaxStreamDetailsScreen(
-                                                item: item,
-                                                mediaType: item.mediaType,
-                                              ),
+                                        ) => item.mediaType == 'tv'
+                                        ? MaxStreamSeriesScreen(
+                                            seriesItem: item,
+                                          )
+                                        : MaxStreamDetailsScreen(
+                                            item: item,
+                                            mediaType: item.mediaType,
+                                          ),
                                     transitionsBuilder:
                                         (
                                           context,
@@ -583,10 +575,7 @@ class _HeroBannerState extends State<HeroBanner> {
                                           return SlideTransition(
                                             position:
                                                 Tween<Offset>(
-                                                  begin: const Offset(
-                                                    1.0,
-                                                    0.0,
-                                                  ),
+                                                  begin: const Offset(1.0, 0.0),
                                                   end: Offset.zero,
                                                 ).animate(
                                                   CurvedAnimation(
@@ -688,17 +677,11 @@ class _AnimatedHeroPageState extends State<_AnimatedHeroPage>
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0.0, 0.06),
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     _scaleAnimation = Tween<double>(
       begin: 1.05,
       end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     if (widget.isActive) {
       _controller.forward();
@@ -728,10 +711,7 @@ class _AnimatedHeroPageState extends State<_AnimatedHeroPage>
           opacity: _fadeAnimation.value,
           child: Transform.translate(
             offset: _slideAnimation.value,
-            child: Transform.scale(
-              scale: _scaleAnimation.value,
-              child: child,
-            ),
+            child: Transform.scale(scale: _scaleAnimation.value, child: child),
           ),
         );
       },

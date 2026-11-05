@@ -19,12 +19,7 @@ class CustomLoadingWidget extends StatefulWidget {
   State<CustomLoadingWidget> createState() => _CustomLoadingWidgetState();
 }
 
-enum LoadingStyle {
-  circular,
-  dots,
-  pulse,
-  wave,
-}
+enum LoadingStyle { circular, dots, pulse, wave }
 
 class _CustomLoadingWidgetState extends State<CustomLoadingWidget>
     with TickerProviderStateMixin {
@@ -121,7 +116,7 @@ class _CustomLoadingWidgetState extends State<CustomLoadingWidget>
               final delay = index * 0.2;
               final progress = (_controller.value + delay) % 1.0;
               final scale = math.sin(progress * math.pi) * 0.5 + 0.5;
-              
+
               return Transform.scale(
                 scale: 0.5 + scale * 0.8,
                 child: Container(
@@ -153,10 +148,7 @@ class _CustomLoadingWidgetState extends State<CustomLoadingWidget>
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: widget.color.withValues(alpha: 0.3),
-              border: Border.all(
-                color: widget.color,
-                width: 2,
-              ),
+              border: Border.all(color: widget.color, width: 2),
             ),
             child: Center(
               child: Container(
@@ -186,8 +178,10 @@ class _CustomLoadingWidgetState extends State<CustomLoadingWidget>
             builder: (context, child) {
               final delay = index * 0.1;
               final progress = (_waveController.value + delay) % 1.0;
-              final height = math.sin(progress * 2 * math.pi) * (widget.size / 4) + (widget.size / 4);
-              
+              final height =
+                  math.sin(progress * 2 * math.pi) * (widget.size / 4) +
+                  (widget.size / 4);
+
               return Container(
                 width: widget.size / 8,
                 height: height,
@@ -272,7 +266,7 @@ class CircularLoadingPainter extends CustomPainter {
 // Convenience widgets for common loading scenarios
 class MovieLoadingWidget extends StatelessWidget {
   final String? text;
-  
+
   const MovieLoadingWidget({super.key, this.text});
 
   @override
@@ -305,7 +299,7 @@ class SearchLoadingWidget extends StatelessWidget {
 
 class ButtonLoadingWidget extends StatelessWidget {
   final Color? color;
-  
+
   const ButtonLoadingWidget({super.key, this.color});
 
   @override

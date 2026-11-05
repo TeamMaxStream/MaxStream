@@ -36,7 +36,8 @@ class _SeriesHeroBannerState extends State<SeriesHeroBanner> {
 
       if (mounted) {
         setState(() {
-          featuredSeries = series.take(5)
+          featuredSeries = series
+              .take(5)
               .map((item) => Movie.fromJson(item))
               .toList();
         });
@@ -214,17 +215,14 @@ class _SeriesHeroBannerState extends State<SeriesHeroBanner> {
                     image: series.backdrop.isNotEmpty
                         ? DecorationImage(
                             image: NetworkImage(
-                              TmdbApiService.getBackdropUrl(
-                                series.backdrop,
-                              ),
+                              TmdbApiService.getBackdropUrl(series.backdrop),
                             ),
                             fit: BoxFit.cover,
                           )
                         : null,
-                    color:
-                        series.backdrop.isEmpty
-                            ? Colors.grey.shade800
-                            : null,
+                    color: series.backdrop.isEmpty
+                        ? Colors.grey.shade800
+                        : null,
                   ),
                   child: series.backdrop.isEmpty
                       ? const Center(
@@ -308,11 +306,7 @@ class _SeriesHeroBannerState extends State<SeriesHeroBanner> {
                       // Metadata row
                       Row(
                         children: [
-                          const Icon(
-                            Icons.star,
-                            color: Colors.amber,
-                            size: 16,
-                          ),
+                          const Icon(Icons.star, color: Colors.amber, size: 16),
                           const SizedBox(width: 4),
                           Text(
                             series.rating.toStringAsFixed(1),
@@ -398,9 +392,7 @@ class _SeriesHeroBannerState extends State<SeriesHeroBanner> {
                                       size: 22,
                                     ),
                               label: Text(
-                                _isPlayingVideo
-                                    ? 'Loading...'
-                                    : 'Play S1:E1',
+                                _isPlayingVideo ? 'Loading...' : 'Play S1:E1',
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
@@ -428,8 +420,7 @@ class _SeriesHeroBannerState extends State<SeriesHeroBanner> {
                             curve: Curves.easeInOut,
                             decoration: BoxDecoration(
                               color: isInWatchlist
-                                  ? Colors.red.shade600
-                                      .withValues(alpha: 0.8)
+                                  ? Colors.red.shade600.withValues(alpha: 0.8)
                                   : Colors.black.withValues(alpha: 0.5),
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
@@ -515,9 +506,7 @@ class _SeriesHeroBannerState extends State<SeriesHeroBanner> {
                           borderRadius: BorderRadius.circular(4),
                           color: index == _currentPage
                               ? const Color(0xFFE50914)
-                              : Colors.white.withAlpha(
-                                  (255 * 0.35).round(),
-                                ),
+                              : Colors.white.withAlpha((255 * 0.35).round()),
                         ),
                       ),
                     ),
@@ -569,17 +558,11 @@ class _AnimatedSeriesPageState extends State<_AnimatedSeriesPage>
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0.0, 0.06),
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     _scaleAnimation = Tween<double>(
       begin: 1.05,
       end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     if (widget.isActive) {
       _controller.forward();
@@ -609,10 +592,7 @@ class _AnimatedSeriesPageState extends State<_AnimatedSeriesPage>
           opacity: _fadeAnimation.value,
           child: Transform.translate(
             offset: _slideAnimation.value,
-            child: Transform.scale(
-              scale: _scaleAnimation.value,
-              child: child,
-            ),
+            child: Transform.scale(scale: _scaleAnimation.value, child: child),
           ),
         );
       },

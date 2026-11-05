@@ -78,21 +78,28 @@ class _ContinueWatchingSectionState extends State<ContinueWatchingSection> {
                   SizedBox(
                     width: 135,
                     height: 200,
-                    child: item['posterUrl'] != null &&
+                    child:
+                        item['posterUrl'] != null &&
                             item['posterUrl'].toString().isNotEmpty
                         ? Image.network(
                             item['posterUrl'].toString(),
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => Container(
                               color: Colors.grey[850],
-                              child: const Icon(Icons.movie,
-                                  color: Colors.grey, size: 40),
+                              child: const Icon(
+                                Icons.movie,
+                                color: Colors.grey,
+                                size: 40,
+                              ),
                             ),
                           )
                         : Container(
                             color: Colors.grey[850],
-                            child: const Icon(Icons.movie,
-                                color: Colors.grey, size: 40),
+                            child: const Icon(
+                              Icons.movie,
+                              color: Colors.grey,
+                              size: 40,
+                            ),
                           ),
                   ),
                   Positioned(
@@ -100,7 +107,9 @@ class _ContinueWatchingSectionState extends State<ContinueWatchingSection> {
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.red,
                         borderRadius: BorderRadius.circular(4),
@@ -176,8 +185,9 @@ class _ContinueWatchingSectionState extends State<ContinueWatchingSection> {
                     child: LinearProgressIndicator(
                       value: progress,
                       backgroundColor: Colors.grey[800],
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(Colors.red),
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Colors.red,
+                      ),
                       minHeight: 3,
                     ),
                   ),

@@ -43,3 +43,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: gh release upload "$TAG" dist/MaxStream-Desktop.msi dist/MaxStream-Dex.exe --clobber --repo "$GITHUB_REPOSITORY"
+
+      # The sidecar must cover every asset, not just the desktop installers.
+      # Recompute it from the whole release after the upload so phone, TV, and
+      # desktop updaters all see matching hashes.
+      - name: Refresh SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "$TAG" --dir release-assets --clobber --repo "$GITHUB_REPOSITORY"
+          rm -f release-assets/SHA256SUMS
+          (cd release-assets \
+            && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS)
+          cat release-assets/SHA256SUMS
+          gh release upload "$TAG" release-assets/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
