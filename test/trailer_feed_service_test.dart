@@ -193,12 +193,14 @@ void main() {
     setUp(() {
       SharedPreferences.setMockInitialValues({});
       UserScope.ownerResolver = () => 'user-a';
+      ApiConfig.debugOverrideKey = 'test-key';
       TrailerFeedService.clearCache();
     });
 
     tearDown(() {
       TmdbApiService.setHttpClient(http.Client());
       UserScope.ownerResolver = null;
+      ApiConfig.debugOverrideKey = null;
     });
 
     test(
@@ -254,11 +256,6 @@ void main() {
         expect(feed.single.releaseYear, '2024');
         expect(requestedPaths, contains('/3/movie/2/videos'));
       },
-      // TMDB_API_KEY is a build-time constant, so this pipeline test only
-      // runs in a process built for tests (the default `flutter test`).
-      skip: ApiConfig.isTmdbConfigured
-          ? 'Needs a test process built without TMDB_API_KEY'
-          : false,
     );
 
     test('stays empty rather than throwing when TMDB is unreachable', () async {

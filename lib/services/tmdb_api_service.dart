@@ -23,7 +23,7 @@ class TmdbApiService {
   static void setHttpClient(http.Client client) => _client = client;
 
   static Map<String, String> get _authHeaders {
-    final key = ApiConfig.tmdbApiKey;
+    final key = ApiConfig.debugOverrideKey ?? ApiConfig.tmdbApiKey;
     return key.startsWith('eyJ') || key.length > 40
         ? {'Authorization': 'Bearer $key'}
         : const {};
@@ -41,7 +41,7 @@ class TmdbApiService {
       for (final entry in parameters.entries)
         if (entry.value != null) entry.key: entry.value.toString(),
       if (!_authHeaders.containsKey('Authorization'))
-        'api_key': ApiConfig.tmdbApiKey,
+        'api_key': ApiConfig.debugOverrideKey ?? ApiConfig.tmdbApiKey,
     });
   }
 
