@@ -29,8 +29,9 @@ class TmdbApiService {
         : const {};
   }
 
-  /// Builds a correctly encoded TMDB URI. Public for focused tests; sending a
-  /// request requires the build-time key (see [_getJson]).
+  /// Builds a correctly encoded TMDB URI. Public for focused tests; a v4 read
+  /// token is sent as an Authorization header, a v3 key as `api_key`. Requests
+  /// require the build-time key, validated in [_getJson].
   static Uri buildUri(
     String path, [
     Map<String, Object?> parameters = const {},
