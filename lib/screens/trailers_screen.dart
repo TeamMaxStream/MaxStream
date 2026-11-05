@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' show FontFeature, ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -137,8 +137,11 @@ class _TrailersScreenState extends State<TrailersScreen>
   }
 
   void _onPageChanged(int index) {
-    if (_muted == false) _muted = true;
-    setState(() => _index = index);
+    // Each page is built muted; keep the toggle in step with the fresh player.
+    setState(() {
+      _index = index;
+      if (!_muted) _muted = true;
+    });
     _precacheAround(index);
   }
 
@@ -218,8 +221,8 @@ class _TrailersScreenState extends State<TrailersScreen>
             final item = _items[i];
             final active = i == _index;
             return _TrailerPage(
-              // A new key per item so the embedded player never keeps the
-              // previous title's video after a refresh re-orders the feed.
+              // The settled page owns one stable key; others are keyed by item
+              // so a refresh re-order never reuses the previous video.
               key: active ? _pageKey : ValueKey(item.key),
               item: item,
               active: active,
@@ -329,6 +332,11 @@ class _GlassButton extends StatelessWidget {
 }
 
 /// A single feed page: backdrop first, muted autoplaying trailer on top.
+/// A single feed page: a full-bleed trailer over the title art.
+///
+/// The inline player is only grown past its intrinsic 16:9 box once the WebView
+/// has actually streamed a frame, so a black box never covers the backdrop art
+/// while the embed boots.
 class _TrailerPage extends StatefulWidget {
   const _TrailerPage({
     super.key,
@@ -350,6 +358,15 @@ class _TrailerPage extends StatefulWidget {
 class _TrailerPageState extends State<_TrailerPage> {
   YoutubePlayerController? _controller;
   bool _playFailed = false;
+  bool _ready = false;
+
+  /// Watchdog for embeds that load but never stream a frame (offline, blocked
+  /// script), which otherwise leave a silent black page.
+  Duration _positionAtCheck = Duration.zero;
+  Duration _lastPosition = Duration.zero;
+  Timer? _stallCheck;
+  bool _scrubbing = false;
+  Duration _scrubTarget = Duration.zero;
 
   @override
   void initState() {
@@ -366,6 +383,9 @@ class _TrailerPageState extends State<_TrailerPage> {
     } else if (widget.active && _controller == null && !_playFailed) {
       _startPlayer();
     }
+    if (widget.active && widget.muted != oldWidget.muted) {
+      _applyMute();
+    }
   }
 
   @override
@@ -375,44 +395,119 @@ class _TrailerPageState extends State<_TrailerPage> {
   }
 
   void _startPlayer() {
+    _ready = false;
+    _positionAtCheck = Duration.zero;
+    _lastPosition = Duration.zero;
     _controller = YoutubePlayerController(
       initialVideoId: widget.item.trailerKey,
-      flags: const YoutubePlayerFlags(
+      flags: YoutubePlayerFlags(
         autoPlay: true,
-        mute: true,
+        // Muting at init matters: an unmuted embed on Android blocks autoplay.
+        mute: widget.muted,
         enableCaption: false,
         hideControls: true,
+        hideThumbnail: true,
         disableDragSeek: true,
         useHybridComposition: true,
       ),
     )..addListener(_onValueChanged);
+    _stallCheck = Timer(const Duration(seconds: 12), _checkStalled);
+  }
+
+  void _applyMute() {
+    final controller = _controller;
+    if (controller == null) return;
+    final ready = controller.value.isReady;
+    if (widget.muted) {
+      controller.setVolume(0);
+      if (ready) controller.mute();
+    } else if (ready) {
+      controller.setVolume(100);
+      controller.unMute();
+    }
   }
 
   void _onValueChanged() {
     final controller = _controller;
     if (controller == null || !mounted) return;
+    final value = controller.value;
     // Embedding is disabled for some videos (101/150); surface the fallback
     // instead of leaving a black page.
-    if (controller.value.errorCode != 0 && !_playFailed) {
+    if (value.errorCode != 0) {
+      if (!_playFailed) setState(() => _playFailed = true);
+      return;
+    }
+    if (value.isReady && !_ready) _applyMute();
+    if (!_ready && (value.hasPlayed || value.position > Duration.zero)) {
+      _stallCheck?.cancel();
+      setState(() => _ready = true);
+    } else if (!_ready && value.position > _lastPosition) {
+      // Some builds report a position without toggling hasPlayed.
+      _stallCheck?.cancel();
+      setState(() => _ready = true);
+    }
+    _lastPosition = value.position;
+    if (_ready && !_scrubbing) setState(() {});
+  }
+
+  void _checkStalled() {
+    if (!mounted || _ready) return;
+    final controller = _controller;
+    if (controller == null) return;
+    if (controller.value.isReady &&
+        controller.value.position == _positionAtCheck &&
+        !controller.value.hasPlayed) {
+      // The embed never produced a frame (offline, blocked script, etc.).
       setState(() => _playFailed = true);
+    } else {
+      _positionAtCheck = controller.value.position;
+      _stallCheck = Timer(const Duration(seconds: 12), _checkStalled);
     }
   }
 
   void _disposePlayer() {
+    _stallCheck?.cancel();
+    _stallCheck = null;
     final controller = _controller;
     _controller = null;
+    _ready = false;
     if (controller != null) {
       controller.removeListener(_onValueChanged);
       try {
+        controller.mute();
         controller.pause();
       } catch (_) {}
       controller.dispose();
     }
   }
 
-  void unmute() => _controller?.unMute();
+  void unmute() {
+    _applyMute();
+  }
 
-  void mute() => _controller?.mute();
+  void mute() {
+    final controller = _controller;
+    if (controller == null) return;
+    if (controller.value.isReady) controller.mute();
+    controller.setVolume(0);
+  }
+
+  void _beginScrub() {
+    _scrubbing = true;
+    _scrubTarget = _controller?.value.position ?? Duration.zero;
+  }
+
+  void _updateScrub(Duration position) {
+    setState(() => _scrubTarget = position);
+  }
+
+  void _endScrub(Duration position) {
+    _scrubbing = false;
+    final controller = _controller;
+    if (controller == null || !controller.value.isReady) return;
+    if (widget.muted) controller.mute();
+    controller.seekTo(position);
+  }
 
   Future<void> _openOnYouTube() async {
     final uri = Uri.parse(widget.item.youtubeUrl);
@@ -428,25 +523,13 @@ class _TrailerPageState extends State<_TrailerPage> {
   Widget build(BuildContext context) {
     final item = widget.item;
     final controller = _controller;
+    final playing = controller != null && _ready && !_playFailed;
     return Stack(
       fit: StackFit.expand,
       children: [
         AppNetworkImage(url: item.backdropUrl, fit: BoxFit.cover),
         if (controller != null && !_playFailed)
-          ClipRect(
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(
-                width: 16,
-                height: 9,
-                child: YoutubePlayer(
-                  controller: controller,
-                  aspectRatio: 16 / 9,
-                  showVideoProgressIndicator: false,
-                ),
-              ),
-            ),
-          ),
+          Positioned.fill(child: _buildPlayer(controller, visible: playing)),
         if (_playFailed)
           _PlaybackFallback(
             onOpenYouTube: _openOnYouTube,
@@ -523,7 +606,18 @@ class _TrailerPageState extends State<_TrailerPage> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 18),
+                  if (controller != null && _ready && !_playFailed) ...[
+                    const SizedBox(height: 16),
+                    _ScrubBar(
+                      controller: controller,
+                      scrubbing: _scrubbing,
+                      scrubTarget: _scrubTarget,
+                      onScrubStart: _beginScrub,
+                      onScrubUpdate: _updateScrub,
+                      onScrubEnd: _endScrub,
+                    ),
+                  ],
+                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
@@ -570,6 +664,167 @@ class _TrailerPageState extends State<_TrailerPage> {
         ),
       ],
     );
+  }
+
+  /// Full-bleed cover for the 16:9 embed. The iframe keeps its own aspect box
+  /// (scaling a WebView through [FittedBox] leaves it blank on Android) and is
+  /// pinned to the top so the bottom copy stays on top of black.
+  Widget _buildPlayer(
+    YoutubePlayerController controller, {
+    required bool visible,
+  }) {
+    return IgnorePointer(
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final videoHeight = constraints.maxWidth * 9 / 16;
+            return ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.topCenter,
+                maxHeight: videoHeight,
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  height: videoHeight,
+                  child: OverflowBox(
+                    maxHeight: double.infinity,
+                    maxWidth: double.infinity,
+                    child: YoutubePlayer(
+                      controller: controller,
+                      aspectRatio: 16 / 9,
+                      showVideoProgressIndicator: false,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Thin, scrubbable timeline with elapsed and total time.
+class _ScrubBar extends StatefulWidget {
+  const _ScrubBar({
+    required this.controller,
+    required this.scrubbing,
+    required this.scrubTarget,
+    required this.onScrubStart,
+    required this.onScrubUpdate,
+    required this.onScrubEnd,
+  });
+
+  final YoutubePlayerController controller;
+  final bool scrubbing;
+  final Duration scrubTarget;
+  final VoidCallback onScrubStart;
+  final ValueChanged<Duration> onScrubUpdate;
+  final ValueChanged<Duration> onScrubEnd;
+
+  @override
+  State<_ScrubBar> createState() => _ScrubBarState();
+}
+
+class _ScrubBarState extends State<_ScrubBar> {
+  // WebView players do not always report a duration; previews run ~2 minutes.
+  static const Duration _fallbackDuration = Duration(minutes: 2);
+  double? _dragFraction;
+
+  Duration get _duration {
+    final reported = widget.controller.value.metaData.duration;
+    return reported > Duration.zero ? reported : _fallbackDuration;
+  }
+
+  Duration get _position => _dragFraction == null
+      ? widget.controller.value.position
+      : widget.scrubTarget;
+
+  void _seekToFraction(double fraction) {
+    final target = Duration(
+      milliseconds: (_duration.inMilliseconds * fraction.clamp(0.0, 1.0))
+          .round(),
+    );
+    widget.onScrubEnd(target);
+    setState(() => _dragFraction = null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = _duration;
+    final position = _position;
+    final fraction = total.inMilliseconds == 0
+        ? 0.0
+        : (position.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 3,
+            activeTrackColor: KidsTheme.primary,
+            inactiveTrackColor: Colors.white.withValues(alpha: 0.22),
+            thumbColor: KidsTheme.primary,
+            overlayShape: SliderComponentShape.noOverlay,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+          ),
+          child: Slider(
+            value: fraction.toDouble(),
+            onChangeStart: (value) {
+              widget.onScrubStart();
+              setState(() => _dragFraction = value);
+            },
+            onChanged: (value) {
+              widget.onScrubUpdate(
+                Duration(milliseconds: (total.inMilliseconds * value).round()),
+              );
+              setState(() => _dragFraction = value);
+            },
+            onChangeEnd: (value) {
+              final target = Duration(
+                milliseconds: (total.inMilliseconds * value).round(),
+              );
+              widget.onScrubUpdate(target);
+              _seekToFraction(value);
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Row(
+            children: [
+              Text(
+                _formatTime(position),
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 11.5,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _formatTime(total),
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.55),
+                  fontSize: 11.5,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _formatTime(Duration d) {
+    final totalSeconds = d.inSeconds.clamp(0, 359999);
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 }
 
