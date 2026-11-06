@@ -1,4 +1,5 @@
 import '../services/tmdb_api_service.dart';
+import '../services/trailer_feed_service.dart';
 
 enum TrailerReason {
   because,
@@ -33,6 +34,7 @@ class TrailerFeedItem {
     this.reasonTitle = '',
     this.rating,
     this.genreIds = const [],
+    this.trailerDuration,
   });
 
   final int tmdbId;
@@ -49,6 +51,9 @@ class TrailerFeedItem {
   final String reasonTitle;
   final double? rating;
   final List<int> genreIds;
+
+  /// Exact trailer length, only known from a TMDb session lookup.
+  final Duration? trailerDuration;
 
   bool get isMovie => mediaType == 'movie';
 
@@ -88,23 +93,27 @@ class TrailerFeedItem {
   String get youtubeUrl =>
       Uri.https('www.youtube.com', '/watch', {'v': trailerKey}).toString();
 
-  TrailerFeedItem copyWith({TrailerReason? reason, String? reasonTitle}) =>
-      TrailerFeedItem(
-        tmdbId: tmdbId,
-        mediaType: mediaType,
-        title: title,
-        trailerKey: trailerKey,
-        overview: overview,
-        releaseYear: releaseYear,
-        posterPath: posterPath,
-        backdropPath: backdropPath,
-        trailerName: trailerName,
-        trailerPublishedAt: trailerPublishedAt,
-        reason: reason ?? this.reason,
-        reasonTitle: reasonTitle ?? this.reasonTitle,
-        rating: rating,
-        genreIds: genreIds,
-      );
+  TrailerFeedItem copyWith({
+    TrailerReason? reason,
+    String? reasonTitle,
+    Duration? trailerDuration,
+  }) => TrailerFeedItem(
+    tmdbId: tmdbId,
+    mediaType: mediaType,
+    title: title,
+    trailerKey: trailerKey,
+    overview: overview,
+    releaseYear: releaseYear,
+    posterPath: posterPath,
+    backdropPath: backdropPath,
+    trailerName: trailerName,
+    trailerPublishedAt: trailerPublishedAt,
+    reason: reason ?? this.reason,
+    reasonTitle: reasonTitle ?? this.reasonTitle,
+    rating: rating,
+    genreIds: genreIds,
+    trailerDuration: trailerDuration ?? this.trailerDuration,
+  );
 
   Map<String, dynamic> toJson() => {
     'id': tmdbId,
@@ -121,6 +130,7 @@ class TrailerFeedItem {
     if (reasonTitle.isNotEmpty) 'reasonTitle': reasonTitle,
     if (rating != null) 'vote_average': rating,
     if (genreIds.isNotEmpty) 'genre_ids': genreIds,
+    if (trailerDuration != null) 'trailer_duration': trailerDuration!.inSeconds,
   };
 
   /// Tolerant parse: a snapshot written by an older build, or a partially
@@ -152,6 +162,7 @@ class TrailerFeedItem {
           .map((id) => int.tryParse('$id'))
           .whereType<int>()
           .toList(),
+      trailerDuration: _durationOrNull(raw['trailer_duration']),
     );
   }
 
@@ -183,7 +194,14 @@ class TrailerFeedItem {
           .map((id) => int.tryParse('$id'))
           .whereType<int>()
           .toList(),
+      trailerDuration: TrailerFeedService.selectTrailerDuration(video),
     );
+  }
+
+  static Duration? _durationOrNull(Object? value) {
+    final data = value is Map ? value['duration'] ?? value['seconds'] : value;
+    final seconds = (data as num?)?.toInt() ?? int.tryParse('${data ?? ''}');
+    return seconds == null || seconds <= 0 ? null : Duration(seconds: seconds);
   }
 
   static String? _stringOrNull(Object? value) {

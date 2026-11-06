@@ -75,6 +75,69 @@ class TrailerFeedService {
   static String? selectTrailerKey(List<Map<String, dynamic>> videos) =>
       selectTrailer(videos)?['key']?.toString();
 
+  /// YouTube exposes no reliable length to the embed, so the exact trailer
+  /// duration is read from TMDb's playable session (`playback` /
+  /// `session` blocks) instead.
+  static Duration? selectTrailerDuration(Map<String, dynamic> video) {
+    final boxes = [
+      video['playback'],
+      video['playback'] is Map ? (video['playback'] as Map)['playback'] : null,
+      video['session'],
+    ];
+    for (final box in boxes) {
+      if (box is! List) continue;
+      for (final entry in box.whereType<Map>()) {
+        final seconds = int.tryParse('${entry['duration'] ?? ''}') ?? 0;
+        if (seconds > 0) return Duration(seconds: seconds);
+      }
+    }
+    return null;
+  }
+
+  static final Map<String, Duration> _durations = {};
+
+  /// Trailer lengths keyed by video id, fused into every page. This uses the
+  /// same TMDb session lookup the details screens use for inline playback,
+  /// which also keeps the trailer playable from the official channel.
+  static Future<Map<String, Duration>> prefetchDurations(
+    Iterable<TrailerFeedItem> items,
+  ) async {
+    final resolved = <String, Duration>{};
+    final missing = <TrailerFeedItem>[];
+    for (final item in items) {
+      final known = item.trailerDuration ?? _durations[item.trailerKey];
+      if (known != null) {
+        resolved[item.trailerKey] = known;
+      } else if (!missing.any((m) => m.trailerKey == item.trailerKey)) {
+        missing.add(item);
+      }
+    }
+    for (var offset = 0; offset < missing.length; offset += _batchSize) {
+      final batch = missing.skip(offset).take(_batchSize);
+      await Future.wait(
+        batch.map((item) async {
+          try {
+            final videos = await TmdbApiService.getVideos(
+              item.tmdbId,
+              isMovie: item.isMovie,
+            );
+            final video = TrailerFeedService.selectTrailer(videos);
+            final duration = video == null
+                ? null
+                : selectTrailerDuration(video);
+            if (duration != null) {
+              _durations[item.trailerKey] = duration;
+              resolved[item.trailerKey] = duration;
+            }
+          } catch (_) {
+            // A missing length only costs the exact scale on the scrubber.
+          }
+        }),
+      );
+    }
+    return resolved;
+  }
+
   static bool get _isStale =>
       _cacheAt == null || DateTime.now().difference(_cacheAt!) > _cacheTtl;
 
@@ -92,7 +155,16 @@ class TrailerFeedService {
       _resolved.clear();
     }
 
-    final future = _buildFeed();
+    final future = _buildFeed().then((items) async {
+      if (items.isEmpty) return items;
+      final durations = await prefetchDurations(items);
+      return [
+        for (final item in items)
+          durations[item.trailerKey] is Duration && item.trailerDuration == null
+              ? item.copyWith(trailerDuration: durations[item.trailerKey])
+              : item,
+      ];
+    });
     _inFlight = future;
     try {
       final items = await future;

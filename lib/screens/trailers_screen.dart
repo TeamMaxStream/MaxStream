@@ -39,11 +39,15 @@ class _TrailersScreenState extends State<TrailersScreen>
   bool _loading = true;
   bool _refreshing = false;
 
-  /// Audio state for the feed. Every page is built muted; unmuting is an
-  /// explicit action on the current page only.
-  bool _muted = true;
+  /// Trailers start with sound. A new page fires the user gesture of the
+  /// swipe, which Android accepts as an autoplay-with-audio signal.
+  bool _muted = false;
   int _generation = 0;
   Timer? _reloadDebounce;
+  Timer? _durationsDebounce;
+
+  /// Exact trailer lengths, loaded once per screen open when missing.
+  Future<Map<String, Duration>>? _durationsFuture;
 
   @override
   void initState() {
@@ -54,6 +58,10 @@ class _TrailersScreenState extends State<TrailersScreen>
     WatchHistoryService.localHistoryRevision.addListener(_onHistoryChanged);
     _restoreSnapshot();
     _load();
+    _durationsDebounce = Timer(
+      const Duration(seconds: 3),
+      () => _ensureDurations(),
+    );
   }
 
   @override
@@ -61,14 +69,15 @@ class _TrailersScreenState extends State<TrailersScreen>
     WidgetsBinding.instance.removeObserver(this);
     WatchHistoryService.localHistoryRevision.removeListener(_onHistoryChanged);
     _reloadDebounce?.cancel();
+    _durationsDebounce?.cancel();
     _pageController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Coming back from the background the feed resumes muted, matching the
-    // autoplay-muted contract; the user unmutes again if they want sound.
+    // Kill the audio when the app goes away; sound resumes with the next
+    // swipe so it never starts blaring on return.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       _pageKey.currentState?.mute();
@@ -111,6 +120,7 @@ class _TrailersScreenState extends State<TrailersScreen>
         }
       });
       if (items.isNotEmpty) _precacheAround(_index);
+      _ensureDurations();
     } catch (_) {
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -128,6 +138,29 @@ class _TrailersScreenState extends State<TrailersScreen>
     }
   }
 
+  /// Fills in missing trailer lengths in the background, then rebuilds so the
+  /// scrubber switches from its estimate to the real runtime.
+  void _ensureDurations() {
+    final pending = _items
+        .where((item) => item.trailerDuration == null)
+        .toList(growable: false);
+    if (pending.isEmpty || _durationsFuture != null) return;
+    _durationsFuture = TrailerFeedService.prefetchDurations(pending);
+    unawaited(
+      _durationsFuture!.then((durations) {
+        if (!mounted || durations.isEmpty) return;
+        setState(() {
+          _items = [
+            for (final item in _items)
+              item.trailerDuration == null && durations[item.trailerKey] != null
+                  ? item.copyWith(trailerDuration: durations[item.trailerKey])
+                  : item,
+          ];
+        });
+      }, onError: (_) {}),
+    );
+  }
+
   void _precacheAround(int index) {
     for (var i = index + 1; i <= index + 2 && i < _items.length; i++) {
       final url = _items[i].backdropUrl;
@@ -136,12 +169,16 @@ class _TrailersScreenState extends State<TrailersScreen>
     }
   }
 
+  /// Stops the current trailer as soon as the user starts dragging, so the
+  /// old page is silent before the next one arrives; [_onPageChanged] then
+  /// builds the next player.
+  bool _onScroll(ScrollStartNotification notification) {
+    _pageKey.currentState?.stop();
+    return false;
+  }
+
   void _onPageChanged(int index) {
-    // Each page is built muted; keep the toggle in step with the fresh player.
-    setState(() {
-      _index = index;
-      if (!_muted) _muted = true;
-    });
+    setState(() => _index = index);
     _precacheAround(index);
   }
 
@@ -212,24 +249,29 @@ class _TrailersScreenState extends State<TrailersScreen>
 
     return Stack(
       children: [
-        PageView.builder(
-          controller: _pageController,
-          scrollDirection: Axis.vertical,
-          itemCount: _items.length,
-          onPageChanged: _onPageChanged,
-          itemBuilder: (context, i) {
-            final item = _items[i];
-            final active = i == _index;
-            return _TrailerPage(
-              // The settled page owns one stable key; others are keyed by item
-              // so a refresh re-order never reuses the previous video.
-              key: active ? _pageKey : ValueKey(item.key),
-              item: item,
-              active: active,
-              muted: _muted,
-              onOpenDetails: () => _openDetails(item),
-            );
-          },
+        NotificationListener<ScrollStartNotification>(
+          onNotification: _onScroll,
+          child: PageView.builder(
+            controller: _pageController,
+            scrollDirection: Axis.vertical,
+            itemCount: _items.length,
+            onPageChanged: _onPageChanged,
+
+            itemBuilder: (context, i) {
+              final item = _items[i];
+              final active = i == _index;
+              return _TrailerPage(
+                // The settled page owns one stable key; others are keyed by item
+                // so a refresh re-order never reuses the previous video.
+                key: active ? _pageKey : ValueKey(item.key),
+                item: item,
+                active: active,
+                muted: _muted,
+                onStop: () => _pageKey.currentState?.stop(),
+                onOpenDetails: () => _openDetails(item),
+              );
+            },
+          ),
         ),
         _buildTopBar(),
         if (_refreshing)
@@ -343,12 +385,14 @@ class _TrailerPage extends StatefulWidget {
     required this.item,
     required this.active,
     required this.muted,
+    required this.onStop,
     required this.onOpenDetails,
   });
 
   final TrailerFeedItem item;
   final bool active;
   final bool muted;
+  final VoidCallback onStop;
   final VoidCallback onOpenDetails;
 
   @override
@@ -437,7 +481,10 @@ class _TrailerPageState extends State<_TrailerPage> {
       if (!_playFailed) setState(() => _playFailed = true);
       return;
     }
-    if (value.isReady && !_ready) _applyMute();
+    if (value.isReady) {
+      _applyMute();
+      _resumeIfParkedSilently();
+    }
     if (!_ready && (value.hasPlayed || value.position > Duration.zero)) {
       _stallCheck?.cancel();
       setState(() => _ready = true);
@@ -448,6 +495,25 @@ class _TrailerPageState extends State<_TrailerPage> {
     }
     _lastPosition = value.position;
     if (_ready && !_scrubbing) setState(() {});
+  }
+
+  /// Android blocks unmuted autoplay when the embed was created while the
+  /// screen was still animating in. Once it is loaded but parked, play it
+  /// again with the audio state we actually want; the user's setup tap on the
+  /// feed counts as the gesture browsers want for sound.
+  void _resumeIfParkedSilently() {
+    final controller = _controller;
+    if (controller == null || !widget.active) return;
+    final value = controller.value;
+    if (!value.isReady || widget.muted) return;
+    final parked =
+        value.playerState == PlayerState.paused ||
+        value.playerState == PlayerState.cued ||
+        value.playerState == PlayerState.unStarted;
+    if (!value.hasPlayed && parked) {
+      _applyMute();
+      controller.play();
+    }
   }
 
   void _checkStalled() {
@@ -483,6 +549,20 @@ class _TrailerPageState extends State<_TrailerPage> {
 
   void unmute() {
     _applyMute();
+  }
+
+  /// Hand-off on swipe: silence the page now and park it at the start so the
+  /// same title does not resume mid-way when the user swipes back to it.
+  void stop() {
+    final controller = _controller;
+    if (controller == null) return;
+    if (controller.value.isReady) {
+      try {
+        controller.mute();
+        controller.pause();
+      } catch (_) {}
+    }
+    controller.setVolume(0);
   }
 
   void mute() {
@@ -610,6 +690,7 @@ class _TrailerPageState extends State<_TrailerPage> {
                     const SizedBox(height: 16),
                     _ScrubBar(
                       controller: controller,
+                      duration: widget.item.trailerDuration,
                       scrubbing: _scrubbing,
                       scrubTarget: _scrubTarget,
                       onScrubStart: _beginScrub,
@@ -711,6 +792,7 @@ class _TrailerPageState extends State<_TrailerPage> {
 class _ScrubBar extends StatefulWidget {
   const _ScrubBar({
     required this.controller,
+    required this.duration,
     required this.scrubbing,
     required this.scrubTarget,
     required this.onScrubStart,
@@ -719,6 +801,10 @@ class _ScrubBar extends StatefulWidget {
   });
 
   final YoutubePlayerController controller;
+
+  /// Exact length from TMDb; null until [TrailerFeedService.prefetchDurations]
+  /// lands, in which case the scrubber runs on an estimate.
+  final Duration? duration;
   final bool scrubbing;
   final Duration scrubTarget;
   final VoidCallback onScrubStart;
@@ -730,13 +816,15 @@ class _ScrubBar extends StatefulWidget {
 }
 
 class _ScrubBarState extends State<_ScrubBar> {
-  // WebView players do not always report a duration; previews run ~2 minutes.
-  static const Duration _fallbackDuration = Duration(minutes: 2);
+  // Until the TMDb length arrives, trailer previews (~2 minutes) are assumed.
+  static const Duration _estimate = Duration(minutes: 2);
   double? _dragFraction;
 
   Duration get _duration {
+    final exact = widget.duration;
+    if (exact != null && exact > Duration.zero) return exact;
     final reported = widget.controller.value.metaData.duration;
-    return reported > Duration.zero ? reported : _fallbackDuration;
+    return reported > Duration.zero ? reported : _estimate;
   }
 
   Duration get _position => _dragFraction == null

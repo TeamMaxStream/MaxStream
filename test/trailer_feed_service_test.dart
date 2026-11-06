@@ -101,6 +101,40 @@ void main() {
     });
   });
 
+  group('selectTrailerDuration', () {
+    test('reads the length from a TMDb playable session', () {
+      expect(
+        TrailerFeedService.selectTrailerDuration({
+          'id': 'V1',
+          'playback': [
+            {
+              'type': 'youtube',
+              'duration': 150,
+              'url': 'https://www.youtube.com/watch?v=abc123',
+            },
+          ],
+        }),
+        const Duration(seconds: 150),
+      );
+    });
+
+    test('handles nested payloads and ignores unusable entries', () {
+      expect(
+        TrailerFeedService.selectTrailerDuration({
+          'playback': {
+            'playback': [
+              {'duration': 0},
+              {'duration': '92'},
+            ],
+          },
+        }),
+        const Duration(seconds: 92),
+      );
+      expect(TrailerFeedService.selectTrailerDuration({'id': 'V2'}), isNull);
+      expect(TrailerFeedService.selectTrailerDuration({}), isNull);
+    });
+  });
+
   group('TrailerFeedItem', () {
     test('round-trips through JSON', () {
       final item = buildItem(
@@ -123,6 +157,16 @@ void main() {
         TrailerFeedItem.fromJson({'id': 0, 'title': 'X', 'trailerKey': 'k'}),
         isNull,
       );
+    });
+
+    test('keeps the trailer length through JSON', () {
+      final item = buildItem().copyWith(
+        trailerDuration: const Duration(seconds: 135),
+      );
+      expect(item.toJson()['trailer_duration'], 135);
+      final decoded = TrailerFeedItem.fromJson(item.toJson());
+      expect(decoded!.trailerDuration, const Duration(seconds: 135));
+      expect(buildItem().toJson().containsKey('trailer_duration'), isFalse);
     });
 
     test('reason labels cover trending and similar', () {
