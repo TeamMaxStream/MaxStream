@@ -35,6 +35,7 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -80,6 +81,22 @@ class StreamExtractor(private val context: Context) {
         private const val FAST_HTTP_SERVER_TIMEOUT_MS = 9_000L
         private const val FAST_WEBVIEW_SERVER_TIMEOUT_MS = 7_000L
         private const val FAST_ALL_SERVERS_TOTAL_TIMEOUT_MS = 25_000L
+        private const val NET_MIRROR_MAX_SUBJECTS = 8
+        private const val NET_MIRROR_MAX_AUDIO_TRACKS = 8
+        private const val NET_MIRROR_PROBE_BYTES = 256 * 1024
+        private const val MAX_STREAM_API_HOST = "maxstream-api.maxstream123.workers.dev"
+        /** Raw NetMirror renditions only answer behind MovieBox's Referer. */
+        private const val MOVIEBOX_REFERER = "https://moviebox.ph/"
+        private val NET_MIRROR_LANGUAGE_CODES = mapOf(
+            "arabic" to "ar", "bengali" to "bn", "chinese" to "zh", "dutch" to "nl",
+            "english" to "en", "filipino" to "fil", "french" to "fr", "german" to "de",
+            "greek" to "el", "hausa" to "ha", "hebrew" to "he", "hindi" to "hi",
+            "indonesian" to "id", "italian" to "it", "japanese" to "ja", "korean" to "ko",
+            "malay" to "ms", "persian" to "fa", "polish" to "pl", "portuguese" to "pt",
+            "punjabi" to "pa", "russian" to "ru", "spanish" to "es", "swahili" to "sw",
+            "tamil" to "ta", "telugu" to "te", "thai" to "th", "turkish" to "tr",
+            "urdu" to "ur", "vietnamese" to "vi",
+        )
     }
 
     /** True on 1GB-class devices (most cheap TV boxes). */
@@ -276,6 +293,8 @@ class StreamExtractor(private val context: Context) {
             TwoEmbedExtractor(),
             VidemExtractor(),
             FilemoonExtractor(),
+            NetMirrorExtractor(),
+            MaxStreamApiExtractor(),
             StreamWishExtractor(),
             DoodLaExtractor(),
             VidMoLyExtractor(),
@@ -609,6 +628,24 @@ class StreamExtractor(private val context: Context) {
         override suspend fun getServers(request: MediaRequest): List<StreamServer> {
             val id = request.tmdbId
             val servers = mutableListOf<StreamServer>()
+
+            // NetMirror keys everything by TMDB id and serves whole-file MP4s,
+            // so it resolves without embed scraping. First in the race.
+            servers += StreamServer(
+                "NetMirror",
+                "https://net79.cc/api/variants-tmdb/" +
+                    (if (request.isMovie) "movie" else "tv") +
+                    "/$id?se=${request.season}&ep=${request.episode}",
+            )
+
+            servers += StreamServer(
+                "MaxStream API",
+                "https://$MAX_STREAM_API_HOST/v1/stream" +
+                    "?tmdb=$id" +
+                    "&type=${if (request.isMovie) "movie" else "tv"}" +
+                    "&season=${request.season}" +
+                    "&episode=${request.episode}",
+            )
 
             servers += StreamServer(
                 "VixSrc",
@@ -2968,6 +3005,354 @@ class StreamExtractor(private val context: Context) {
                 StreamResult(streamUrl, name, mediaType(streamUrl), refererHeaders("https://www.dailymotion.com")),
             )
         }
+    }
+
+
+    /**
+     * NetMirror (net79.cc) keys titles by TMDB id and serves whole-file MP4
+     * renditions. Ported from the Android extractor; everything here is plain
+     * HTTP, so it works on desktop without a WebView.
+     */
+    private inner class NetMirrorExtractor : HostExtractor {
+        override val name = "NetMirror"
+
+        override fun supports(server: StreamServer): Boolean {
+            val value = host(server.url)
+            return value.endsWith("net79.cc") || value.endsWith("net27.cc")
+        }
+
+        override suspend fun extract(server: StreamServer): ExtractionResult =
+            withContext(Dispatchers.IO) {
+                val media = server.url.toHttpUrlOrNull()
+                    ?: throw IllegalStateException("NetMirror server URL is invalid")
+                val type = if (media.pathSegments.contains("movie")) "movie" else "tv"
+                val tmdbId = media.pathSegments.lastOrNull().orEmpty()
+                require(tmdbId.isNotBlank()) { "NetMirror server URL has no TMDB id" }
+                val se = if (type == "movie") "0" else media.queryParameter("se") ?: "1"
+                val ep = if (type == "movie") "0" else media.queryParameter("ep") ?: "1"
+
+                val base = "https://${host(server.url)}"
+                val siteHeaders = refererHeaders("$base/")
+                val variants =
+                    getJson("$base/api/variants-tmdb/$type/$tmdbId?se=$se&ep=$ep", siteHeaders)
+                require(variants.optBoolean("ok")) { "NetMirror has no title for tmdb $tmdbId" }
+                val defaultSubject = variants.optString("defaultSubjectId").trim()
+                require(defaultSubject.isNotBlank()) { "NetMirror returned no default subject" }
+
+                val variantArray = variants.optJSONArray("variants") ?: JSONArray()
+                val entries = buildList {
+                    for (index in 0 until variantArray.length()) {
+                        val item = variantArray.optJSONObject(index) ?: continue
+                        add(item.optString("dubSubjectId").trim() to item.optString("language").trim())
+                    }
+                }
+
+                val candidates = LinkedHashMap<String, Pair<String, String>>()
+                fun addCandidate(subjectId: String, language: String) {
+                    if (subjectId.isBlank() || candidates.containsKey(subjectId)) return
+                    candidates[subjectId] = subjectId to language
+                }
+                addCandidate(
+                    defaultSubject,
+                    entries.firstOrNull { it.first == defaultSubject }?.second ?: "Default",
+                )
+                // Dubs first: subtitle-only variants would push real dubs past the cap.
+                entries
+                    .filter { it.first != defaultSubject && it.second.contains("dub", true) }
+                    .forEach { (subjectId, language) -> addCandidate(subjectId, language) }
+                entries.forEach { (subjectId, language) -> addCandidate(subjectId, language) }
+
+                val infos = coroutineScope {
+                    candidates.values.take(NET_MIRROR_MAX_SUBJECTS).map { candidate ->
+                        async(Dispatchers.IO) {
+                            try {
+                                candidate to getJson(
+                                    "$base/api/download-info" +
+                                        "?subjectId=${candidate.first}&se=$se&ep=$ep",
+                                    siteHeaders,
+                                )
+                            } catch (error: Throwable) {
+                                if (error is CancellationException) throw error
+                                Log.w(
+                                    tag,
+                                    "NetMirror download-info ${candidate.second} " +
+                                        "failed: ${error.message}",
+                                )
+                                candidate to null
+                            }
+                        }
+                    }.awaitAll()
+                }
+
+                val primary = infos.firstOrNull { netMirrorQualities(it.second).isNotEmpty() }
+                    ?: throw IllegalStateException("NetMirror has no copy of this episode")
+                val primaryInfo =
+                    primary.second ?: throw IllegalStateException("NetMirror download-info vanished")
+
+                // A slow hop to one transport starves the video renderer while the
+                // audio keeps playing from its buffer, so time the raw MovieBox CDN
+                // and the site's own proxy and play whichever moves bytes faster.
+                val probeEntry = netMirrorQualities(primaryInfo).maxByOrNull { it.optInt("res") }
+                    ?: netMirrorQualities(primaryInfo).first()
+                val rawHeaders = refererHeaders(MOVIEBOX_REFERER)
+                val raw = probeRange(probeEntry.optString("raw"), rawHeaders)
+                val proxy = probeRange(absolutizeNetMirror(base, probeEntry.optString("url")), siteHeaders)
+                val useRaw = if (raw.ok && proxy.ok) raw.ms <= proxy.ms else raw.ok
+                val playbackHeaders = if (useRaw) rawHeaders else siteHeaders
+
+                fun renditionUrl(entry: JSONObject): String {
+                    val preferred = if (useRaw) entry.optString("raw") else entry.optString("url")
+                    val fallback = if (useRaw) entry.optString("url") else entry.optString("raw")
+                    return absolutizeNetMirror(base, preferred)
+                        .ifBlank { absolutizeNetMirror(base, fallback) }
+                }
+
+                val renditions = netMirrorQualities(primaryInfo).mapNotNull { entry ->
+                    val url = renditionUrl(entry)
+                    if (url.isBlank()) return@mapNotNull null
+                    Triple(entry.optInt("res"), entry.optString("codec").ifBlank { "h264" }, url)
+                }.filter { !it.second.contains("hevc", true) && !it.second.contains("h265", true) }
+                require(renditions.isNotEmpty()) { "NetMirror returned no playable qualities" }
+
+                // Progressive MP4 has no adaptive ladder, so pick the opening
+                // rendition this link can actually sustain.
+                val winner = if (useRaw) raw else proxy
+                val kbps = if (winner.ms > 0L) winner.bytes * 8L / winner.ms else 0L
+                val maxHeight = when {
+                    kbps <= 0L -> 0
+                    kbps >= 7000L -> 0
+                    kbps >= 3500L -> 720
+                    else -> 480
+                }
+                val pool = if (maxHeight > 0) {
+                    renditions.filter { it.first in 1..maxHeight }
+                } else {
+                    renditions
+                }.ifEmpty { renditions }
+                val chosen = pool.maxByOrNull { it.first } ?: renditions.first()
+                Log.d(tag, "NetMirror bitrate probe ${kbps}kbps -> default ${chosen.first}p")
+                val qualities = renditions.sortedByDescending { it.first }.map {
+                    QualityOption(
+                        if (it.first > 0) "${it.first}p" else "Auto",
+                        it.third,
+                        it.first,
+                        it.second,
+                    )
+                }
+
+                val audioTracks = mutableListOf<AudioOption>()
+                val seenLanguages = mutableSetOf<String>()
+                for ((candidate, info) in infos) {
+                    if (audioTracks.size >= NET_MIRROR_MAX_AUDIO_TRACKS) break
+                    val list = netMirrorQualities(info)
+                    if (list.isEmpty()) continue
+                    val isPrimary = candidate.first == primary.first.first
+                    val label = candidate.second.ifBlank { if (isPrimary) "Default" else candidate.first }
+                    if (!isPrimary && label.contains("sub", true) && !label.contains("dub", true)) continue
+                    val language = netMirrorLanguage(label)
+                    if (!seenLanguages.add(language.ifBlank { label.lowercase(Locale.US) })) continue
+
+                    val target = list.mapNotNull { entry ->
+                        val url = renditionUrl(entry)
+                        if (url.isBlank()) null else entry.optInt("res") to url
+                    }
+                    val match = target.firstOrNull { it.first == chosen.first }
+                        ?: target.filter { it.first < chosen.first }.maxByOrNull { it.first }
+                        ?: target.maxByOrNull { it.first }
+                        ?: continue
+                    audioTracks += AudioOption(
+                        label = label,
+                        language = language,
+                        url = match.second,
+                        groupId = candidate.first,
+                        isDefault = isPrimary,
+                        source = name,
+                    )
+                }
+
+                val captions = primaryInfo.optJSONArray("captions") ?: JSONArray()
+                val subtitles = buildList {
+                    for (index in 0 until captions.length()) {
+                        val entry = captions.optJSONObject(index) ?: continue
+                        val url = absolutizeNetMirror(base, entry.optString("url"))
+                        if (url.isBlank()) continue
+                        add(SubtitleOption(netMirrorSubtitleLabel(entry), url, source = name))
+                    }
+                }
+
+                Log.d(
+                    tag,
+                    "NetMirror resolved ${chosen.first}p with " +
+                        "${audioTracks.size} audio track(s), ${subtitles.size} subtitle(s)",
+                )
+                ExtractionResult.Final(
+                    StreamResult(
+                        url = chosen.third,
+                        source = name,
+                        type = "direct_video",
+                        headers = playbackHeaders,
+                        qualities = qualities,
+                        subtitles = subtitles,
+                        audioTracks = audioTracks,
+                        method = "NetMirror",
+                    ),
+                )
+            }
+
+        private fun netMirrorQualities(info: JSONObject?): List<JSONObject> {
+            if (info == null || !info.optBoolean("ok")) return emptyList()
+            val array = info.optJSONArray("qualities") ?: return emptyList()
+            return (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+        }
+    }
+
+    private data class NetMirrorProbe(val ok: Boolean, val ms: Long, val bytes: Long)
+
+    /** Reads up to [NET_MIRROR_PROBE_BYTES] from [url] and times it (0 = dead route). */
+    private fun probeRange(url: String, headers: Map<String, String>): NetMirrorProbe {
+        if (url.isBlank()) return NetMirrorProbe(false, 0L, 0L)
+        val started = System.nanoTime()
+        val request = Request.Builder().url(url).apply {
+            header("User-Agent", userAgent)
+            header("Range", "bytes=0-${NET_MIRROR_PROBE_BYTES - 1}")
+            safeHeaders(headers).forEach { (name, value) -> header(name, value) }
+        }.build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                val elapsed = (System.nanoTime() - started) / 1_000_000
+                val body = response.body ?: return NetMirrorProbe(false, elapsed, 0L)
+                var read = 0L
+                body.byteStream().use { stream ->
+                    val buffer = ByteArray(8 * 1024)
+                    while (read < NET_MIRROR_PROBE_BYTES) {
+                        val chunk = stream.read(
+                            buffer,
+                            0,
+                            minOf(buffer.size, (NET_MIRROR_PROBE_BYTES - read).toInt()),
+                        )
+                        if (chunk <= 0) break
+                        read += chunk
+                    }
+                }
+                val contentType = response.header("Content-Type").orEmpty()
+                val ok = (response.code == 200 || response.code == 206) &&
+                    read > 0 &&
+                    !contentType.contains("text/html", true)
+                NetMirrorProbe(ok, elapsed, read)
+            }
+        } catch (error: Throwable) {
+            NetMirrorProbe(false, (System.nanoTime() - started) / 1_000_000, 0L)
+        }
+    }
+
+    private fun absolutizeNetMirror(base: String, value: String): String = when {
+        value.isBlank() -> ""
+        value.startsWith("http") -> value
+        value.startsWith("//") -> "https:$value"
+        value.startsWith("/") -> "$base$value"
+        else -> ""
+    }
+
+    private fun netMirrorLanguage(label: String): String {
+        val value = label.trim().lowercase(Locale.US)
+        if (value.isBlank()) return ""
+        if (value == "default" || value == "original") return ""
+        if (value.startsWith("esla")) return "es"
+        if (value.startsWith("ptbr")) return "pt"
+        val cleaned = value.replace(Regex("""\b(dub|sub)\b"""), "").trim()
+        return NET_MIRROR_LANGUAGE_CODES[cleaned] ?: label.trim()
+    }
+
+    private fun netMirrorSubtitleLabel(entry: JSONObject): String {
+        val raw = entry.optString("lang").ifBlank { entry.optString("name") }.trim()
+        return when (raw) {
+            "in_id" -> "id"
+            "zh_cn", "zh-CN" -> "zh"
+            else -> raw.ifBlank { "Subtitle" }
+        }
+    }
+
+    /**
+     * MaxStream API (`/v1/stream`): resolves the title through the Worker's own
+     * provider chain and answers with a playable URL plus headers, qualities
+     * and subtitles.
+     */
+    private inner class MaxStreamApiExtractor : HostExtractor {
+        override val name = "MaxStream API"
+
+        override fun supports(server: StreamServer): Boolean =
+            host(server.url) == MAX_STREAM_API_HOST
+
+        override suspend fun extract(server: StreamServer): ExtractionResult =
+            withContext(Dispatchers.IO) {
+                val json = getJson(server.url, mapOf("Accept" to "application/json"))
+                require(json.optBoolean("ok", true)) {
+                    json.optString("error").ifBlank { "MaxStream API returned no stream" }
+                }
+                val type = json.optString("type").ifBlank { "hls" }
+                val url = json.optString("url").ifBlank { json.optString("stream") }
+                require(url.isNotBlank()) { "MaxStream API returned no URL" }
+                // Embed answers are not playable by the desktop player.
+                require(type in setOf("hls", "direct", "direct_video", "dash")) {
+                    "MaxStream API returned an embed, not a stream"
+                }
+
+                val headers = buildMap {
+                    putAll(refererHeaders("https://$MAX_STREAM_API_HOST/"))
+                    val extra = json.optJSONObject("headers") ?: JSONObject()
+                    for (key in extra.keys()) {
+                        extra.optString(key).takeIf { it.isNotBlank() }?.let { put(key, it) }
+                    }
+                }
+
+                val subtitles = buildList {
+                    val subs = json.optJSONArray("subtitles") ?: JSONArray()
+                    for (index in 0 until subs.length()) {
+                        val sub = subs.optJSONObject(index) ?: continue
+                        val subUrl = sub.optString("url")
+                        if (subUrl.isBlank()) continue
+                        add(
+                            SubtitleOption(
+                                sub.optString("language").ifBlank {
+                                    sub.optString("label").ifBlank { "Subtitle" }
+                                },
+                                subUrl,
+                                source = name,
+                            ),
+                        )
+                    }
+                }
+
+                val qualities = buildList {
+                    val list = json.optJSONArray("qualities") ?: JSONArray()
+                    for (index in 0 until list.length()) {
+                        val q = list.optJSONObject(index) ?: continue
+                        val qUrl = q.optString("url")
+                        if (qUrl.isBlank()) continue
+                        add(
+                            QualityOption(
+                                q.optString("label").ifBlank { "Auto" },
+                                qUrl,
+                                q.optInt("height"),
+                                q.optString("codec"),
+                            ),
+                        )
+                    }
+                }
+
+                ExtractionResult.Final(
+                    validateStream(
+                        StreamResult(
+                            url = url,
+                            source = json.optString("source").ifBlank { name },
+                            type = if (type == "direct") "direct_video" else type,
+                            headers = headers,
+                            qualities = qualities,
+                            subtitles = subtitles,
+                        ),
+                    ),
+                )
+            }
     }
 
     private inner class GenericMediaExtractor : HostExtractor {
