@@ -73,6 +73,7 @@ import com.maxstream.app.ui.components.appClickable
 import com.maxstream.app.ui.components.appFocusRing
 import com.maxstream.app.ui.components.posterBrush
 import com.maxstream.app.ui.components.ScrollableColumn
+import com.maxstream.app.ui.components.ScrollableList
 import com.maxstream.app.ui.theme.AppColors
 import com.maxstream.app.ui.theme.AppSpacing
 import java.awt.Desktop
@@ -519,9 +520,15 @@ fun DetailsScreen(
                         // Lazy inside a bounded height: a 30-episode season used
                         // to compose every full-size row inside the scroll column.
                         val sortedEpisodes = remember(episodes) { episodes.sortedBy { it.number } }
-                        LazyColumn(
-                            state = rememberLazyListState(),
+                        val episodeListState = rememberLazyListState()
+                        ScrollableList(
+                            state = episodeListState,
+                            autoFocus = false,
                             modifier = Modifier.heightIn(max = 720.dp),
+                        ) {
+                        LazyColumn(
+                            state = episodeListState,
+                            modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                 horizontal = AppSpacing.gutter,
@@ -654,9 +661,10 @@ fun DetailsScreen(
                                     modifier = Modifier.size(28.dp),
                                 )
                             }
-                        }   // Row
-                    }       // items()
-                }           // LazyColumn
+                            }   // Row
+                        }       // items()
+                        }           // LazyColumn
+                        }   // ScrollableList
             }               // else ->
         }                   // when
     }                       // seasons / tv block

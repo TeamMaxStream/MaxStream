@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.maxstream.app.ui.components.ScrollableList
 import coil3.compose.AsyncImage
 import com.maxstream.app.core.AppConfig
 import com.maxstream.app.data.model.PlayRequest
@@ -114,17 +116,21 @@ fun DownloadsScreen(onPlay: (PlayRequest) -> Unit) {
                 icon = Icons.Default.Download,
             )
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 28.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(items, key = { it.id }) { item ->
-                    DownloadRow(
-                        item = item,
-                        onPlay = onPlay,
-                        onDelete = { deleteTarget = item },
-                    )
+            val listState = rememberLazyListState()
+            ScrollableList(state = listState) {
+                LazyColumn(
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 28.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(items, key = { it.id }) { item ->
+                        DownloadRow(
+                            item = item,
+                            onPlay = onPlay,
+                            onDelete = { deleteTarget = item },
+                        )
+                    }
                 }
             }
         }

@@ -1,5 +1,8 @@
 package com.maxstream.app.ui.screens
 
+import com.maxstream.app.ui.components.ScrollStateAdapter
+import com.maxstream.app.ui.components.AppScrollbar
+import androidx.compose.ui.draw.clip
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -507,11 +510,17 @@ private fun ProfileEditDialog(
     var colorIndex by remember(profile?.id) { mutableStateOf(profile?.colorIndex ?: 0) }
 
     Dialog(onDismissRequest = onDismiss) {
-        Column(
+        val scrollState = rememberScrollState()
+        Box(
             Modifier
                 .width(380.dp)
                 .heightIn(max = 640.dp)
-                .verticalScroll(rememberScrollState())
+                .clip(RoundedCornerShape(16.dp)),
+        ) {
+        Column(
+            Modifier
+                .heightIn(max = 640.dp)
+                .verticalScroll(scrollState)
                 .clip(RoundedCornerShape(16.dp))
                 .background(Color(0xFF1A1A1E))
                 .padding(24.dp),
@@ -626,6 +635,11 @@ private fun ProfileEditDialog(
                     )
                 }
             }
+        }
+        AppScrollbar(
+            adapter = remember(scrollState) { ScrollStateAdapter(scrollState) },
+            modifier = Modifier.align(Alignment.CenterEnd),
+        )
         }
     }
 }

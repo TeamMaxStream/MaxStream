@@ -1,5 +1,7 @@
 package com.maxstream.app.ui.components
 
+import androidx.compose.foundation.ScrollbarStyle
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
@@ -9,27 +11,29 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.v2.ScrollbarAdapter
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.foundation.ScrollState
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.staticCompositionLocalOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
@@ -41,6 +45,35 @@ import kotlin.math.ceil
  * keystrokes after the first character.
  */
 val LocalSearchActive = staticCompositionLocalOf { false }
+
+/**
+ * Scrollbar styling that follows the active theme: the default Material
+ * adornment is a faint grey that disappears on both the near-black and the
+ * white surfaces, so the thumb uses onSurface at a visible alpha and the
+ * hover colour a step brighter.
+ */
+@Composable
+fun appScrollbarStyle(): ScrollbarStyle = ScrollbarStyle(
+    minimalHeight = 48.dp,
+    thickness = 8.dp,
+    shape = MaterialTheme.shapes.extraSmall,
+    hoverDurationMillis = 220,
+    unhoverColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.32f),
+    hoverColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.60f),
+)
+
+/** Right-edge scrollbar for any scroll adapter, themed via [appScrollbarStyle]. */
+@Composable
+fun AppScrollbar(
+    adapter: ScrollbarAdapter,
+    modifier: Modifier = Modifier,
+) {
+    VerticalScrollbar(
+        adapter = adapter,
+        modifier = modifier.fillMaxHeight(),
+        style = appScrollbarStyle(),
+    )
+}
 
 /**
  * Vertical-scrolling column with a right-edge scrollbar and keyboard support
@@ -70,9 +103,9 @@ fun ScrollableColumn(
             Modifier.fillMaxSize().verticalScroll(scrollState).padding(contentPadding),
             content = content,
         )
-        VerticalScrollbar(
+        AppScrollbar(
             adapter = ScrollStateAdapter(scrollState),
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            modifier = Modifier.align(Alignment.CenterEnd),
         )
     }
     LaunchedEffect(requester, searchActive) {
@@ -102,9 +135,42 @@ fun ScrollableGrid(
             .onKeyEvent { gridKeys(state, scope, it) },
     ) {
         content()
-        VerticalScrollbar(
+        AppScrollbar(
             adapter = remember(state) { GridScrollbarAdapter(state) },
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            modifier = Modifier.align(Alignment.CenterEnd),
+        )
+    }
+    LaunchedEffect(requester, searchActive) {
+        if (autoFocus && !searchActive) runCatching { requester.requestFocus() }
+    }
+}
+
+/**
+ * Wrapper for a lazy list: draws the right-edge scrollbar and handles the same
+ * keyboard keys as [ScrollableColumn]. The list itself is supplied by
+ * [content] and must use [state].
+ */
+@Composable
+fun ScrollableList(
+    state: LazyListState,
+    modifier: Modifier = Modifier,
+    autoFocus: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val requester = remember { FocusRequester() }
+    val searchActive = LocalSearchActive.current
+    Box(
+        modifier
+            .fillMaxSize()
+            .focusRequester(requester)
+            .focusable()
+            .onKeyEvent { gridKeys(state, scope, it) },
+    ) {
+        content()
+        AppScrollbar(
+            adapter = remember(state) { ListScrollbarAdapter(state) },
+            modifier = Modifier.align(Alignment.CenterEnd),
         )
     }
     LaunchedEffect(requester, searchActive) {
@@ -156,8 +222,36 @@ private fun gridKeys(state: LazyGridState, scope: CoroutineScope, event: KeyEven
     return true
 }
 
+private fun gridKeys(state: LazyListState, scope: CoroutineScope, event: KeyEvent): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    val page = state.layoutInfo.viewportSize.height * 0.9f
+    when (event.key) {
+        Key.Home, Key.MoveHome -> {
+            scope.launch { state.scrollToItem(0) }
+            return true
+        }
+        Key.MoveEnd -> {
+            scope.launch {
+                val last = state.layoutInfo.totalItemsCount - 1
+                state.scrollToItem(last.coerceAtLeast(0))
+            }
+            return true
+        }
+        else -> Unit
+    }
+    val delta = when (event.key) {
+        Key.DirectionDown -> 120f
+        Key.DirectionUp -> -120f
+        Key.PageDown -> page
+        Key.PageUp -> -page
+        else -> return false
+    }
+    scope.launch { state.scroll { scrollBy(delta) } }
+    return true
+}
+
 /** Exact scrollbar adapter for a [ScrollState] (column-based screens). */
-private class ScrollStateAdapter(private val state: ScrollState) : ScrollbarAdapter {
+class ScrollStateAdapter(private val state: ScrollState) : ScrollbarAdapter {
     override val scrollOffset: Double get() = state.value.toDouble()
     override val contentSize: Double get() = (state.viewportSize + state.maxValue).toDouble()
     override val viewportSize: Double get() = state.viewportSize.toDouble()
@@ -187,7 +281,7 @@ private class GridScrollbarAdapter(private val state: LazyGridState) : Scrollbar
         get() {
             val visible = state.layoutInfo.visibleItemsInfo
             if (visible.isEmpty()) return 1.0
-            return visible.map { it.size.height }.average().coerceAtLeast(1.0)
+            return visible.map { it.size.height.toDouble() }.average().coerceAtLeast(1.0)
         }
 
     override val viewportSize: Double get() = state.layoutInfo.viewportSize.height.toDouble()
@@ -209,6 +303,36 @@ private class GridScrollbarAdapter(private val state: LazyGridState) : Scrollbar
         if (state.layoutInfo.totalItemsCount == 0) return
         val row = (scrollOffset / avgItemHeight).toInt()
         val index = (row * cols).coerceIn(0, (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+        state.scrollToItem(index)
+    }
+}
+
+/** Approximate scrollbar adapter for a [LazyListState] (uniform-height rows). */
+private class ListScrollbarAdapter(private val state: LazyListState) : ScrollbarAdapter {
+
+    private val avgItemHeight: Double
+        get() {
+            val visible = state.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) return 1.0
+            // Lazy list items report their height directly as an Int.
+            return visible.map { it.size.toDouble() }.average().coerceAtLeast(1.0)
+        }
+
+    override val viewportSize: Double get() = state.layoutInfo.viewportSize.height.toDouble()
+
+    override val contentSize: Double get() {
+        val info = state.layoutInfo
+        if (info.totalItemsCount == 0) return viewportSize
+        return info.totalItemsCount * avgItemHeight
+    }
+
+    override val scrollOffset: Double get() =
+        state.firstVisibleItemIndex * avgItemHeight + state.firstVisibleItemScrollOffset
+
+    override suspend fun scrollTo(scrollOffset: Double) {
+        if (state.layoutInfo.totalItemsCount == 0) return
+        val index = (scrollOffset / avgItemHeight).toInt()
+            .coerceIn(0, (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
         state.scrollToItem(index)
     }
 }

@@ -153,7 +153,11 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
     // Bumped when cloud watch history / profile changes so Home reloads CW.
     var syncRevision by remember { mutableIntStateOf(CloudSync.dataRevision) }
     val contentFocus = remember { FocusRequester() }
-    val priorPlacement = remember { mutableStateOf(windowState.placement) }
+    // Placement to return to when the player closes. Only an *automatic*
+    // maximize may be undone automatically: if the user maximized the window
+    // themselves, navigating between screens must keep it maximized.
+    var priorPlacement by remember { mutableStateOf(windowState.placement) }
+    var autoMaximized by remember { mutableStateOf(false) }
 
     val useDark = darkOverride
 
@@ -197,15 +201,20 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
     LaunchedEffect(route) {
         if (route is AppRoute.Player) {
             if (windowState.placement != WindowPlacement.Fullscreen) {
-                priorPlacement.value = windowState.placement
+                priorPlacement = windowState.placement
             }
             if (windowState.placement == WindowPlacement.Floating) {
                 windowState.placement = WindowPlacement.Maximized
+                autoMaximized = true
             }
-        } else if (windowState.placement == WindowPlacement.Maximized &&
-            priorPlacement.value == WindowPlacement.Floating
-        ) {
-            windowState.placement = priorPlacement.value
+        } else if (autoMaximized) {
+            autoMaximized = false
+            // Fullscreen belongs to the player; leaving it must drop back out.
+            windowState.placement = if (windowState.placement == WindowPlacement.Fullscreen) {
+                WindowPlacement.Maximized
+            } else {
+                priorPlacement
+            }
         }
     }
 
@@ -269,17 +278,21 @@ fun Shell(windowState: WindowState = rememberWindowState()) {
                     onManageProfiles = {
                         PlaybackSession.stop()
                         phase = AppPhase.Profile
-                        priorPlacement.value = WindowPlacement.Floating
-                        if (windowState.placement != WindowPlacement.Fullscreen) {
-                            windowState.placement = WindowPlacement.Floating
+                        // Leave fullscreen (a player may still be mounted) but
+                        // never shrink a window the user maximized themselves.
+                        autoMaximized = false
+                        priorPlacement = WindowPlacement.Floating
+                        if (windowState.placement == WindowPlacement.Fullscreen) {
+                            windowState.placement = WindowPlacement.Maximized
                         }
                     },
                     onSwitchProfile = {
                         PlaybackSession.stop()
                         phase = AppPhase.Profile
-                        priorPlacement.value = WindowPlacement.Floating
-                        if (windowState.placement != WindowPlacement.Fullscreen) {
-                            windowState.placement = WindowPlacement.Floating
+                        autoMaximized = false
+                        priorPlacement = WindowPlacement.Floating
+                        if (windowState.placement == WindowPlacement.Fullscreen) {
+                            windowState.placement = WindowPlacement.Maximized
                         }
                     },
                 )

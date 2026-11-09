@@ -1,5 +1,7 @@
 package com.maxstream.app.download
 
+import com.maxstream.app.ui.components.ScrollableList
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -220,9 +223,16 @@ fun DownloadPickerDialog(
                         }
                     }
                     else -> {
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        val choiceListState = rememberLazyListState()
+                        ScrollableList(
+                            state = choiceListState,
+                            autoFocus = false,
                             modifier = Modifier.weight(1f, fill = false).heightIn(max = 400.dp),
+                        ) {
+                        LazyColumn(
+                            state = choiceListState,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxSize(),
                         ) {
                             items(list, key = { it.url }) { choice ->
                                 val checked = selected?.url == choice.url
@@ -257,6 +267,7 @@ fun DownloadPickerDialog(
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }
