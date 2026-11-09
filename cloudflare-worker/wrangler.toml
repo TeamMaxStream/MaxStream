@@ -1,0 +1,10 @@
+name = "maxstream-extractor"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# PROXY_SECRET is a Worker secret, not a var: set it with
+#   wrangler secret put PROXY_SECRET
+# and never commit it here.
+
+[vars]
+CORS_ORIGIN = "*"
