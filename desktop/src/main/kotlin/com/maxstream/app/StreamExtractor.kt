@@ -159,12 +159,15 @@ class StreamExtractor(private val context: Context) {
         val url: String,
         val isDefault: Boolean = false,
         val source: String = "",
+        /** BCP-47-ish tag from the provider ("en", "es", "English", …) or blank. */
+        val language: String = "",
     ) {
         fun toMap(): Map<String, Any> = mapOf(
             "label" to label,
             "url" to url,
             "default" to isDefault,
             "source" to source,
+            "language" to language,
         )
     }
 
@@ -364,6 +367,10 @@ class StreamExtractor(private val context: Context) {
                     try {
                         extractServer(server)
                             ?.takeIf { it.url.isNotBlank() }
+                            // The race result plays immediately; a single master
+                            // GET here gives it the same audio/subtitle tracks the
+                            // picker pass would have attached.
+                            ?.let { runCatching { enrichHlsAudioTracks(it) }.getOrDefault(it) }
                             ?.let { channel.trySend(it) }
                     } catch (error: Throwable) {
                         if (error is CancellationException) throw error
@@ -3946,12 +3953,14 @@ class StreamExtractor(private val context: Context) {
             if (!line.startsWith("#EXT-X-MEDIA", true) ||
                 !line.contains("TYPE=SUBTITLES", true)) return@mapNotNull null
             val uri = attribute(line, "URI") ?: return@mapNotNull null
-            val label = attribute(line, "NAME") ?: attribute(line, "LANGUAGE") ?: "Subtitle"
+            val language = attribute(line, "LANGUAGE")
+            val label = attribute(line, "NAME") ?: language ?: "Subtitle"
             SubtitleOption(
                 label,
                 resolveUrl(masterUrl, uri),
                 attribute(line, "DEFAULT").equals("YES", true),
                 source = "HLS",
+                language = language.orEmpty(),
             )
         }.distinctBy { it.url }.toList()
     }
@@ -3964,7 +3973,8 @@ class StreamExtractor(private val context: Context) {
      * it would add latency to the first playable result.
      */
     private suspend fun enrichHlsAudioTracks(stream: StreamResult): StreamResult {
-        if (stream.audioTracks.isNotEmpty()) return stream
+        // Called for every server row: skip the HTTP probe when nothing is missing.
+        if (stream.audioTracks.isNotEmpty() && stream.subtitles.isNotEmpty()) return stream
         if (stream.type != "direct_m3u8" && !stream.url.contains(".m3u8", true)) {
             return stream
         }

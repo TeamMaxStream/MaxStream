@@ -207,9 +207,26 @@ jobs:
           path: release-artifact/maxstream-tv.apk
           retention-days: 7
 
+  # Desktop variants build in parallel so the MSI and the EXE installer each
+  # have their own job, log, and artifact — a failure in one no longer hides
+  # or retries the other.
   build-desktop:
-    name: Kotlin Desktop (Windows installers)
+    name: Kotlin Desktop (${{ matrix.variant }} ${{ matrix.name }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: msi
+            name: MSI
+            task: packageReleaseMsi
+            glob: '*.msi'
+            asset: MaxStream-Desktop.msi
+          - variant: exe
+            name: EXE installer
+            task: packageReleaseExe
+            glob: '*.exe'
+            asset: MaxStream-Dex.exe
     env:
       # Authenticates the fallback lookup for mpv's rolling git-release assets,
       # avoiding shared-IP API rate limits on hosted runners.
@@ -227,6 +244,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Cache key carries the variant so the two jobs don't race writing the
+      # same cache entry on a cold run.
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -234,55 +253,48 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             ~/.gradle/compose-compiler
-          key: ${{ runner.os }}-gradle-desktop-${{ hashFiles('desktop/**/*.gradle*') }}
+          key: ${{ runner.os }}-gradle-desktop-${{ matrix.variant }}-${{ hashFiles('desktop/**/*.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-desktop-${{ matrix.variant }}-
+            ${{ runner.os }}-gradle-desktop-
 
-      # libmpv is downloaded by the syncMpvRuntime Gradle task during packaging.
-      # The archive is cached under ~/.gradle/caches/maxstream-mpv, which the
-      # Gradle cache step above restores on subsequent runs.
+      # Compile + test once in the MSI job only: both variants share the same
+      # bytecode, so testing twice doubles the slowest CI stage for nothing.
       - name: Compile + test desktop app
+        if: matrix.variant == 'msi'
         run: cd desktop; ./gradlew.bat build --no-daemon
 
       # Must be packageReleaseMsi/Exe: the default build type skips ProGuard
       # entirely, shipping the full ~37 MB material-icons-extended jar plus
       # every unused class. The release tasks shrink it to what Main.kt
       # actually references.
-      - name: Package Windows MSI
-        run: cd desktop; ./gradlew.bat packageReleaseMsi --no-daemon
+      - name: Package ${{ matrix.name }}
+        run: cd desktop; ./gradlew.bat ${{ matrix.task }} --no-daemon
 
-      # EXE is the manually distributable MaxStream-Dex.exe installer. Both
-      # installers are required: the desktop updater prefers the EXE and falls
-      # back to the MSI, and the release must contain the full installer rather
-      # than a raw launcher.
-      - name: Package Windows EXE installer
-        run: cd desktop; ./gradlew.bat packageReleaseExe --no-daemon
-
-      # Normalise both installers into the names users see in the release.
-      - name: Stage desktop installers
+      # Normalise the installer into the name users see in the release. The
+      # EXE variant must pick the installer in the `exe` subdirectory — a raw
+      # jpackage launcher is only a few dozen KB and the release check rejects it.
+      - name: Stage ${{ matrix.name }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          $msi = Get-ChildItem desktop/build/compose/binaries -Recurse -Filter *.msi |
-            Select-Object -First 1
-          if ($msi) {
-            Copy-Item $msi.FullName "dist/MaxStream-Desktop.msi"
+          $found = if ('${{ matrix.variant }}' -eq 'exe') {
+            Get-ChildItem desktop/build/compose/binaries -Recurse -Filter '${{ matrix.glob }}' |
+              Where-Object { $_.Directory.Name -eq 'exe' } |
+              Select-Object -First 1
           } else {
-            throw "No MSI was produced"
+            Get-ChildItem desktop/build/compose/binaries -Recurse -Filter '${{ matrix.glob }}' |
+              Select-Object -First 1
           }
-          $exe = Get-ChildItem desktop/build/compose/binaries -Recurse -Filter *.exe |
-            Where-Object { $_.Directory.Name -eq 'exe' } |
-            Select-Object -First 1
-          if ($exe) {
-            Copy-Item $exe.FullName "dist/MaxStream-Dex.exe"
-            Write-Host "Staged $($exe.Name) as MaxStream-Dex.exe"
-          } else {
-            throw "No EXE installer was produced"
-          }
+          if (-not $found) { throw "No ${{ matrix.name }} was produced" }
+          Copy-Item $found.FullName "dist/${{ matrix.asset }}"
+          Write-Host "Staged $($found.Name) as ${{ matrix.asset }}"
 
-      - name: Upload desktop installers
+      - name: Upload ${{ matrix.name }}
         uses: actions/upload-artifact@v4
         with:
-          name: maxstream-desktop
-          path: dist/*
+          name: maxstream-desktop-${{ matrix.variant }}
+          path: dist/${{ matrix.asset }}
           retention-days: 7
 
   # Fast, sign-free gates. These run on every push/PR so formatting, analysis,

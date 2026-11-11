@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Workflow run containing the maxstream-desktop artifact
+        description: Workflow run containing the maxstream-desktop-msi/-exe artifacts
         required: true
         default: "40284197834"
       tag:
@@ -21,10 +21,11 @@ jobs:
     name: Attach desktop installers
     runs-on: ubuntu-latest
     steps:
-      - name: Download desktop artifact
+      - name: Download desktop installers
         uses: actions/download-artifact@v4
         with:
-          name: maxstream-desktop
+          pattern: maxstream-desktop-*
+          merge-multiple: true
           path: dist
           run-id: ${{ inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

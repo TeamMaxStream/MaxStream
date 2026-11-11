@@ -216,15 +216,58 @@ class PlayerController(
         }
     }
 
-    fun setSubtitleFile(path: String) {
-        synchronized(lock) {
-            runCatching { commandLocked("sub-add", path, "select") }
-        }
+    /** Adds an external subtitle track and selects it. Returns its mpv track id, or null. */
+    fun setSubtitleFile(path: String): Int? = synchronized(lock) {
+        val ctx = handle ?: return null
+        // "auto" starts the file as a selected sid; "select" would take an
+        // mpv-remembered index and silently ignore the new track.
+        runCatching { commandLocked("sub-add", path, "auto") }
+        val id = stringLocked(ctx, "sid")?.toIntOrNull()?.takeIf { it > 0 }
+        if (id == null) runCatching { commandLocked("sub-add", path, "select") }
+        stringLocked(ctx, "sid")?.toIntOrNull()?.takeIf { it > 0 }
     }
 
     /** Turns subtitles off without disturbing the selected audio track. */
     fun disableSubtitles() {
         synchronized(lock) { propertyLocked("sid", "no") }
+    }
+
+    // ── subtitle plumbing ──────────────────────────────────────────────────
+
+    /** mpv ids of the subtitle tracks currently attached (embedded or external). */
+    fun subtitleTrackIds(): List<Int> = synchronized(lock) {
+        val ctx = handle ?: return emptyList()
+        val count = longLocked(ctx, "track-list/count") ?: return emptyList()
+        buildList {
+            for (i in 0 until count.coerceIn(0L, 64L)) {
+                if (stringLocked(ctx, "track-list/$i/type") != "sub") continue
+                val id = longLocked(ctx, "track-list/$i/id") ?: continue
+                if (id > 0) add(id.toInt())
+            }
+        }
+    }
+
+    /** True when the track is flagged external (no uri = embedded track). */
+    fun isExternalSubtitle(id: Int): Boolean = synchronized(lock) {
+        val ctx = handle ?: return false
+        val count = longLocked(ctx, "track-list/count") ?: return false
+        for (i in 0 until count.coerceIn(0L, 64L)) {
+            if (longLocked(ctx, "track-list/$i/id")?.toInt() != id) continue
+            return stringLocked(ctx, "track-list/$i/external")?.equals("yes", true) == true
+        }
+        false
+    }
+
+    fun selectSubtitle(id: Int) {
+        synchronized(lock) {
+            if (id <= 0) propertyLocked("sid", "no") else propertyLocked("sid", id.toString())
+        }
+    }
+
+    fun currentSubtitle(): Int = synchronized(lock) {
+        val ctx = handle ?: return -1
+        val value = stringLocked(ctx, "sid") ?: return -1
+        if (value.equals("no", true) || value.isBlank()) -1 else value.toIntOrNull() ?: -1
     }
 
     fun togglePlayPause() {

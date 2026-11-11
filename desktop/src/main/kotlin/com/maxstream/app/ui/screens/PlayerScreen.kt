@@ -82,9 +82,11 @@ import com.maxstream.app.player.PlaybackSession
 import com.maxstream.app.stream.FailedServer
 import com.maxstream.app.stream.ResolvedAudioTrack
 import com.maxstream.app.stream.ResolvedStream
+import com.maxstream.app.stream.ResolvedSubtitle
 import com.maxstream.app.stream.StreamResolver
 import com.maxstream.app.stream.parseFailedServers
 import com.maxstream.app.stream.parseStreams
+import com.maxstream.app.stream.pickDefaultSubtitle
 import com.maxstream.app.ui.components.PlayerSurface
 import com.maxstream.app.ui.components.appFocusRing
 import java.net.URI
@@ -139,6 +141,10 @@ fun PlayerScreen(
     var failedServers by remember { mutableStateOf<List<FailedServer>>(emptyList()) }
     var resolvingAll by remember { mutableStateOf(false) }
     var selectedAudioLabel by remember { mutableStateOf<String?>(null) }
+    // Per-server subtitle overrides (server name → subtitle). A server the user
+    // explicitly configured in this session keeps that choice when re-opened.
+    var subtitleOverrides by remember { mutableStateOf<Map<String, ResolvedSubtitle?>>(emptyMap()) }
+    var activeSubtitleUrl by remember { mutableStateOf<String?>(null) }
 
     var positionMs by remember { mutableLongStateOf(0L) }
     var lengthMs by remember { mutableLongStateOf(0L) }
@@ -148,6 +154,9 @@ fun PlayerScreen(
     var seeking by remember { mutableStateOf(false) }
     var volume by remember { mutableIntStateOf(PlaybackSession.volume) }
     var muted by remember { mutableStateOf(PlaybackSession.muted) }
+    // Volume the user had before dragging the slider (or pressing Down) to 0,
+    // so the mute button can restore it instead of leaving playback silent.
+    var volumeBeforeMute by remember { mutableIntStateOf(volume.takeIf { it > 0 } ?: 80) }
     var lastSaved by remember { mutableLongStateOf(0L) }
     // One menu at a time, tracked by id in the parent: independent per-menu
     // booleans raced on close/open ordering and could leave menuOpen=false
@@ -219,14 +228,31 @@ fun PlayerScreen(
         resumeApplied = false
         pendingSeekMs = keepMs
         selectedAudioLabel = null
-        val sub = stream.subtitles.firstOrNull { it.isDefault } ?: stream.subtitles.firstOrNull()
-        sub?.let { s ->
-            scope.launch {
-                val file = downloadSubtitle(s.url)
-                if (file != null) {
-                    PlaybackSession.trackSubtitle(file)
-                    controller.setSubtitleFile(file)
-                }
+    }
+
+    /**
+     * Attaches the subtitle for [stream]: the user's choice for this server if
+     * they made one, otherwise the auto pick (default flag → audio language →
+     * English → first track). Runs after each (re)load so switching servers
+     * keeps the language, like a TV does.
+     */
+    fun applySubtitlesFor(stream: ResolvedStream) {
+        val override = subtitleOverrides[stream.server]
+        val target = if (subtitleOverrides.containsKey(stream.server)) override else {
+            val audioLang = stream.audioTracks.firstOrNull { it.isDefault }?.language
+                ?: stream.audioTracks.firstOrNull()?.language.orEmpty()
+            pickDefaultSubtitle(stream.subtitles, audioLang)
+        }
+        activeSubtitleUrl = target?.url
+        if (target == null) {
+            controller.disableSubtitles()
+            return
+        }
+        scope.launch {
+            val file = downloadSubtitle(target.url)
+            if (file != null && streams.getOrNull(selectedIndex)?.url == stream.url) {
+                PlaybackSession.trackSubtitle(file)
+                controller.setSubtitleFile(file)
             }
         }
     }
@@ -251,6 +277,7 @@ fun PlayerScreen(
             selectedIndex = index
             val stream = streams[index]
             playUrl(preferredQualityUrl(stream), stream)
+            applySubtitlesFor(stream)
         }
     }
 
@@ -280,6 +307,13 @@ fun PlayerScreen(
             selectedIndex = 0
         }
         PlaybackSession.updateStreams(merged, selectedIndex)
+        // The fast passes finish after playback started; if the playing server
+        // only got its subtitle list from this pass, attach it now.
+        if (current != null && selectedIndex == merged.indexOfFirst { it.url == current.url }) {
+            val playingStream = merged.getOrNull(selectedIndex)
+            val hasTracks = playingStream?.subtitles?.isNotEmpty() == true
+            if (hasTracks && activeSubtitleUrl == null) applySubtitlesFor(playingStream)
+        }
     }
 
     /** Picks an mpv audio track matching the chosen HLS rendition. */
@@ -318,6 +352,7 @@ fun PlayerScreen(
                 )
                 val idx = streams.indexOfFirst { it.server.equals(name, ignoreCase = true) }
                 if (idx >= 0) playStream(idx)
+                else applySubtitlesFor(parsed.first())
             }
         }
     }
@@ -331,21 +366,54 @@ fun PlayerScreen(
         revealControls()
     }
 
-    fun adjustVolume(delta: Int) {
-        volume = (volume + delta).coerceIn(0, 100)
-        muted = volume == 0
-        PlaybackSession.volume = volume
+    /** Single write path: UI state, session defaults and mpv stay in step. */
+    fun setVolume(level: Int) {
+        val next = level.coerceIn(0, 100)
+        if (next > 0) volumeBeforeMute = next
+        volume = next
+        // Dragging to 0 mutes; nudging back up or un-muting restores sound.
+        muted = next == 0
+        PlaybackSession.volume = next
         PlaybackSession.muted = muted
-        controller.setVolume(volume)
+        controller.setVolume(next)
         controller.setMute(muted)
         revealControls()
     }
 
+    fun adjustVolume(delta: Int) {
+        // Raising or lowering the volume by keyboard means "I want to hear it".
+        if (delta > 0 && muted) {
+            setVolume(volume.coerceAtLeast(volumeBeforeMute) + delta)
+        } else {
+            setVolume(volume + delta)
+        }
+    }
+
     fun toggleMute() {
-        muted = !muted
-        PlaybackSession.muted = muted
-        controller.setMute(muted)
+        if (muted || volume == 0) {
+            // Unmute: restore the last audible level, never stay at 0 (the old
+            // toggle left volume at 0 so "unmute" did nothing audible).
+            val restore = volumeBeforeMute.coerceIn(1, 100)
+            volume = restore
+            muted = false
+            PlaybackSession.volume = restore
+            PlaybackSession.muted = false
+            controller.setVolume(restore)
+            controller.setMute(false)
+        } else {
+            volumeBeforeMute = volume
+            muted = true
+            PlaybackSession.muted = true
+            controller.setMute(true)
+        }
         revealControls()
+    }
+
+    /** Re-syncs volume/mute from the session when returning from the mini-player. */
+    fun syncVolumeFromSession() {
+        volume = PlaybackSession.volume
+        muted = PlaybackSession.muted
+        if (volume > 0) volumeBeforeMute = volume
     }
 
     fun togglePlayPause() {
@@ -373,8 +441,12 @@ fun PlayerScreen(
         if (errorAttempt == 0 && PlaybackSession.isActiveFor(request)) {
             streams = PlaybackSession.streams
             selectedIndex = PlaybackSession.selectedIndex
-            volume = PlaybackSession.volume
-            muted = PlaybackSession.muted
+            // Subtitles live inside mpv's new playlist after a server switch;
+            // mpv re-selects by language, so just mirror the current track.
+            activeSubtitleUrl = if (controller.currentSubtitle() > 0) {
+                streams.getOrNull(selectedIndex)?.subtitles?.firstOrNull()?.url
+            } else null
+            syncVolumeFromSession()
             positionMs = runCatching { controller.time() }.getOrDefault(0L)
             lengthMs = runCatching { controller.length() }.getOrDefault(0L)
             playing = runCatching { controller.isPlaying }.getOrDefault(false)
@@ -595,12 +667,20 @@ fun PlayerScreen(
                         if (event.isCtrlPressed) seekBy(60_000L) else seekBy(10_000L)
                         true
                     }
+                    Key.VolumeUp -> {
+                        adjustVolume(+10)
+                        true
+                    }
+                    Key.VolumeDown -> {
+                        adjustVolume(-10)
+                        true
+                    }
                     Key.DirectionUp -> {
-                        adjustVolume(+5)
+                        adjustVolume(+10)
                         true
                     }
                     Key.DirectionDown -> {
-                        adjustVolume(-5)
+                        adjustVolume(-10)
                         true
                     }
                     else -> false
@@ -729,21 +809,22 @@ fun PlayerScreen(
                                 volume < 50 -> Icons.AutoMirrored.Filled.VolumeDown
                                 else -> Icons.AutoMirrored.Filled.VolumeUp
                             },
-                            "Mute",
+                            if (muted || volume == 0) "Unmute" else "Mute",
                             tint = Color.White,
                         )
                     }
                     Slider(
+                        // The thumb mirrors the real player volume, including
+                        // keyboard changes; dragging it always un-mutes.
                         value = volume.toFloat(),
-                        onValueChange = { volume = it.toInt(); revealControls() },
-                        onValueChangeFinished = {
-                            muted = volume == 0
-                            PlaybackSession.volume = volume
-                            PlaybackSession.muted = muted
-                            controller.setVolume(volume)
-                            controller.setMute(muted)
-                        },
+                        onValueChange = { setVolume(it.toInt()) },
                         modifier = Modifier.width(100.dp),
+                    )
+                    Text(
+                        if (muted || volume == 0) "Muted" else "$volume%",
+                        color = Color.White.copy(alpha = 0.75f),
+                        fontSize = 11.sp,
+                        modifier = Modifier.width(40.dp),
                     )
                     IconButton(
                         onClick = { toggleFullscreen() },
@@ -808,6 +889,7 @@ fun PlayerScreen(
                                 onClick = {
                                     dismiss()
                                     playStream(index)
+                                    applySubtitlesFor(stream)
                                 },
                             )
                         }
@@ -891,26 +973,45 @@ fun PlayerScreen(
                         }
                     }
 
+                    val autoSub = currentStream?.let { stream ->
+                        val audioLang = stream.audioTracks.firstOrNull { it.isDefault }?.language
+                            ?: stream.audioTracks.firstOrNull()?.language.orEmpty()
+                        pickDefaultSubtitle(stream.subtitles, audioLang)
+                    }
                     PlayerMenu(
                         icon = Icons.Default.ClosedCaption,
-                        label = if (subs.isNotEmpty()) "Subtitles (${subs.size})" else "Subtitles",
+                        label = when {
+                            activeSubtitleUrl == null -> "Subtitles off"
+                            subs.size > 1 -> "Subtitles (${subs.size})"
+                            else -> "Subtitles"
+                        },
                         enabled = true,
                         open = openMenu == "subs",
                         onOpenChange = { setMenu("subs", it) },
                         onInteract = { revealControls() },
                     ) { dismiss ->
                         DropdownMenuItem(
-                            text = { Text("Off", color = Color.White) },
+                            text = {
+                                Text(
+                                    if (activeSubtitleUrl == null) "Off  ✓" else "Off",
+                                    color = Color.White,
+                                )
+                            },
                             onClick = {
                                 dismiss()
+                                currentStream?.let { subtitleOverrides = subtitleOverrides + (it.server to null) }
+                                activeSubtitleUrl = null
                                 controller.disableSubtitles()
                             },
                         )
                         subs.forEach { sub ->
+                            val active = activeSubtitleUrl == sub.url
                             DropdownMenuItem(
-                                text = { Text(sub.label, color = Color.White) },
+                                text = { Text(sub.display() + if (active) "  ✓" else "", color = Color.White) },
                                 onClick = {
                                     dismiss()
+                                    activeSubtitleUrl = sub.url
+                                    currentStream?.let { subtitleOverrides = subtitleOverrides + (it.server to sub) }
                                     scope.launch {
                                         val f = downloadSubtitle(sub.url)
                                         if (f != null) {
@@ -926,12 +1027,23 @@ fun PlayerScreen(
                                 text = { Text("No tracks for this source", color = Color.White.copy(alpha = 0.55f)) },
                                 onClick = {},
                             )
+                        } else if (!subtitleOverrides.containsKey(currentStream?.server)) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "Auto: ${autoSub?.display() ?: "first track"} (matches audio)",
+                                        color = Color.White.copy(alpha = 0.55f),
+                                        fontSize = 12.sp,
+                                    )
+                                },
+                                onClick = {},
+                            )
                         }
                     }
 
                     Spacer(Modifier.weight(1f))
                     Text(
-                        "Space / Backspace play-pause  •  F fullscreen  •  Esc back",
+                        "Space / Backspace play-pause  •  ←/→ ±10s  •  ↑/↓ volume  •  M mute  •  F fullscreen",
                         color = Color.White.copy(alpha = 0.45f),
                         fontSize = 11.sp,
                         modifier = Modifier.align(Alignment.CenterVertically).padding(start = 8.dp),

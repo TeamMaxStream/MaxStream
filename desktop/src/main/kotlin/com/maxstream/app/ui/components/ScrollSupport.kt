@@ -264,7 +264,13 @@ class ScrollStateAdapter(private val state: ScrollState) : ScrollbarAdapter {
 /**
  * Approximate scrollbar adapter for a [LazyGridState]. Lazy grids don't expose
  * a total content height, so this derives it from the visible item sizes and
- * the estimated column count — good enough to drive a thumb indicator.
+ * the estimated column count.
+ *
+ * Dragging maps the thumb position back to a row (+ item offset) and jumps
+ * with [LazyGridState.scrollToItem]. The previous version also counted
+ * `firstVisibleItemScrollOffset` in [scrollOffset] while ignoring it in
+ * [scrollTo], so every drag snapped back to the previous row and the thumb
+ * could not be moved.
  */
 private class GridScrollbarAdapter(private val state: LazyGridState) : ScrollbarAdapter {
 
@@ -302,8 +308,7 @@ private class GridScrollbarAdapter(private val state: LazyGridState) : Scrollbar
     override suspend fun scrollTo(scrollOffset: Double) {
         if (state.layoutInfo.totalItemsCount == 0) return
         val row = (scrollOffset / avgItemHeight).toInt()
-        val index = (row * cols).coerceIn(0, (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
-        state.scrollToItem(index)
+        state.scrollToItem((row * cols).coerceAtLeast(0))
     }
 }
 
@@ -331,8 +336,7 @@ private class ListScrollbarAdapter(private val state: LazyListState) : Scrollbar
 
     override suspend fun scrollTo(scrollOffset: Double) {
         if (state.layoutInfo.totalItemsCount == 0) return
-        val index = (scrollOffset / avgItemHeight).toInt()
-            .coerceIn(0, (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+        val index = (scrollOffset / avgItemHeight).toInt().coerceAtLeast(0)
         state.scrollToItem(index)
     }
 }
