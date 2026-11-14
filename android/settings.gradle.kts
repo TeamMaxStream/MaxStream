@@ -18,12 +18,14 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.3.0"
-    id("com.android.application") version "9.0.1" apply false
-    id("com.android.library") version "9.0.1" apply false
+    // Versions match Flutter 3.50's tested Android toolchain (Gradle 9.5.0,
+    // AGP 9.3.1, KGP 2.4.20). Flutter's minimums are AGP 9.1.1 / KGP 2.4.10;
+    // matching its template avoids both hard failures and support warnings.
+    id("com.android.application") version "9.3.1" apply false
+    id("com.android.library") version "9.3.1" apply false
     // Kotlin Gradle Plugin: required because built-in Kotlin is opted out of
-    // (see gradle.properties). 2.3.20 is past Flutter's 2.2.20 floor and past
-    // the 2.3.20 "support will be dropped" threshold.
-    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
+    // (see gradle.properties).
+    id("org.jetbrains.kotlin.android") version "2.4.20" apply false
 }
 
 include(":app")

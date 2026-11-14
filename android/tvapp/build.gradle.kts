@@ -5,7 +5,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     // The Compose compiler plugin tracks the Kotlin version exactly.
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20"
 }
 
 // Keep Kotlin's bytecode target in sync with compileOptions (Java 21), which
@@ -120,7 +120,7 @@ android {
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "2.3.20"
+        kotlinCompilerExtensionVersion = "2.4.20"
     }
 
     packaging {
