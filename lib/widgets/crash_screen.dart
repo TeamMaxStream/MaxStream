@@ -222,6 +222,19 @@ bool isBenignImageNetworkError(Object error) {
       message.contains('Network is unreachable');
 }
 
+/// True when a WebView was torn down while a JavaScript call was in flight.
+///
+/// The plugin removes its method-call handler with the platform view, so a
+/// late `evaluateJavascript` fails with [MissingPluginException]. The player
+/// or extractor page is already gone and cannot be controlled anymore; this
+/// is a teardown race, not a missing plugin registration or an app bug.
+bool isBenignWebViewTeardownError(Object error) {
+  if (error is! MissingPluginException) return false;
+  final message = error.message ?? '';
+  return message.contains('evaluateJavascript') &&
+      message.contains('flutter_inappwebview');
+}
+
 bool isRenderFlexOverflowError(Object error) {
   final msg = error.toString();
   return msg.contains('RenderFlex overflowed') || msg.contains('overflowed by');
@@ -247,7 +260,8 @@ bool isBenignError(Object error) {
   return isBenignVideoPlayerChannelError(error) ||
       isBenignImageNetworkError(error) ||
       isRenderFlexOverflowError(error) ||
-      isBenignFvpStreamError(error);
+      isBenignFvpStreamError(error) ||
+      isBenignWebViewTeardownError(error);
 }
 
 Future<void> recordCrash(String tag, Object error, StackTrace stack) async {
