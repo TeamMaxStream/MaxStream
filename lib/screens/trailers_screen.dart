@@ -522,7 +522,7 @@ class _TrailerPageState extends State<_TrailerPage> {
 
   void _applyMute() {
     final controller = _controller;
-    if (controller == null) return;
+    if (controller == null || _playFailed) return;
     final ready = controller.value.isReady;
     if (widget.muted) {
       controller.setVolume(0);
@@ -535,12 +535,12 @@ class _TrailerPageState extends State<_TrailerPage> {
 
   void _onValueChanged() {
     final controller = _controller;
-    if (controller == null || !mounted) return;
+    if (controller == null || _playFailed || !mounted) return;
     final value = controller.value;
     // Embedding is disabled for some videos (101/150); surface the fallback
     // instead of leaving a black page.
     if (value.errorCode != 0) {
-      if (!_playFailed) setState(() => _playFailed = true);
+      _failPlayback();
       return;
     }
     if (value.isReady) {
@@ -565,7 +565,9 @@ class _TrailerPageState extends State<_TrailerPage> {
   /// feed counts as the gesture browsers want for sound.
   void _resumeIfParkedSilently() {
     final controller = _controller;
-    if (controller == null || !widget.active || _pausedByUser) return;
+    if (controller == null || _playFailed || !widget.active || _pausedByUser) {
+      return;
+    }
     final value = controller.value;
     if (!value.isReady || widget.muted) return;
     final parked =
@@ -588,7 +590,7 @@ class _TrailerPageState extends State<_TrailerPage> {
 
   void _togglePlayback() {
     final controller = _controller;
-    if (controller == null || !controller.value.isReady) return;
+    if (controller == null || _playFailed || !controller.value.isReady) return;
     if (_isPlaying) {
       _pausedByUser = true;
       try {
@@ -609,18 +611,29 @@ class _TrailerPageState extends State<_TrailerPage> {
   }
 
   void _checkStalled() {
-    if (!mounted || _ready) return;
+    if (!mounted || _ready || _playFailed) return;
     final controller = _controller;
     if (controller == null) return;
     if (controller.value.isReady &&
         controller.value.position == _positionAtCheck &&
         !controller.value.hasPlayed) {
       // The embed never produced a frame (offline, blocked script, etc.).
-      setState(() => _playFailed = true);
+      _failPlayback();
     } else {
       _positionAtCheck = controller.value.position;
       _stallCheck = Timer(const Duration(seconds: 12), _checkStalled);
     }
+  }
+
+  /// Stops sending commands to a dead WebView. Once the embed fails, its
+  /// platform channel is torn down and any later `evaluateJavascript` call
+  /// surfaces as `MissingPluginException(on evaluateJavascript)`. The
+  /// controller itself is disposed when this page goes inactive.
+  void _failPlayback() {
+    if (_playFailed) return;
+    _stallCheck?.cancel();
+    _stallCheck = null;
+    if (mounted) setState(() => _playFailed = true);
   }
 
   void _disposePlayer() {
@@ -631,11 +644,13 @@ class _TrailerPageState extends State<_TrailerPage> {
     _ready = false;
     if (controller != null) {
       controller.removeListener(_onValueChanged);
+      // Disposing the controller only removes Dart-side handlers. Do not call
+      // mute()/pause()/play() here: the embedded WebView may already be
+      // unmounted, and those helpers fire `evaluateJavascript` into a channel
+      // that no longer has an implementation.
       try {
-        controller.mute();
-        controller.pause();
+        controller.dispose();
       } catch (_) {}
-      controller.dispose();
     }
   }
 
@@ -647,7 +662,7 @@ class _TrailerPageState extends State<_TrailerPage> {
   /// same title does not resume mid-way when the user swipes back to it.
   void stop() {
     final controller = _controller;
-    if (controller == null) return;
+    if (controller == null || _playFailed) return;
     if (controller.value.isReady) {
       try {
         controller.mute();
@@ -659,7 +674,7 @@ class _TrailerPageState extends State<_TrailerPage> {
 
   void mute() {
     final controller = _controller;
-    if (controller == null) return;
+    if (controller == null || _playFailed) return;
     if (controller.value.isReady) controller.mute();
     controller.setVolume(0);
   }
@@ -676,7 +691,9 @@ class _TrailerPageState extends State<_TrailerPage> {
   void _endScrub(Duration position) {
     _scrubbing = false;
     final controller = _controller;
-    if (controller == null || !controller.value.isReady) return;
+    if (controller == null || _playFailed || !controller.value.isReady) {
+      return;
+    }
     if (widget.muted) controller.mute();
     controller.seekTo(position);
   }
