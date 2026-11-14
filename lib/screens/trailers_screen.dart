@@ -33,7 +33,12 @@ class TrailersScreen extends StatefulWidget {
 class _TrailersScreenState extends State<TrailersScreen>
     with WidgetsBindingObserver {
   late final PageController _pageController;
-  final GlobalKey<_TrailerPageState> _pageKey = GlobalKey<_TrailerPageState>();
+
+  /// One key per feed item, not one key for "the active page". A shared key
+  /// that moves between pages makes Flutter hand the old player state to the
+  /// next page, which is why the previous trailer kept playing and the old
+  /// backdrop stayed on screen after a swipe.
+  final Map<String, GlobalKey<_TrailerPageState>> _pageKeys = {};
   int _index = 0;
   List<TrailerFeedItem> _items = const [];
   bool _loading = true;
@@ -80,9 +85,24 @@ class _TrailersScreenState extends State<TrailersScreen>
     // swipe so it never starts blaring on return.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      _pageKey.currentState?.mute();
+      _activePage?.mute();
       if (!_muted) setState(() => _muted = true);
     }
+  }
+
+  GlobalKey<_TrailerPageState> _pageKeyFor(TrailerFeedItem item) =>
+      _pageKeys.putIfAbsent(item.key, GlobalKey<_TrailerPageState>.new);
+
+  /// The settled page whose state owns the only live player. Null while the
+  /// current page is still being built.
+  _TrailerPageState? get _activePage {
+    if (_items.isEmpty || _index < 0 || _index >= _items.length) return null;
+    return _pageKeys[_items[_index].key]?.currentState;
+  }
+
+  void _prunePageKeys() {
+    final live = _items.map((item) => item.key).toSet();
+    _pageKeys.removeWhere((key, _) => !live.contains(key));
   }
 
   void _onHistoryChanged() {
@@ -99,6 +119,7 @@ class _TrailersScreenState extends State<TrailersScreen>
       _items = snapshot;
       _loading = false;
       _index = _index.clamp(0, snapshot.length - 1);
+      _prunePageKeys();
     });
   }
 
@@ -118,6 +139,7 @@ class _TrailersScreenState extends State<TrailersScreen>
         } else {
           _index = _index.clamp(0, items.length - 1);
         }
+        _prunePageKeys();
       });
       if (items.isNotEmpty) _precacheAround(_index);
       _ensureDurations();
@@ -173,7 +195,7 @@ class _TrailersScreenState extends State<TrailersScreen>
   /// old page is silent before the next one arrives; [_onPageChanged] then
   /// builds the next player.
   bool _onScroll(ScrollStartNotification notification) {
-    _pageKey.currentState?.stop();
+    _activePage?.stop();
     return false;
   }
 
@@ -183,7 +205,7 @@ class _TrailersScreenState extends State<TrailersScreen>
   }
 
   void _toggleMute() {
-    final page = _pageKey.currentState;
+    final page = _activePage;
     if (_muted) {
       page?.unmute();
     } else {
@@ -193,7 +215,7 @@ class _TrailersScreenState extends State<TrailersScreen>
   }
 
   Future<void> _openDetails(TrailerFeedItem item) async {
-    _pageKey.currentState?.mute();
+    _activePage?.mute();
     final payload = <String, dynamic>{
       'id': item.tmdbId,
       'media_type': item.mediaType,
@@ -261,13 +283,13 @@ class _TrailersScreenState extends State<TrailersScreen>
               final item = _items[i];
               final active = i == _index;
               return _TrailerPage(
-                // The settled page owns one stable key; others are keyed by item
-                // so a refresh re-order never reuses the previous video.
-                key: active ? _pageKey : ValueKey(item.key),
+                // Every item keeps its own key. A page that scrolls away is
+                // disposed, and swiping back rebuilds that same item's state
+                // instead of inheriting the previous page's player.
+                key: _pageKeyFor(item),
                 item: item,
                 active: active,
                 muted: _muted,
-                onStop: () => _pageKey.currentState?.stop(),
                 onOpenDetails: () => _openDetails(item),
               );
             },
@@ -373,7 +395,32 @@ class _GlassButton extends StatelessWidget {
   }
 }
 
-/// A single feed page: backdrop first, muted autoplaying trailer on top.
+/// Round, high-contrast play/pause control for the active trailer.
+class _PlayPauseButton extends StatelessWidget {
+  const _PlayPauseButton({required this.playing, required this.onPressed});
+
+  final bool playing;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: playing ? 'Pause trailer' : 'Play trailer',
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        minimumSize: const Size(48, 48),
+        shape: const CircleBorder(),
+      ),
+      icon: Icon(
+        playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        size: 27,
+      ),
+    );
+  }
+}
+
 /// A single feed page: a full-bleed trailer over the title art.
 ///
 /// The inline player is only grown past its intrinsic 16:9 box once the WebView
@@ -385,14 +432,12 @@ class _TrailerPage extends StatefulWidget {
     required this.item,
     required this.active,
     required this.muted,
-    required this.onStop,
     required this.onOpenDetails,
   });
 
   final TrailerFeedItem item;
   final bool active;
   final bool muted;
-  final VoidCallback onStop;
   final VoidCallback onOpenDetails;
 
   @override
@@ -403,6 +448,10 @@ class _TrailerPageState extends State<_TrailerPage> {
   YoutubePlayerController? _controller;
   bool _playFailed = false;
   bool _ready = false;
+
+  /// A manual pause must survive the autoplay recovery in
+  /// [_resumeIfParkedSilently], otherwise the video starts again by itself.
+  bool _pausedByUser = false;
 
   /// Watchdog for embeds that load but never stream a frame (offline, blocked
   /// script), which otherwise leave a silent black page.
@@ -421,13 +470,25 @@ class _TrailerPageState extends State<_TrailerPage> {
   @override
   void didUpdateWidget(covariant _TrailerPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+
     // Becoming inactive (the user swiped): drop the WebView entirely.
-    if (!widget.active && _controller != null) {
-      _disposePlayer();
-    } else if (widget.active && _controller == null && !_playFailed) {
-      _startPlayer();
+    if (!widget.active) {
+      if (_controller != null) _disposePlayer();
+      return;
     }
-    if (widget.active && widget.muted != oldWidget.muted) {
+
+    final becameActive = !oldWidget.active;
+    final trailerChanged = widget.item.trailerKey != oldWidget.item.trailerKey;
+    if (becameActive || trailerChanged) _playFailed = false;
+
+    if (trailerChanged || becameActive) {
+      // This page owns its own video now. Never keep the previous page's
+      // controller just because both widgets say `active == true`.
+      _disposePlayer();
+      _startPlayer();
+    } else if (_controller == null && !_playFailed) {
+      _startPlayer();
+    } else if (widget.muted != oldWidget.muted) {
       _applyMute();
     }
   }
@@ -440,6 +501,7 @@ class _TrailerPageState extends State<_TrailerPage> {
 
   void _startPlayer() {
     _ready = false;
+    _pausedByUser = false;
     _positionAtCheck = Duration.zero;
     _lastPosition = Duration.zero;
     _controller = YoutubePlayerController(
@@ -503,7 +565,7 @@ class _TrailerPageState extends State<_TrailerPage> {
   /// feed counts as the gesture browsers want for sound.
   void _resumeIfParkedSilently() {
     final controller = _controller;
-    if (controller == null || !widget.active) return;
+    if (controller == null || !widget.active || _pausedByUser) return;
     final value = controller.value;
     if (!value.isReady || widget.muted) return;
     final parked =
@@ -514,6 +576,36 @@ class _TrailerPageState extends State<_TrailerPage> {
       _applyMute();
       controller.play();
     }
+  }
+
+  bool get _isPlaying {
+    final value = _controller?.value;
+    if (value == null) return false;
+    return value.isPlaying ||
+        value.playerState == PlayerState.playing ||
+        value.playerState == PlayerState.buffering;
+  }
+
+  void _togglePlayback() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isReady) return;
+    if (_isPlaying) {
+      _pausedByUser = true;
+      try {
+        controller.pause();
+      } catch (_) {}
+    } else {
+      _pausedByUser = false;
+      // Keep the top-bar mute choice in force when playback resumes.
+      _applyMute();
+      try {
+        if (controller.value.playerState == PlayerState.ended) {
+          controller.seekTo(Duration.zero);
+        }
+        controller.play();
+      } catch (_) {}
+    }
+    setState(() {});
   }
 
   void _checkStalled() {
@@ -603,13 +695,16 @@ class _TrailerPageState extends State<_TrailerPage> {
   Widget build(BuildContext context) {
     final item = widget.item;
     final controller = _controller;
-    final playing = controller != null && _ready && !_playFailed;
+    final playerVisible = controller != null && _ready && !_playFailed;
+    final isPlaying = _isPlaying;
     return Stack(
       fit: StackFit.expand,
       children: [
         AppNetworkImage(url: item.backdropUrl, fit: BoxFit.cover),
         if (controller != null && !_playFailed)
-          Positioned.fill(child: _buildPlayer(controller, visible: playing)),
+          Positioned.fill(
+            child: _buildPlayer(controller, visible: playerVisible),
+          ),
         if (_playFailed)
           _PlaybackFallback(
             onOpenYouTube: _openOnYouTube,
@@ -686,7 +781,7 @@ class _TrailerPageState extends State<_TrailerPage> {
                       ),
                     ),
                   ],
-                  if (controller != null && _ready && !_playFailed) ...[
+                  if (playerVisible) ...[
                     const SizedBox(height: 16),
                     _ScrubBar(
                       controller: controller,
@@ -701,6 +796,13 @@ class _TrailerPageState extends State<_TrailerPage> {
                   const SizedBox(height: 16),
                   Row(
                     children: [
+                      if (controller != null && !_playFailed) ...[
+                        _PlayPauseButton(
+                          playing: isPlaying,
+                          onPressed: _togglePlayback,
+                        ),
+                        const SizedBox(width: 10),
+                      ],
                       Expanded(
                         child: FilledButton.icon(
                           onPressed: widget.onOpenDetails,
