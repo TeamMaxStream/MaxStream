@@ -397,8 +397,7 @@ jobs:
             maxstream-x86_64.apk \
             maxstream-tv.apk \
             MaxStream-Dex.exe \
-            MaxStream-Desktop.msi \
-            SHA256SUMS; do
+            MaxStream-Desktop.msi; do
             if [ ! -s "release-assets/$f" ]; then
               echo "::error::Release is missing $f"
               missing=1
@@ -428,8 +427,66 @@ jobs:
             | xargs sha256sum > SHA256SUMS
           cat SHA256SUMS
 
+          missing=0
+          for f in \
+            maxstream-arm64-v8a.apk \
+            maxstream-armeabi-v7a.apk \
+            maxstream-x86_64.apk \
+            maxstream-tv.apk \
+            MaxStream-Dex.exe \
+            MaxStream-Desktop.msi; do
+            if ! grep -Fq "  $f" SHA256SUMS; then
+              echo "::error::SHA256SUMS is missing $f"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # Release notes come from CHANGELOG.md, not from an unrelated commit
+      # list. The version heading may include the Flutter build number
+      # (`## 1.9.0+11`), so match the semantic version before the `+`.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 - "$VERSION" <<'PY'
+          import re
+          import sys
+
+          version = sys.argv[1]
+          with open('CHANGELOG.md', encoding='utf-8') as changelog:
+              lines = changelog.read().splitlines()
+
+          heading = re.compile(
+              r'^##\s+\[?v?([0-9]+\.[0-9]+\.[0-9]+)(?:\+[0-9]+)?\]?\s*$'
+          )
+          start = None
+          for index, line in enumerate(lines):
+              match = heading.match(line)
+              if match and match.group(1) == version:
+                  start = index + 1
+                  break
+          if start is None:
+              sys.exit(f'CHANGELOG.md has no section for {version}')
+
+          end = len(lines)
+          for index in range(start, len(lines)):
+              if re.match(r'^##\s+', lines[index]):
+                  end = index
+                  break
+
+          body = '\n'.join(lines[start:end]).strip()
+          if not body:
+              sys.exit(f'CHANGELOG.md section for {version} is empty')
+
+          with open('release-notes.md', 'w', encoding='utf-8') as notes:
+              notes.write(body + '\n')
+          PY
+          cat release-notes.md
+
       - name: Create/update GitHub release
         uses: softprops/action-gh-release@v3
         with:
           files: release-assets/*
+          body_path: release-notes.md
           generate_release_notes: true
