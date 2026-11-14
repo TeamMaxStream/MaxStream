@@ -100,7 +100,9 @@ class TmdbClient {
             else -> "movie"
         }
         val id = o.optString("id")
-        val genreMap = genreCache.getValue(type)
+        // Genre metadata is best-effort: a failed genre prefetch must not make
+        // otherwise valid movie/TV search results unparseable.
+        val genreMap = genreCache[type].orEmpty()
         val genreIds = when {
             o.has("genres") -> o.optJSONArray("genres").let { arr -> ids(arr) }
             o.has("genre_ids") -> o.optJSONArray("genre_ids").let { arr -> ids(arr) }

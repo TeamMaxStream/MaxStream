@@ -112,16 +112,27 @@ object TmdbRepository : MediaRepository {
             .visibleForActiveProfile()
     }.getOrElse { SampleCatalog.series(section, page).visibleForActiveProfile() }
 
-    override suspend fun search(query: String, page: Int): List<MediaItem> =
-        if (query.isBlank()) emptyList()
-        else runCatching {
-            client.genres("movie")
-            client.genres("tv")
-            client.array("/search/multi", "query" to query, "page" to page.toString())
-                .filter { it.optString("media_type") == "movie" || it.optString("media_type") == "tv" }
-                .map(client::parseMedia)
-                .visibleForActiveProfile()
-        }.getOrElse { SampleCatalog.search(query, page).visibleForActiveProfile() }
+    override suspend fun search(query: String, page: Int): List<MediaItem> {
+        if (query.isBlank()) return emptyList()
+        // Genre names are optional metadata. Prefetch them best-effort so a
+        // transient failure on either /genre endpoint can never turn a valid
+        // search into an empty fallback result set. The search request itself
+        // is allowed to fail so the UI can offer a retry instead of silently
+        // pretending there were no matches.
+        runCatching { client.genres("movie") }
+        runCatching { client.genres("tv") }
+        return client.array(
+            "/search/multi",
+            "query" to query,
+            "page" to page.toString(),
+        )
+            .filter {
+                it.optString("media_type") == "movie" ||
+                    it.optString("media_type") == "tv"
+            }
+            .map(client::parseMedia)
+            .visibleForActiveProfile()
+    }
 
     override suspend fun details(id: String, mediaType: String?): MediaDetails? {
         val type = mediaType ?: resolveType(id)

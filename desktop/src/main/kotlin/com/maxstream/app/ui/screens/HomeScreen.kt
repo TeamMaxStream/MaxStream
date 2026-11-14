@@ -1,14 +1,17 @@
 package com.maxstream.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -16,9 +19,13 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -114,8 +122,10 @@ fun HomeScreen(
     var searchResults by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     // Debounced, cancellation-guarded search: LaunchedEffect restarts on every
     // keystroke (delay is interrupted), so only the final query hits the
-    // repository; loading flags are keyed to the owning query so a cancelled
-    // pass can't clobber the active one's state.
+    // repository. A new query clears the old results immediately: leaving them
+    // on screen under the new query made the search area look stale or empty.
+    // Loading flags are keyed to the owning query so a cancelled pass can't
+    // clobber the active one's state.
     LaunchedEffect(query, searchAttempt) {
         if (query.isBlank()) {
             searchActiveQuery = ""
@@ -126,21 +136,25 @@ fun HomeScreen(
             searchLoading = false
             return@LaunchedEffect
         }
-        delay(300)
-        searchLoading = true
         searchActiveQuery = query
         searchPage = 1
+        searchHasMore = false
         searchError = false
         searchResults = emptyList()
+        searchLoading = true
+        delay(300)
         try {
             val results = repository.search(query, 1)
+            if (searchActiveQuery != query) return@LaunchedEffect
             searchResults = results
             searchHasMore = results.isNotEmpty()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (t: Throwable) {
-            searchError = true
-            searchHasMore = false
+            if (searchActiveQuery == query) {
+                searchError = true
+                searchHasMore = false
+            }
         } finally {
             if (searchActiveQuery == query) searchLoading = false
         }
@@ -172,17 +186,14 @@ fun HomeScreen(
         } else null
 
     if (query.isNotBlank()) {
+        val movies = searchResults.filter { it.mediaType == "movie" }
+        val series = searchResults.filter { it.mediaType == "tv" }
         Column(Modifier.fillMaxSize().padding(AppSpacing.gutter)) {
-            Text(
-                when {
-                    searchError -> "Search failed"
-                    searchLoading && searchResults.isEmpty() -> "Searching \u201C$query\u201D\u2026"
-                    searchResults.isEmpty() -> "No results for \u201C$query\u201D"
-                    else -> "Results for \u201C$query\u201D (${searchResults.size})"
-                },
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(bottom = 12.dp),
+            SearchResultsHeader(
+                query = query,
+                count = searchResults.size,
+                loading = searchLoading,
+                error = searchError,
             )
             when {
                 searchError -> ErrorState(
@@ -190,12 +201,21 @@ fun HomeScreen(
                     message = "The catalog request failed. Check your connection and try again.",
                     onRetry = { searchAttempt++ },
                 )
-                searchResults.isEmpty() && !searchLoading -> EmptyState(
+                searchLoading && searchResults.isEmpty() -> SearchLoadingState(query)
+                searchResults.isEmpty() -> EmptyState(
                     title = "No matches",
                     message = "Try a different title, genre, or year.",
                     icon = Icons.Default.Search,
                 )
-                else -> MediaBrowserGrid(searchResults, onOpen = onOpen, onLoadMore = searchLoadMore, loading = searchLoading)
+                else -> GroupedSearchGrid(
+                    movies = movies,
+                    series = series,
+                    resetKey = searchActiveQuery,
+                    onOpen = onOpen,
+                    onLoadMore = searchLoadMore,
+                    loading = searchLoading,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
         return
@@ -293,6 +313,199 @@ fun HomeScreen(
             )
         }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun SearchResultsHeader(
+    query: String,
+    count: Int,
+    loading: Boolean,
+    error: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+    ) {
+        Text(
+            when {
+                error -> "Search failed"
+                loading && count == 0 -> "Searching for \u201C$query\u201D\u2026"
+                count == 0 -> "No results for \u201C$query\u201D"
+                else -> "Results for \u201C$query\u201D"
+            },
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        if (count > 0) {
+            Box(
+                Modifier
+                    .background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        RoundedCornerShape(50),
+                    )
+                    .padding(horizontal = 9.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    "$count",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchLoadingState(query: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Searching for \u201C$query\u201D\u2026",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchGroupHeader(title: String, count: Int, icon: ImageVector) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(18.dp)
+                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)),
+        )
+        Spacer(Modifier.width(8.dp))
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(17.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier
+                .background(
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                    RoundedCornerShape(50),
+                )
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+        ) {
+            Text(
+                "$count",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/**
+ * Search results grouped into Movies and TV Shows like the phone/TV search
+ * screens. A single LazyVerticalGrid keeps paging and scrolling correct while
+ * full-width section headers separate the two result groups.
+ */
+@Composable
+private fun GroupedSearchGrid(
+    movies: List<MediaItem>,
+    series: List<MediaItem>,
+    resetKey: String,
+    onOpen: (MediaItem) -> Unit,
+    onLoadMore: (() -> Unit)?,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val uniqueMovies = remember(movies) { movies.distinctBy { it.id } }
+    val uniqueSeries = remember(series) { series.distinctBy { it.id } }
+    val gridState = rememberLazyGridState()
+
+    // A new query must start at the top. Reusing the previous scroll offset
+    // could leave the viewport past the end of a shorter result set.
+    LaunchedEffect(resetKey) {
+        gridState.scrollToItem(0)
+    }
+
+    if (onLoadMore != null) {
+        val latestOnLoadMore by rememberUpdatedState(onLoadMore)
+        LaunchedEffect(
+            gridState,
+            uniqueMovies.size,
+            uniqueSeries.size,
+            loading,
+            resetKey,
+        ) {
+            if (loading) return@LaunchedEffect
+            snapshotFlow {
+                val layout = gridState.layoutInfo
+                val last = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+                last to layout.totalItemsCount
+            }.collect { (last, total) ->
+                if (!loading && total > 0 && last >= total - 6) latestOnLoadMore()
+            }
+        }
+    }
+
+    ScrollableGrid(state = gridState, modifier = modifier) {
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Adaptive(148.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            if (uniqueMovies.isNotEmpty()) {
+                item(
+                    key = "search-movies-header",
+                    span = { GridItemSpan(maxLineSpan) },
+                ) {
+                    SearchGroupHeader("Movies", uniqueMovies.size, Icons.Default.Movie)
+                }
+                items(uniqueMovies, key = { "movie:${it.id}" }) { item ->
+                    PosterCard(item, width = 148.dp, onClick = { onOpen(item) })
+                }
+            }
+            if (uniqueSeries.isNotEmpty()) {
+                item(
+                    key = "search-series-header",
+                    span = { GridItemSpan(maxLineSpan) },
+                ) {
+                    SearchGroupHeader("TV Shows", uniqueSeries.size, Icons.Default.LiveTv)
+                }
+                items(uniqueSeries, key = { "tv:${it.id}" }) { item ->
+                    PosterCard(item, width = 148.dp, onClick = { onOpen(item) })
+                }
+            }
+            if (loading) {
+                item(key = "search-loading", span = { GridItemSpan(maxLineSpan) }) {
+                    Box(
+                        Modifier.fillMaxWidth().padding(18.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    }
+                }
+            }
+        }
     }
 }
 

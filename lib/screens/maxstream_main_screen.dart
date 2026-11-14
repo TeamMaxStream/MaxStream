@@ -208,10 +208,14 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
   }
 
   void _showUpdateDialog(UpdateInfo info) {
+    // Keep the host screen's context alive past the dialog. The old code used
+    // the dialog builder's context after popping it, so the download finished
+    // with an unmounted context and never closed its progress dialog.
+    final hostContext = context;
     showDialog(
-      context: context,
+      context: hostContext,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: Text('Update to v${info.version}'),
         content: SizedBox(
           width: double.maxFinite,
@@ -245,14 +249,14 @@ class _MaxStreamMainScreenState extends State<MaxStreamMainScreen>
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Later'),
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.of(context).pop();
+              Navigator.of(dialogContext).pop();
               UpdateService.downloadAndInstallUpdate(
-                context,
+                hostContext,
                 info.downloadUrl,
                 checksumUrl: info.checksumUrl,
               );

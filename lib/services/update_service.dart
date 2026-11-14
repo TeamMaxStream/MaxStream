@@ -89,6 +89,14 @@ class _DownloadProgressDialogState extends State<DownloadProgressDialog> {
   }
 
   @override
+  void dispose() {
+    if (identical(UpdateService._progressDialogState, this)) {
+      UpdateService._progressDialogState = null;
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDone = _progress >= 0.999;
     return AlertDialog(
@@ -414,6 +422,20 @@ class UpdateService {
   }) async {
     String? filePath;
     bool progressShown = false;
+    // Keyed so the dialog can be closed even if the context that launched the
+    // download is unmounted by the time the transfer finishes. That exact case
+    // left the in-app update prompt stuck at 100%: the progress route outlived
+    // the update dialog's context.
+    final progressKey = GlobalKey();
+    void closeProgressDialog() {
+      if (!progressShown) return;
+      final dialogContext = progressKey.currentContext;
+      if (dialogContext != null && dialogContext.mounted) {
+        Navigator.of(dialogContext, rootNavigator: true).pop();
+      }
+      progressShown = false;
+    }
+
     try {
       final directory = await getTemporaryDirectory();
       filePath = '${directory.path}/MaxStream.apk';
@@ -423,7 +445,8 @@ class UpdateService {
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (_) => const DownloadProgressDialog(),
+          useRootNavigator: true,
+          builder: (_) => DownloadProgressDialog(key: progressKey),
         );
       }
 
@@ -450,10 +473,7 @@ class UpdateService {
 
       await _verifyDownload(downloadedFile, downloadUrl, checksumUrl);
 
-      if (context.mounted && progressShown) {
-        Navigator.of(context).pop();
-        progressShown = false;
-      }
+      closeProgressDialog();
 
       if (context.mounted) {
         final packageInfo = await PackageInfo.fromPlatform();
@@ -497,9 +517,7 @@ class UpdateService {
           if (await partial.exists()) await partial.delete();
         } catch (_) {}
       }
-      if (context.mounted && progressShown) {
-        Navigator.of(context).pop();
-      }
+      closeProgressDialog();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
