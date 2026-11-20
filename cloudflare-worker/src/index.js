@@ -1,6 +1,8 @@
 /// Cloudflare Worker: MaxStream Stream Extractor
-/// Extracts .m3u8 URLs server-side via HTTP requests and regex parsing.
+/// Extracts stream URLs server-side via HTTP requests and regex parsing.
 /// No iframes, no popups, no ads.
+
+import { secretbox } from "./secretbox.js";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -8,6 +10,10 @@ const USER_AGENT =
 const TOKEN_TTL_SECONDS = 6 * 60 * 60;
 const MAX_REDIRECTS = 5;
 const MAX_PLAYLIST_BYTES = 2 * 1024 * 1024;
+
+const VIDLINK_BASE = "https://vidlink.pro";
+const VIDLINK_API_KEY = "c75136c5668bbfe65a7ecad431a745db68b5f381555b38d8f6c699449cf11fcd";
+const NETMIRROR_BASE = "https://net79.cc";
 
 export default {
   async fetch(request, env) {
@@ -35,15 +41,7 @@ export default {
     // Served raw by GitHub Pages, so the website's /status page fetches it
     // cross-origin from the browser: CORS must be on this response too.
     if (url.pathname === "/health") {
-      return new Response(
-        JSON.stringify({
-          status: "ok",
-          service: "maxstream-extractor",
-          proxyConfigured: Boolean(env.PROXY_SECRET),
-          timestamp: new Date().toISOString(),
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return this.handleHealth(url, corsHeaders, env);
     }
 
     if (url.pathname === "/api/extract") {
@@ -67,11 +65,14 @@ export default {
     if (!env.PROXY_SECRET) {
       return this.jsonError("Media proxy is not configured", 503, corsHeaders);
     }
-    const tmdbId = url.searchParams.get("tmdb_id");
-    const isMovie = url.searchParams.get("is_movie") === "true";
-    const season = parseInt(url.searchParams.get("season") || "1");
-    const episode = parseInt(url.searchParams.get("episode") || "1");
-    const server = url.searchParams.get("server"); // Optional: "vixsrc", "vidlink", "2embed"
+    const tmdbId = url.searchParams.get("tmdb_id") || url.searchParams.get("tmdb");
+    const typeParam = (url.searchParams.get("type") || "").toLowerCase();
+    const isMovie = typeParam
+      ? typeParam === "movie"
+      : url.searchParams.get("is_movie") === "true";
+    const season = parseInt(url.searchParams.get("season") || "1", 10) || 1;
+    const episode = parseInt(url.searchParams.get("episode") || "1", 10) || 1;
+    const server = (url.searchParams.get("server") || "").toLowerCase();
 
     if (!tmdbId) {
       return new Response(JSON.stringify({ error: "tmdb_id required" }), {
@@ -80,17 +81,23 @@ export default {
       });
     }
 
-    console.log(`Extract: TMDB ${tmdbId} movie=${isMovie} s${season}e${episode} server=${server || 'all'}`);
+    console.log(`Extract: TMDB ${tmdbId} movie=${isMovie} s${season}e${episode} server=${server || "all"}`);
 
-    // If specific server requested, only try that one
+    const extractors = {
+      netmirror: () => this.extractNetMirror(tmdbId, isMovie, season, episode),
+      vixsrc: () => this.extractVixSrc(tmdbId, isMovie, season, episode),
+      vidlink: () => this.extractVidLink(tmdbId, isMovie, season, episode),
+      "2embed": () => this.extract2Embed(tmdbId, isMovie, season, episode),
+      goodstream: () => this.extractGoodstream(tmdbId, isMovie, season, episode),
+    };
+
+    // If a specific server was requested, only try that one.
     if (server) {
+      if (!extractors[server]) {
+        return this.jsonError(`Unknown server: ${server}`, 400, corsHeaders);
+      }
       try {
-        let result;
-        if (server === "vixsrc") result = await this.extractVixSrc(tmdbId, isMovie, season, episode);
-        else if (server === "vidlink") result = await this.extractVidLink(tmdbId, isMovie, season, episode);
-        else if (server === "2embed") result = await this.extract2Embed(tmdbId, isMovie, season, episode);
-        else if (server === "goodstream") result = await this.extractGoodstream(tmdbId, isMovie, season, episode);
-
+        const result = await extractors[server]();
         if (result) {
           console.log(`${server} success: ${result.url}`);
           const publicResult = await this.createPublicResult(result, env, workerOrigin);
@@ -101,67 +108,26 @@ export default {
       } catch (e) {
         console.log(`${server} failed: ${e.message}`);
       }
-
       return new Response(JSON.stringify({ error: `${server} failed` }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Try all servers in order
-    try {
-      const result = await this.extractVixSrc(tmdbId, isMovie, season, episode);
-      if (result) {
-        console.log(`VixSrc success: ${result.url}`);
-        const publicResult = await this.createPublicResult(result, env, workerOrigin);
-        return new Response(JSON.stringify(publicResult), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    // Try all servers in order.
+    for (const id of ["netmirror", "vixsrc", "vidlink", "goodstream", "2embed"]) {
+      try {
+        const result = await extractors[id]();
+        if (result) {
+          console.log(`${id} success: ${result.url}`);
+          const publicResult = await this.createPublicResult(result, env, workerOrigin);
+          return new Response(JSON.stringify(publicResult), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      } catch (e) {
+        console.log(`${id} failed: ${e.message}`);
       }
-    } catch (e) {
-      console.log(`VixSrc failed: ${e.message}`);
-    }
-
-    // Try VidLink (fetch page, look for /api/b/ pattern)
-    try {
-      const result = await this.extractVidLink(tmdbId, isMovie, season, episode);
-      if (result) {
-        console.log(`VidLink success: ${result.url}`);
-        const publicResult = await this.createPublicResult(result, env, workerOrigin);
-        return new Response(JSON.stringify(publicResult), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    } catch (e) {
-      console.log(`VidLink failed: ${e.message}`);
-    }
-
-    // Try 2Embed
-    try {
-      const result = await this.extract2Embed(tmdbId, isMovie, season, episode);
-      if (result) {
-        console.log(`2Embed success: ${result.url}`);
-        const publicResult = await this.createPublicResult(result, env, workerOrigin);
-        return new Response(JSON.stringify(publicResult), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    } catch (e) {
-      console.log(`2Embed failed: ${e.message}`);
-    }
-
-    // Try Goodstream
-    try {
-      const result = await this.extractGoodstream(tmdbId, isMovie, season, episode);
-      if (result) {
-        console.log(`Goodstream success: ${result.url}`);
-        const publicResult = await this.createPublicResult(result, env, workerOrigin);
-        return new Response(JSON.stringify(publicResult), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    } catch (e) {
-      console.log(`Goodstream failed: ${e.message}`);
     }
 
     return new Response(JSON.stringify({ error: "No stream found" }), {
@@ -172,21 +138,41 @@ export default {
 
   async createPublicResult(result, env, workerOrigin) {
     if (!env.PROXY_SECRET) throw new Error("PROXY_SECRET is not configured");
-    if (result.type !== "hls") throw new Error("Only HLS streams are supported on web");
     this.validateUpstreamUrl(result.url);
     const profile = this.profileForResult(result);
-    const url = await this.createMediaUrl(
-      workerOrigin,
-      result.url,
-      "playlist",
-      profile,
-      env.PROXY_SECRET
-    );
-    return { url, source: result.source, type: "hls" };
+    const type = result.type === "hls" ? "hls" : result.type === "dash" ? "dash" : "direct";
+    // HLS manifests get rewritten; direct MP4/DASH is streamed through the same
+    // signed proxy with Range passthrough (NetMirror and VidLink both serve MP4).
+    const kind = type === "hls" ? "playlist" : "segment";
+    const url = await this.createMediaUrl(workerOrigin, result.url, kind, profile, env.PROXY_SECRET);
+    const payload = { url, source: result.source, type };
+
+    if (Array.isArray(result.qualities) && result.qualities.length > 0) {
+      const qualityKind = type === "hls" ? "playlist" : "segment";
+      payload.qualities = await Promise.all(
+        result.qualities.map(async (quality) => ({
+          label: quality.label,
+          height: quality.height,
+          codec: quality.codec,
+          url: await this.createMediaUrl(
+            workerOrigin,
+            quality.url,
+            qualityKind,
+            profile,
+            env.PROXY_SECRET
+          ),
+        }))
+      );
+    }
+    if (Array.isArray(result.subtitles) && result.subtitles.length > 0) {
+      payload.subtitles = result.subtitles;
+    }
+    return payload;
   },
 
   profileForResult(result) {
     const source = result.source || "";
+    if (source === "NetMirror") return "netmirror";
     if (source === "VixSrc") return "vixsrc";
     if (source === "VidLink") return "vidlink";
     if (source === "2Embed") return "2embed";
@@ -194,14 +180,19 @@ export default {
     throw new Error("Unsupported provider profile");
   },
 
-  profileHeaders(profile) {
+  profileHeaders(profile, url) {
     const headers = { "User-Agent": USER_AGENT };
     if (profile === "vixsrc") {
       headers.Referer = "https://vixsrc.to/";
       headers.Origin = "https://vixsrc.to";
     } else if (profile === "vidlink") {
-      headers.Referer = "https://vidlink.pro/";
-      headers.Origin = "https://vidlink.pro";
+      // The hakunaymatata CDN rejects provider Referer/Origin headers.
+      if (!(url && url.includes("hakunaymatata.com"))) {
+        headers.Referer = "https://vidlink.pro/";
+        headers.Origin = "https://vidlink.pro";
+      }
+    } else if (profile === "netmirror") {
+      headers.Referer = `${NETMIRROR_BASE}/`;
     } else if (profile === "2embed") {
       headers.Referer = "https://www.2embed.cc/";
       headers.Origin = "https://www.2embed.cc";
@@ -225,7 +216,7 @@ export default {
         env.PROXY_SECRET
       );
       this.validateUpstreamUrl(payload.url);
-      const headers = this.profileHeaders(payload.profile);
+      const headers = this.profileHeaders(payload.profile, payload.url);
       const range = request.headers.get("Range");
       const ifRange = request.headers.get("If-Range");
       if (range) headers.Range = range;
@@ -523,93 +514,207 @@ export default {
     };
   },
 
+  // === NetMirror Extractor ===
+  // NetMirror (net79.cc) fronts a MovieBox CDN. /api/variants-tmdb gives the
+  // language variants, /api/download-info gives the MP4 renditions and captions.
+  async extractNetMirror(tmdbId, isMovie, season, episode) {
+    const type = isMovie ? "movie" : "tv";
+    const se = isMovie ? 0 : season;
+    const ep = isMovie ? 0 : episode;
+    const headers = { "User-Agent": USER_AGENT, Referer: `${NETMIRROR_BASE}/` };
+
+    const variantsUrl =
+      `${NETMIRROR_BASE}/api/variants-tmdb/${type}/${encodeURIComponent(tmdbId)}` +
+      `?se=${se}&ep=${ep}`;
+    const variants = await this.getJSONWithRetry(variantsUrl, headers);
+    if (!variants || !variants.ok) {
+      throw new Error(`NetMirror has no title for tmdb ${tmdbId}`);
+    }
+
+    const candidates = this.netMirrorCandidates(variants);
+    if (candidates.length === 0) throw new Error("NetMirror returned no variants");
+
+    let primary = null;
+    for (const candidate of candidates) {
+      const infoUrl =
+        `${NETMIRROR_BASE}/api/download-info?subjectId=` +
+        `${encodeURIComponent(candidate.subjectId)}&se=${se}&ep=${ep}`;
+      try {
+        const info = await this.getJSONWithRetry(infoUrl, headers);
+        if (info && info.ok && Array.isArray(info.qualities) && info.qualities.length > 0) {
+          primary = info;
+          break;
+        }
+      } catch (e) {
+        console.log(`NetMirror variant ${candidate.language || candidate.subjectId} failed: ${e.message}`);
+      }
+    }
+    if (!primary) throw new Error(`NetMirror has no copy of this ${isMovie ? "movie" : "episode"}`);
+
+    const qualities = (primary.qualities || [])
+      .map((entry) => {
+        const url = this.absolutize(entry && (entry.url || entry.raw), NETMIRROR_BASE);
+        if (!url) return null;
+        return {
+          label: entry.res ? `${entry.res}p` : "Auto",
+          url,
+          height: Number(entry.res) || 0,
+          codec: entry.codec || "h264",
+          size: Number(entry.size) || 0,
+        };
+      })
+      .filter(Boolean);
+    if (qualities.length === 0) throw new Error("NetMirror returned no playable qualities");
+
+    const chosen = this.pickDefaultQuality(qualities) || qualities[0];
+    const subtitles = (primary.captions || [])
+      .map((entry) => {
+        const url = this.absolutize(entry && entry.url, NETMIRROR_BASE);
+        if (!url) return null;
+        return {
+          language: entry.lang || entry.name || "Subtitle",
+          url,
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      url: chosen.url,
+      source: "NetMirror",
+      type: this.mediaKind(chosen.url),
+      referer: `${NETMIRROR_BASE}/`,
+      qualities,
+      subtitles,
+    };
+  },
+
+  netMirrorCandidates(variants) {
+    const seen = new Set();
+    const candidates = [];
+    const add = (subjectId, language) => {
+      const value = String(subjectId || "").trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      candidates.push({ subjectId: value, language: String(language || "").trim() });
+    };
+
+    const list = Array.isArray(variants.variants) ? variants.variants : [];
+    const defaultLanguage =
+      list.find((entry) => String(entry && entry.dubSubjectId) === String(variants.defaultSubjectId))
+        ?.language || "Default";
+    add(variants.defaultSubjectId, defaultLanguage);
+    for (const variant of list) add(variant && variant.dubSubjectId, variant && variant.language);
+    return candidates.slice(0, 8);
+  },
+
   // === VidLink Extractor ===
-  // VidLink is a React app - we need to find the /api/b/ endpoint
+  // VidLink signs its /api/b/ path with XSalsa20-Poly1305: the token is
+  // nonce(24) || secretbox(mediaId || be64(expiresAt)). The API answers
+  // `null` under load, so retry before giving up.
   async extractVidLink(tmdbId, isMovie, season, episode) {
+    const mediaId = String(tmdbId);
+    const token = this.vidLinkToken(mediaId);
+    const apiUrl = isMovie
+      ? `${VIDLINK_BASE}/api/b/movie/${token}?multiLang=1`
+      : `${VIDLINK_BASE}/api/b/tv/${token}/${season}/${episode}?multiLang=1`;
+
+    console.log(`VidLink API: ${apiUrl}`);
+
+    const headers = {
+      "User-Agent": USER_AGENT,
+      Referer: `${VIDLINK_BASE}/`,
+      Origin: VIDLINK_BASE,
+      "X-Playback-Environment": "standard",
+    };
+
+    let data = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) await this.sleep(1200 * attempt);
+      try {
+        const response = await fetch(apiUrl, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = (await response.text()).trim();
+        if (!text || text === "null") throw new Error("empty response");
+        const parsed = JSON.parse(text);
+        if (!parsed || !parsed.stream) throw new Error("no stream");
+        const stream = parsed.stream;
+        if (Object.keys(stream.qualities || {}).length === 0 && !stream.playlist) {
+          throw new Error("empty qualities");
+        }
+        data = parsed;
+        break;
+      } catch (error) {
+        lastError = error;
+        data = null;
+      }
+    }
+    if (!data) throw new Error(`VidLink API failed (${lastError ? lastError.message : "empty response"})`);
+
+    const stream = data.stream;
+    const qualities = [];
+    for (const [label, entry] of Object.entries(stream.qualities || {})) {
+      const url = this.absolutize(entry && entry.url, VIDLINK_BASE);
+      if (!url) continue;
+      qualities.push({
+        label: /p$/i.test(label) ? label : `${label}p`,
+        url,
+        height: parseInt(label, 10) || 0,
+        codec:
+          (entry && entry.codecName === "hevc") || this.looksLikeHevc(url) ? "hevc" : "h264",
+      });
+    }
+    if (qualities.length === 0 && stream.playlist) {
+      const url = this.absolutize(stream.playlist, VIDLINK_BASE);
+      if (url) qualities.push({ label: "Auto", url, height: 0, codec: "h264" });
+    }
+    if (qualities.length === 0) throw new Error("VidLink returned no playable qualities");
+
+    const chosen = this.pickDefaultQuality(qualities) || qualities[0];
     const pageUrl = isMovie
-      ? `https://vidlink.pro/movie/${tmdbId}`
-      : `https://vidlink.pro/tv/${tmdbId}/${season}/${episode}`;
+      ? `${VIDLINK_BASE}/movie/${mediaId}`
+      : `${VIDLINK_BASE}/tv/${mediaId}/${season}/${episode}`;
+    const subtitles = (stream.captions || [])
+      .map((entry) => {
+        const raw = String((entry && (entry.url || entry.id)) || "").trim();
+        if (!raw) return null;
+        const url = raw.startsWith("http") ? raw : this.absolutize(raw, pageUrl);
+        if (!url) return null;
+        return { language: entry.language || entry.label || "Subtitle", url };
+      })
+      .filter(Boolean);
 
-    console.log(`VidLink page: ${pageUrl}`);
+    return {
+      url: chosen.url,
+      source: "VidLink",
+      type: this.mediaKind(chosen.url),
+      referer: `${VIDLINK_BASE}/`,
+      qualities,
+      subtitles,
+    };
+  },
 
-    const resp = await fetch(pageUrl, {
-      headers: {
-        "User-Agent": USER_AGENT,
-        "Referer": "https://vidlink.pro",
-      },
-      redirect: "follow",
-    });
-
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-    const html = await resp.text();
-
-    // Look for /api/b/ URLs in the HTML
-    const apiMatch = html.match(/["'](\/api\/b\/[^"']+)["']/);
-    if (apiMatch) {
-      const apiUrl = `https://vidlink.pro${apiMatch[1]}`;
-      console.log(`VidLink API: ${apiUrl}`);
-
-      const apiResp = await fetch(apiUrl, {
-        headers: {
-          "User-Agent": USER_AGENT,
-          "Referer": pageUrl,
-        },
-      });
-
-      if (apiResp.ok) {
-        const data = await apiResp.json();
-        const playlist = data?.stream?.playlist;
-        if (playlist) {
-          return {
-            url: playlist.startsWith("http") ? playlist : `https://vidlink.pro${playlist}`,
-            source: "VidLink",
-            type: "hls",
-            referer: "https://vidlink.pro",
-          };
-        }
-      }
+  vidLinkToken(mediaId) {
+    const expiresAt = Math.floor(Date.now() / 1000) + 480;
+    const idBytes = new TextEncoder().encode(mediaId);
+    const message = new Uint8Array(idBytes.length + 8);
+    message.set(idBytes, 0);
+    let remaining = expiresAt;
+    for (let index = 7; index >= 0; index--) {
+      message[idBytes.length + index] = remaining & 0xff;
+      remaining = Math.floor(remaining / 256);
     }
 
-    // Look for m3u8 URLs directly in the HTML
-    const m3u8Urls = this.extractUrls(html, /\.m3u8/);
-    if (m3u8Urls.length > 0) {
-      return {
-        url: m3u8Urls[0],
-        source: "VidLink",
-        type: "hls",
-        referer: "https://vidlink.pro",
-      };
-    }
-
-    // Look for iframes that might contain the player
-    const iframeMatch = html.match(/iframe[^>]+src=["']([^"']+)["']/i);
-    if (iframeMatch) {
-      const iframeUrl = new URL(iframeMatch[1], pageUrl).href;
-      console.log(`VidLink iframe: ${iframeUrl}`);
-
-      const iframeResp = await fetch(iframeUrl, {
-        headers: {
-          "User-Agent": USER_AGENT,
-          "Referer": pageUrl,
-        },
-      });
-
-      if (iframeResp.ok) {
-        const iframeHtml = await iframeResp.text();
-        const iframeM3u8 = this.extractUrls(iframeHtml, /\.m3u8/);
-        if (iframeM3u8.length > 0) {
-          return {
-            url: iframeM3u8[0],
-            source: "VidLink",
-            type: "hls",
-            referer: "https://vidlink.pro",
-          };
-        }
-      }
-    }
-
-    return null;
+    const key = this.fromHex(VIDLINK_API_KEY);
+    const nonce = new Uint8Array(24);
+    const sealed = secretbox(message, key, nonce);
+    const token = new Uint8Array(nonce.length + sealed.length);
+    token.set(nonce, 0);
+    token.set(sealed, nonce.length);
+    return this.base64UrlEncode(token);
   },
 
   // === 2Embed Extractor ===
@@ -803,7 +908,186 @@ export default {
     return null;
   },
 
+  // === Health Check ===
+  // The website's /status page expects { servers, extractors, summary }.
+  // Probes are cached for 5 minutes so refreshing the page does not hammer
+  // the upstream providers.
+  async handleHealth(url, corsHeaders, env) {
+    const CACHE_TTL = 300;
+    const cache = caches.default;
+    const cacheKey = new Request(`${url.origin}/health`, { method: "GET" });
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      return new Response(await cached.text(), {
+        headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "HIT" },
+      });
+    }
+
+    // Mirrors the servers the apps expose.
+    const servers = [
+      { name: "NetMirror", domain: "net79.cc" },
+      { name: "VixSrc", domain: "vixsrc.to" },
+      { name: "VidLink", domain: "vidlink.pro" },
+      { name: "Videasy", domain: "player.videasy.to" },
+    ];
+
+    // Extractors implemented by the apps / this worker.
+    const extractors = [
+      { name: "NetMirror", domain: "net79.cc", kind: "api" },
+      { name: "VixSrc", domain: "vixsrc.to", kind: "api" },
+      { name: "VidLink", domain: "vidlink.pro", kind: "api" },
+      { name: "Videasy", domain: "player.videasy.to", kind: "api" },
+      { name: "2Embed", domain: "www.2embed.cc", kind: "native" },
+      { name: "Goodstream", domain: "goodstream.one", kind: "native" },
+    ];
+
+    const checkProvider = async (provider, type) => {
+      const startedAt = Date.now();
+      try {
+        const response = await fetch(`https://${provider.domain}`, {
+          method: "HEAD",
+          headers: { "User-Agent": USER_AGENT },
+          redirect: "follow",
+          signal: AbortSignal.timeout(8000),
+        });
+        return {
+          name: provider.name,
+          domain: provider.domain,
+          type,
+          kind: provider.kind || null,
+          healthy: response.status > 0 && response.status < 500,
+          status: response.status,
+          responseMs: Date.now() - startedAt,
+        };
+      } catch (error) {
+        return {
+          name: provider.name,
+          domain: provider.domain,
+          type,
+          kind: provider.kind || null,
+          healthy: false,
+          status: 0,
+          responseMs: Date.now() - startedAt,
+          error: error.name === "TimeoutError" ? "Timeout" : String(error.message || "Failed").slice(0, 60),
+        };
+      }
+    };
+
+    const [serverResults, extractorResults] = await Promise.all([
+      Promise.all(servers.map((provider) => checkProvider(provider, "server"))),
+      Promise.all(extractors.map((provider) => checkProvider(provider, "extractor"))),
+    ]);
+
+    const payload = {
+      status: "ok",
+      service: "maxstream-extractor",
+      proxyConfigured: Boolean(env.PROXY_SECRET),
+      timestamp: new Date().toISOString(),
+      servers: serverResults,
+      extractors: extractorResults,
+      summary: {
+        servers: {
+          total: serverResults.length,
+          healthy: serverResults.filter((result) => result.healthy).length,
+          unhealthy: serverResults.filter((result) => !result.healthy).length,
+        },
+        extractors: {
+          total: extractorResults.length,
+          healthy: extractorResults.filter((result) => result.healthy).length,
+          unhealthy: extractorResults.filter((result) => !result.healthy).length,
+        },
+      },
+    };
+
+    try {
+      await cache.put(
+        cacheKey,
+        new Response(JSON.stringify(payload), {
+          headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${CACHE_TTL}` },
+        })
+      );
+    } catch (_) {
+      // Caching is best-effort.
+    }
+
+    return new Response(JSON.stringify(payload), {
+      headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "MISS" },
+    });
+  },
+
   // === Utility Functions ===
+
+  async getJSONWithRetry(url, headers, attempts = 3) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const response = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+        try {
+          return JSON.parse(text);
+        } catch (_) {
+          throw new Error("Invalid JSON");
+        }
+      } catch (error) {
+        lastError = error;
+        if (attempt < attempts) await this.sleep(300 * attempt);
+      }
+    }
+    throw lastError || new Error("Request failed");
+  },
+
+  sleep(milliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  },
+
+  fromHex(hex) {
+    if (hex.length % 2 !== 0) throw new Error("Invalid hex string");
+    const out = new Uint8Array(hex.length / 2);
+    for (let index = 0; index < out.length; index++) {
+      out[index] = parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+    }
+    return out;
+  },
+
+  absolutize(value, base) {
+    if (!value || typeof value !== "string") return "";
+    if (value.startsWith("http")) return value;
+    if (value.startsWith("//")) return `https:${value}`;
+    try {
+      return new URL(value, base).href;
+    } catch (_) {
+      return "";
+    }
+  },
+
+  mediaKind(value) {
+    const url = String(value || "").toLowerCase();
+    if (url.includes(".m3u8")) return "hls";
+    if (url.includes(".mpd")) return "dash";
+    return "direct";
+  },
+
+  looksLikeHevc(value) {
+    const url = String(value || "").toLowerCase();
+    return [
+      "/h265/", "/h.265/", "/hevc/",
+      "_h265_", "_hevc_", "-h265-", "-hevc-",
+    ].some((pattern) => url.includes(pattern));
+  },
+
+  // Default pick: highest H.264 rendition; HEVC only when it is all that exists.
+  pickDefaultQuality(qualities) {
+    const list = qualities || [];
+    if (list.length === 0) return null;
+    const h264 = list.filter((entry) => entry.codec !== "hevc" && entry.height > 0);
+    const pool = h264.length > 0 ? h264 : list.filter((entry) => entry.codec !== "hevc");
+    const candidates = pool.length > 0 ? pool : list;
+    return candidates.reduce((best, entry) => (entry.height > best.height ? entry : best));
+  },
 
   extractUrls(html, pattern) {
     const urls = new Set();
