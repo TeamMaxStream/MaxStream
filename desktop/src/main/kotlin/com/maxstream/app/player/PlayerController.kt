@@ -96,6 +96,11 @@ class PlayerController(
                 !flagLocked(ctx, "eof-reached")
         }
 
+    fun eofReached(): Boolean = synchronized(lock) {
+        val ctx = handle ?: return false
+        flagLocked(ctx, "eof-reached")
+    }
+
     fun time(): Long = synchronized(lock) {
         val ctx = handle ?: return 0L
         (doubleLocked(ctx, "time-pos") ?: 0.0)

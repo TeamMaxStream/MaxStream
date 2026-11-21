@@ -2,6 +2,7 @@ package com.maxstream.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -13,10 +14,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
+import com.maxstream.app.core.AppConfig
+import com.maxstream.app.data.model.Episode
+import com.maxstream.app.data.model.Season
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
@@ -133,6 +146,8 @@ fun PlayerScreen(
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val offline = request.localPath != null
+    val isMovie = request.mediaType == "movie"
+    val isSeries = request.mediaType == "tv"
 
     var streams by remember { mutableStateOf<List<ResolvedStream>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -140,6 +155,29 @@ fun PlayerScreen(
     var selectedIndex by remember { mutableIntStateOf(-1) }
     var failedServers by remember { mutableStateOf<List<FailedServer>>(emptyList()) }
     var resolvingAll by remember { mutableStateOf(false) }
+    var currentSeason by remember { mutableIntStateOf(request.season) }
+    var currentEpisode by remember { mutableIntStateOf(request.episode) }
+    var activeSeason by remember { mutableIntStateOf(request.season) }
+    var activeEpisode by remember { mutableIntStateOf(request.episode) }
+
+    // Series seasons/episodes browser state (mirrors TV player's Episodes panel).
+    var seasons by remember { mutableStateOf<List<com.maxstream.app.data.model.Season>>(emptyList()) }
+    var menuSeason by remember { mutableIntStateOf(request.season) }
+    var menuEpisodesCache by remember { mutableStateOf<Map<Int, List<com.maxstream.app.data.model.Episode>>>(emptyMap()) }
+    var episodePanelOpen by remember { mutableStateOf(false) }
+    var episodeMenuLoading by remember { mutableStateOf(false) }
+    var seasonEpisodes by remember { mutableStateOf<List<com.maxstream.app.data.model.Episode>>(emptyList()) }
+    var autoAdvancing by remember { mutableStateOf(false) }
+    var endedHandled by remember { mutableStateOf(false) }
+
+    // Next-episode preview (mobile-style bottom-right).
+    var showNextPreview by remember { mutableStateOf(false) }
+    var nextPreviewSeason by remember { mutableIntStateOf(0) }
+    var nextPreviewEpisode by remember { mutableIntStateOf(0) }
+    var nextPreviewName by remember { mutableStateOf("") }
+    var nextPreviewStill by remember { mutableStateOf<String?>(null) }
+    var nextPreviewCountdown by remember { mutableIntStateOf(0) }
+
     var selectedAudioLabel by remember { mutableStateOf<String?>(null) }
     // Per-server subtitle overrides (server name → subtitle). A server the user
     // explicitly configured in this session keeps that choice when re-opened.
@@ -185,8 +223,8 @@ fun PlayerScreen(
         revealControls()
     }
 
-    val resume = remember(request.itemId, request.season, request.episode) {
-        WatchStateStore.resumeFor(request.itemId, request.season, request.episode)
+    val resume = remember(request.itemId, currentSeason, currentEpisode) {
+        WatchStateStore.resumeFor(request.itemId, currentSeason, currentEpisode)
     }
     var resumeApplied by remember { mutableStateOf(false) }
     var resumeShownUntil by remember { mutableLongStateOf(0L) }
@@ -421,7 +459,53 @@ fun PlayerScreen(
         revealControls()
     }
 
-    LaunchedEffect(request.itemId, request.season, request.episode, request.mediaType, request.localPath, errorAttempt) {
+    fun playEpisode(season: Int, episode: Int) {
+        if (isMovie) return
+        currentSeason = season
+        currentEpisode = episode
+        menuSeason = season
+        episodePanelOpen = false
+    }
+
+    suspend fun playNextEpisode() {
+        if (isMovie || autoAdvancing) return
+        autoAdvancing = true
+        try {
+            val numbers = seasonEpisodes.map { it.number }.filter { it > 0 }
+            val maxInSeason = numbers.maxOrNull()
+            val nextSeason: Int
+            val nextEpisode: Int
+            if (maxInSeason != null && currentEpisode >= maxInSeason) {
+                nextSeason = currentSeason + 1
+                nextEpisode = 1
+            } else {
+                nextSeason = currentSeason
+                nextEpisode = currentEpisode + 1
+            }
+            val nextSeasonEpisodes: List<com.maxstream.app.data.model.Episode> =
+                if (nextSeason == currentSeason) {
+                    seasonEpisodes
+                } else {
+                    val cached = menuEpisodesCache[nextSeason]
+                    if (cached != null) cached else {
+                        val fetched = runCatching { repository.episodes(request.itemId, nextSeason) }.getOrDefault(emptyList())
+                        if (fetched.isNotEmpty()) {
+                            menuEpisodesCache = menuEpisodesCache + (nextSeason to fetched)
+                        }
+                        fetched
+                    }
+                }
+            val next = nextSeasonEpisodes.firstOrNull { it.number == nextEpisode }
+            if (next == null) return
+            if (!next.isReleased()) return
+            currentSeason = nextSeason
+            currentEpisode = nextEpisode
+        } finally {
+            autoAdvancing = false
+        }
+    }
+
+    LaunchedEffect(request.itemId, currentSeason, currentEpisode, request.mediaType, request.localPath, errorAttempt) {
         loading = true
         error = null
         controlsVisible = true
@@ -432,6 +516,8 @@ fun PlayerScreen(
         selectedIndex = -1
         selectedAudioLabel = null
         resolvingAll = true
+        activeSeason = currentSeason
+        activeEpisode = currentEpisode
         // Focus now (not just after the first stream lands) so Space/F work
         // while the "Finding streams…" overlay is up.
         runCatching { focusRequester.requestFocus() }
@@ -490,8 +576,8 @@ fun PlayerScreen(
 
         val id = request.itemId
         val isMovie = request.mediaType == "movie"
-        val season = request.season
-        val episode = request.episode
+        val season = currentSeason
+        val episode = currentEpisode
         val title = request.title
 
         coroutineScope {
@@ -548,6 +634,64 @@ fun PlayerScreen(
         }
     }
 
+    // Fetch series seasons for the episodes browser + autoplay.
+    LaunchedEffect(request.itemId) {
+        if (isMovie) return@LaunchedEffect
+        val details = runCatching { repository.details(request.itemId, "tv") }.getOrNull()
+        seasons = details?.seasons ?: emptyList()
+        if (seasons.isNotEmpty() && currentSeason !in seasons.map { it.seasonNumber }) {
+            // keep currentSeason as is if possible
+        }
+        menuSeason = currentSeason
+    }
+
+    LaunchedEffect(currentSeason) {
+        if (isMovie) return@LaunchedEffect
+        if (!menuEpisodesCache.containsKey(currentSeason)) {
+            val eps = runCatching { repository.episodes(request.itemId, currentSeason) }.getOrDefault(emptyList())
+            menuEpisodesCache = menuEpisodesCache + (currentSeason to eps)
+        }
+        seasonEpisodes = menuEpisodesCache[currentSeason] ?: emptyList()
+    }
+
+    // Resolve the next episode for the bottom-right preview (mobile-style).
+    LaunchedEffect(currentSeason, currentEpisode, seasonEpisodes) {
+        if (isMovie) {
+            showNextPreview = false
+            nextPreviewSeason = 0
+            return@LaunchedEffect
+        }
+        val numbers = seasonEpisodes.map { it.number }.filter { it > 0 }
+        val maxInSeason = numbers.maxOrNull()
+        val (ns, ne) = if (maxInSeason != null && currentEpisode >= maxInSeason) {
+            (currentSeason + 1) to 1
+        } else {
+            currentSeason to (currentEpisode + 1)
+        }
+        val eps = if (ns == currentSeason) {
+            seasonEpisodes
+        } else {
+            val cached = menuEpisodesCache[ns]
+            if (cached != null) cached else {
+                val fetched = runCatching { repository.episodes(request.itemId, ns) }.getOrDefault(emptyList())
+                if (fetched.isNotEmpty()) {
+                    menuEpisodesCache = menuEpisodesCache + (ns to fetched)
+                }
+                fetched
+            }
+        }
+        val next = eps.firstOrNull { it.number == ne }
+        if (next == null || !next.isReleased()) {
+            showNextPreview = false
+            nextPreviewSeason = 0
+            return@LaunchedEffect
+        }
+        nextPreviewSeason = ns
+        nextPreviewEpisode = ne
+        nextPreviewName = next.title
+        nextPreviewStill = com.maxstream.app.core.AppConfig.imageUrl("w500", next.stillPath)
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             if (positionMs <= 0L) positionMs = controller.time()
@@ -557,6 +701,24 @@ fun PlayerScreen(
                 val p = controller.time()
                 if (p > 0L) positionMs = p
                 if (lengthMs > 0L) sliderFrac = (positionMs.toFloat() / lengthMs).coerceIn(0f, 1f)
+            }
+            // Next-episode preview (mobile-style) + autoplay on finish for series.
+            if (!isMovie && lengthMs > 0L) {
+                val remaining = (lengthMs - positionMs).coerceAtLeast(0L)
+                val countdown = (remaining / 1000L).toInt().coerceIn(0, 30)
+                val shouldShow = remaining <= 30_000L && nextPreviewSeason != 0
+                if (shouldShow != showNextPreview || (shouldShow && countdown != nextPreviewCountdown)) {
+                    showNextPreview = shouldShow
+                    nextPreviewCountdown = countdown
+                }
+                val ended = controller.eofReached()
+                if (ended && !autoAdvancing && !endedHandled && nextPreviewSeason != 0) {
+                    endedHandled = true
+                    scope.launch { playNextEpisode() }
+                }
+                if (!ended) endedHandled = false
+            } else if (showNextPreview) {
+                showNextPreview = false
             }
             // Switch-position restore first; otherwise apply the saved
             // checkpoint on a genuinely fresh start.
@@ -579,7 +741,7 @@ fun PlayerScreen(
                 val len = lengthMs
                 launch(Dispatchers.IO) {
                     runCatching {
-                        repository.saveProgress(itemFrom(request), request.season, request.episode, pos, len)
+                        repository.saveProgress(itemFrom(request), activeSeason, activeEpisode, pos, len)
                     }.onFailure { e -> println("PlayerScreen: progress save failed: $e") }
                 }
             }
@@ -610,7 +772,7 @@ fun PlayerScreen(
                 // cancelled when onDispose runs, so the final save never landed.
                 teardownScope.launch {
                     runCatching {
-                        repository.saveProgress(itemFrom(request), request.season, request.episode, positionMs, lengthMs)
+                        repository.saveProgress(itemFrom(request), activeSeason, activeEpisode, positionMs, lengthMs)
                     }.onFailure { e -> println("PlayerScreen: final progress save failed: $e") }
                 }
             }
@@ -738,10 +900,30 @@ fun PlayerScreen(
                             )
                             if (request.mediaType == "tv") {
                                 Text(
-                                    "Season ${request.season} • Episode ${request.episode}",
+                                    "Season $currentSeason • Episode $currentEpisode",
                                     color = Color.White.copy(alpha = 0.8f),
                                     fontSize = 13.sp,
                                 )
+                            }
+                        }
+                        if (isSeries) {
+                            IconButton(
+                                onClick = {
+                                    episodePanelOpen = !episodePanelOpen
+                                    menuSeason = currentSeason
+                                    if (!menuEpisodesCache.containsKey(menuSeason)) {
+                                        scope.launch {
+                                            episodeMenuLoading = true
+                                            val eps = runCatching { repository.episodes(request.itemId, menuSeason) }.getOrDefault(emptyList())
+                                            menuEpisodesCache = menuEpisodesCache + (menuSeason to eps)
+                                            episodeMenuLoading = false
+                                        }
+                                    }
+                                    revealControls()
+                                },
+                                modifier = Modifier.appFocusRing(ringColor = Color.White),
+                            ) {
+                                Icon(Icons.Default.Tv, contentDescription = "Episodes", tint = Color.White)
                             }
                         }
                         IconButton(
@@ -1128,8 +1310,249 @@ fun PlayerScreen(
                 }
             }
         }
+        // Next-episode preview (bottom-right, mobile-style).
+        if (showNextPreview && nextPreviewSeason != 0) {
+            Surface(
+                color = Color(0xFF202124),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(20.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .width(340.dp)
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(110.dp)
+                            .height(66.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.Black),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val url = nextPreviewStill
+                        if (url != null) {
+                            AsyncImage(
+                                model = url,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Icon(Icons.Default.Tv, null, tint = Color.White.copy(alpha = 0.6f))
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Next episode in $nextPreviewCountdown seconds",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "S${nextPreviewSeason}E${nextPreviewEpisode} · $nextPreviewName",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Row {
+                            TextButton(onClick = { scope.launch { playNextEpisode() } }) {
+                                Text("Play now", color = Color.White)
+                            }
+                            TextButton(onClick = { showNextPreview = false }) {
+                                Text("Cancel", color = Color.White.copy(alpha = 0.7f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Episodes panel (TV-style seasons + episodes).
+        if (episodePanelOpen && isSeries) {
+            Surface(
+                color = Color(0xF2181818),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 76.dp, end = 16.dp)
+                    .width(420.dp),
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            request.title,
+                            color = Color(0xFFE50914),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("Episodes", color = Color(0xFFE50914), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x40FFFFFF)))
+                    if (seasons.isNotEmpty()) {
+                        val seasonListState = rememberLazyListState()
+                        LaunchedEffect(menuSeason) {
+                            val idx = seasons.indexOfFirst { it.seasonNumber == menuSeason }
+                            if (idx >= 0) seasonListState.animateScrollToItem(idx)
+                        }
+                        LazyRow(
+                            state = seasonListState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(seasons.size) { sIdx ->
+                                val season = seasons[sIdx]
+                                val active = season.seasonNumber == menuSeason
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            if (active) Color(0xFFE50914) else Color.Transparent,
+                                            RoundedCornerShape(20.dp),
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (active) Color.Transparent else Color(0x40FFFFFF),
+                                            RoundedCornerShape(20.dp),
+                                        )
+                                        .clickable {
+                                            menuSeason = season.seasonNumber
+                                            if (!menuEpisodesCache.containsKey(menuSeason)) {
+                                                scope.launch {
+                                                    episodeMenuLoading = true
+                                                    val eps = runCatching { repository.episodes(request.itemId, menuSeason) }.getOrDefault(emptyList())
+                                                    menuEpisodesCache = menuEpisodesCache + (menuSeason to eps)
+                                                    episodeMenuLoading = false
+                                                }
+                                            }
+                                        }
+                                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                                ) {
+                                    Text(
+                                        if (season.name.isNotEmpty() && season.name.length <= 14) season.name else "Season ${season.seasonNumber}",
+                                        color = if (active) Color.White else Color(0xB3FFFFFF),
+                                        fontSize = 16.sp,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                    )
+                                }
+                            }
+                        }
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x40FFFFFF)))
+                    }
+                    val episodes = menuEpisodesCache[menuSeason] ?: emptyList()
+                    when {
+                        episodeMenuLoading && episodes.isEmpty() -> {
+                            Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = Color(0xFFE50914))
+                            }
+                        }
+                        episodes.isEmpty() -> {
+                            Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                                Text("No episodes found", color = Color(0xB3FFFFFF), fontSize = 16.sp)
+                            }
+                        }
+                        else -> {
+                            val listState = rememberLazyListState()
+                            LaunchedEffect(menuSeason) { /* reset */ }
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 420.dp)
+                                    .padding(vertical = 6.dp),
+                            ) {
+                                items(episodes.size) { index ->
+                                    val ep = episodes[index]
+                                    val released = ep.isReleased()
+                                    val isPlaying = menuSeason == currentSeason && ep.number == currentEpisode
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                            .background(
+                                                if (isPlaying) Color(0x33E50914) else Color.Transparent,
+                                                RoundedCornerShape(8.dp),
+                                            )
+                                            .border(
+                                                1.dp,
+                                                if (isPlaying) Color(0xFFE50914) else Color(0x40FFFFFF),
+                                                RoundedCornerShape(8.dp),
+                                            )
+                                            .clickable(enabled = released) {
+                                                playEpisode(menuSeason, ep.number)
+                                            }
+                                            .padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(148.dp)
+                                                .height(80.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFF2A2A2A)),
+                                        ) {
+                                            val url = AppConfig.imageUrl("w500", ep.stillPath)
+                                            if (url != null) {
+                                                AsyncImage(
+                                                    model = url,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop,
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.width(14.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                "S$menuSeason  E${ep.number}",
+                                                color = if (isPlaying) Color(0xFFE50914) else Color(0xB3FFFFFF),
+                                                fontSize = 15.sp,
+                                                fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Normal,
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                ep.title,
+                                                color = if (released) Color.White else Color(0x61FFFFFF),
+                                                fontSize = 16.sp,
+                                                maxLines = 1,
+                                            )
+                                            if (!released && !ep.airDate.isNullOrBlank()) {
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(
+                                                    "To be released on ${formatReleaseDate(ep.airDate!!)}",
+                                                    color = Color(0xFFF5B81B),
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                )
+                                            }
+                                        }
+                                        if (isPlaying) {
+                                            Text("▶", color = Color.White, fontSize = 20.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
+
 
 @Composable
 private fun PlayerMenu(
@@ -1215,4 +1638,33 @@ private suspend fun downloadSubtitle(url: String): String? = withContext(Dispatc
         Files.write(tmp, resp.body())
         tmp.toString()
     }.onFailure { e -> println("PlayerScreen: subtitle download failed: $e") }.getOrNull()
+}
+
+private fun com.maxstream.app.data.model.Episode.isReleased(): Boolean {
+    val airDate = airDate ?: return true
+    if (airDate.isBlank()) return true
+    val p = airDate.trim().removeSuffix("T00:00:00").split("-")
+    if (p.size < 3) return true
+    val y = p[0].toIntOrNull() ?: return true
+    val m = p[1].toIntOrNull() ?: return true
+    val d = p[2].substring(0, minOf(2, p[2].length)).toIntOrNull() ?: return true
+    val now = java.util.Calendar.getInstance()
+    val by = now.get(java.util.Calendar.YEAR)
+    val bm = now.get(java.util.Calendar.MONTH) + 1
+    val bd = now.get(java.util.Calendar.DAY_OF_MONTH)
+    if (y != by) return y < by
+    if (m != bm) return m < bm
+    return d <= bd
+}
+
+private fun formatReleaseDate(airDate: String): String {
+    if (airDate.isBlank()) return airDate
+    val p = airDate.trim().removeSuffix("T00:00:00").split("-")
+    if (p.size < 3) return airDate.trim()
+    val y = p[0].trim()
+    val m = p[1].toIntOrNull()
+    val d = p[2].substring(0, minOf(2, p[2].length)).toIntOrNull()
+    if (y.isBlank() || m == null || d == null || m !in 1..12) return airDate.trim()
+    val months = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    return "${months[m - 1]} $d, $y"
 }
