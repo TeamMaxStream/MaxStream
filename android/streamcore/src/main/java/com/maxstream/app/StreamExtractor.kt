@@ -332,6 +332,7 @@ class StreamExtractor(private val context: Context) {
             VidrockServerProvider(),
             PrimeSrcServerProvider(),
             VidukiServerProvider(),
+            VidSparkServerProvider(),
         )
     }
 
@@ -340,6 +341,7 @@ class StreamExtractor(private val context: Context) {
             NetMirrorExtractor(),
             VidLinkExtractor(),
             VidukiExtractor(),
+            VidSparkExtractor(),
             Mov2DayExtractor(),
             VixSrcExtractor(),
             VidsrcNetExtractor(),
@@ -1344,6 +1346,33 @@ class StreamExtractor(private val context: Context) {
         }
     }
 
+
+    private inner class VidSparkServerProvider : ServerProvider {
+        override val name = "VidSpark"
+
+        override suspend fun getServers(request: MediaRequest): List<StreamServer> {
+            val id = request.tmdbId
+            return listOf(
+                StreamServer(
+                    "VidSpark",
+                    if (request.isMovie) {
+                        "https://vidspark.to/movie/$id"
+                    } else {
+                        "https://vidspark.to/tv/$id/${request.season}/${request.episode}"
+                    },
+                ),
+                StreamServer(
+                    "VideasyXYZ",
+                    if (request.isMovie) {
+                        "https://videasy.xyz/embed/movie/$id"
+                    } else {
+                        "https://videasy.xyz/embed/tv/$id/${request.season}/${request.episode}"
+                    },
+                ),
+            )
+        }
+    }
+
     private inner class MoflixExtractor : HostExtractor {
         override val name = "Moflix"
         private val origin = "https://moflix-stream.xyz"
@@ -1955,6 +1984,136 @@ class StreamExtractor(private val context: Context) {
                                     (() => {
                                       if (window.__vidukiHook) return;
                                       window.__vidukiHook = true;
+                                      const send = u => window.NativeBridge.onStreamFound(u);
+                                      const isPlayable = s => typeof s === 'string' && /\.(m3u8|mp4)([?#]|$)/i.test(s);
+
+                                      const originalFetch = window.fetch.bind(window);
+                                      window.fetch = async (...args) => {
+                                        const response = await originalFetch(...args);
+                                        try {
+                                          const u = response.url || '';
+                                          if (isPlayable(u)) send(u);
+                                          response.clone().text().then(text => {
+                                            try {
+                                              const json = JSON.parse(text);
+                                              const src = json.url || json.src || json.file || json.playlist || (json.stream && json.stream.playlist);
+                                              if (isPlayable(src)) send(src);
+                                            } catch (e) {}
+                                          }).catch(() => {});
+                                        } catch (e) {}
+                                        return response;
+                                      };
+                                      const origOpen = XMLHttpRequest.prototype.open;
+                                      XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+                                        this.addEventListener('load', function() {
+                                          try {
+                                            if (isPlayable(url)) send(url);
+                                            const resp = this.responseText;
+                                            const json = JSON.parse(resp);
+                                            const src = json.url || json.src || json.file || json.playlist || (json.stream && json.stream.playlist);
+                                            if (isPlayable(src)) send(src);
+                                          } catch (e) {}
+                                        });
+                                        return origOpen.apply(this, [method, url, ...rest]);
+                                      };
+                                      setInterval(() => {
+                                        try {
+                                          const v = document.querySelector('video');
+                                          if (v) {
+                                            const src = v.currentSrc || v.src || '';
+                                            if (isPlayable(src) && !src.startsWith('blob:')) send(src);
+                                          }
+                                          const iframes = document.querySelectorAll('iframe');
+                                          iframes.forEach(f => {
+                                            try {
+                                              const s = f.contentDocument && f.contentDocument.querySelector('video');
+                                              if (s) {
+                                                const src = s.currentSrc || s.src || '';
+                                                if (isPlayable(src) && !src.startsWith('blob:')) send(src);
+                                              }
+                                            } catch (e) {}
+                                          });
+                                        } catch (e) {}
+                                      }, 1500);
+                                    })();
+                                """.trimIndent()
+                                view.evaluateJavascript(script, null)
+                            }
+                        }
+
+                        webView.loadUrl(server.url)
+                        continuation.invokeOnCancellation {
+                            teardownWebView(webView)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private inner class VidSparkExtractor : HostExtractor {
+        override val name = "VidSpark"
+        override val usesWebView = true
+        override fun supports(server: StreamServer) = host(server.url).endsWith("vidspark.to") || host(server.url).endsWith("videasy.xyz") || host(server.url).endsWith("videasy.to")
+
+        override suspend fun extract(server: StreamServer): ExtractionResult {
+            return withContext(Dispatchers.Main) {
+                withTimeout(30_000) {
+                    suspendCancellableCoroutine { continuation ->
+                        val webView = WebView(context)
+                        webView.settings.javaScriptEnabled = true
+                        webView.settings.loadsImagesAutomatically = false
+                        webView.settings.blockNetworkImage = true
+                        webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                        webView.settings.domStorageEnabled = true
+                        webView.settings.mediaPlaybackRequiresUserGesture = false
+
+                        fun finish(result: Result<StreamResult>) {
+                            if (!continuation.isActive) return
+                            result.fold(
+                                onSuccess = { continuation.resume(ExtractionResult.Final(it)) },
+                                onFailure = { continuation.resumeWithException(it) },
+                            )
+                            teardownWebView(webView)
+                        }
+
+                        webView.addJavascriptInterface(object {
+                            @JavascriptInterface
+                            fun onStreamFound(url: String) {
+                                if (url.isNotBlank() && continuation.isActive) {
+                                    val headers = refererHeaders("https://vidspark.to/")
+                                    finish(Result.success(StreamResult(url, name, mediaType(url), headers, method = "WebView")))
+                                }
+                            }
+                        }, "NativeBridge")
+
+                        webView.webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                                val reqUrl = request.url.toString()
+                                if ((reqUrl.contains(".m3u8") || reqUrl.contains(".mp4")) &&
+                                    !reqUrl.contains("google") && !reqUrl.contains("cloudflare")
+                                ) {
+                                    if (continuation.isActive) {
+                                        val headers = refererHeaders("https://vidspark.to/")
+                                        finish(Result.success(StreamResult(reqUrl, name, mediaType(reqUrl), headers)))
+                                    }
+                                }
+                                val blocked = listOf("googletagmanager", "google-analytics", "clarity", "adscore", "cloudflareinsights")
+                                if (blocked.any { reqUrl.contains(it, true) }) {
+                                    return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
+                            override fun onPageFinished(view: WebView, url: String) {
+
+                                // Extraction pages autoplay their player with sound; keep them silent.
+
+                                runCatching { view.evaluateJavascript(MUTE_ALL_MEDIA_JS, null) }
+                                val script = """
+                                    (() => {
+                                      if (window.__vidsparkHook) return;
+                                      window.__vidsparkHook = true;
                                       const send = u => window.NativeBridge.onStreamFound(u);
                                       const isPlayable = s => typeof s === 'string' && /\.(m3u8|mp4)([?#]|$)/i.test(s);
 
