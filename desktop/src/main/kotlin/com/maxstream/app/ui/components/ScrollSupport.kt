@@ -313,8 +313,27 @@ private class GridScrollbarAdapter(private val state: LazyGridState) : Scrollbar
     }
 }
 
+/** Approximate scrollbar adapter for a horizontal [LazyListState] (season tabs). */
+class RowScrollbarAdapter(private val state: LazyListState) : ScrollbarAdapter {
+
+    private val avgItemWidth: Double
+        get() = state.layoutInfo.visibleItemsInfo.firstOrNull()?.size?.toDouble() ?: 1.0
+
+    override val viewportSize: Double get() = state.layoutInfo.viewportSize.height.toDouble()
+
+    override val contentSize: Double get() = state.layoutInfo.visibleItemsInfo.size * avgItemWidth
+
+    override val scrollOffset: Double get() = state.firstVisibleItemScrollOffset.toDouble()
+
+    override suspend fun scrollTo(scrollOffset: Double) {
+        val current = this.scrollOffset
+        val delta = (scrollOffset - current).toFloat()
+        if (delta != 0f) state.scroll { scrollBy(delta) }
+    }
+}
+
 /** Approximate scrollbar adapter for a [LazyListState] (uniform-height rows). */
-private class ListScrollbarAdapter(private val state: LazyListState) : ScrollbarAdapter {
+class ListScrollbarAdapter(private val state: LazyListState) : ScrollbarAdapter {
 
     private val avgItemHeight: Double
         get() {

@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
@@ -100,6 +101,9 @@ import com.maxstream.app.stream.StreamResolver
 import com.maxstream.app.stream.parseFailedServers
 import com.maxstream.app.stream.parseStreams
 import com.maxstream.app.stream.pickDefaultSubtitle
+import com.maxstream.app.ui.components.AppScrollbar
+import com.maxstream.app.ui.components.ListScrollbarAdapter
+import com.maxstream.app.ui.components.RowScrollbarAdapter
 import com.maxstream.app.ui.components.PlayerSurface
 import com.maxstream.app.ui.components.appFocusRing
 import java.net.URI
@@ -999,7 +1003,7 @@ fun PlayerScreen(
                         // The thumb mirrors the real player volume, including
                         // keyboard changes; dragging it always un-mutes.
                         value = volume.toFloat(),
-                        onValueChange = { setVolume(it.toInt()) },
+                        onValueChange = { setVolume((it * 100).toInt()) },
                         modifier = Modifier.width(100.dp),
                     )
                     Text(
@@ -1403,17 +1407,35 @@ fun PlayerScreen(
                     Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x40FFFFFF)))
                     if (seasons.isNotEmpty()) {
                         val seasonListState = rememberLazyListState()
+                        val seasonRequester = remember { FocusRequester() }
                         LaunchedEffect(menuSeason) {
                             val idx = seasons.indexOfFirst { it.seasonNumber == menuSeason }
                             if (idx >= 0) seasonListState.animateScrollToItem(idx)
                         }
-                        LazyRow(
-                            state = seasonListState,
-                            modifier = Modifier
+                        Box(
+                            Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                                .focusRequester(seasonRequester)
+                                .focusable()
+                                .onKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                    val delta = when (event.key) {
+                                        Key.DirectionRight -> 300.0
+                                        Key.DirectionLeft -> -300.0
+                                        Key.PageDown -> seasonListState.layoutInfo.viewportStartOffset * 0.9
+                                        Key.PageUp -> -seasonListState.layoutInfo.viewportStartOffset * 0.9
+                                        else -> return@onKeyEvent false
+                                    }
+                                    scope.launch { seasonListState.scroll { scrollBy(delta.toFloat()) } }
+                                    true
+                                },
                         ) {
+                            LazyRow(
+                                state = seasonListState,
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
                             items(seasons.size) { sIdx ->
                                 val season = seasons[sIdx]
                                 val active = season.seasonNumber == menuSeason
@@ -1450,6 +1472,11 @@ fun PlayerScreen(
                                 }
                             }
                         }
+                        AppScrollbar(
+                            adapter = remember(seasonListState) { RowScrollbarAdapter(seasonListState) },
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                        )
+                        }
                         Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x40FFFFFF)))
                     }
                     val episodes = menuEpisodesCache[menuSeason] ?: emptyList()
@@ -1467,13 +1494,31 @@ fun PlayerScreen(
                         else -> {
                             val listState = rememberLazyListState()
                             LaunchedEffect(menuSeason) { /* reset */ }
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier
+                            Box(
+                                Modifier
                                     .fillMaxWidth()
                                     .heightIn(max = 420.dp)
-                                    .padding(vertical = 6.dp),
+                                    .padding(vertical = 6.dp)
+                                    .focusRequester(focusRequester)
+                                    .focusable()
+                                    .onKeyEvent { event ->
+                                        if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                        val delta = when (event.key) {
+                                            Key.DirectionDown -> 300.0
+                                            Key.DirectionUp -> -300.0
+                                            Key.PageDown -> listState.layoutInfo.viewportStartOffset * 0.9
+                                            Key.PageUp -> -listState.layoutInfo.viewportStartOffset * 0.9
+                                            else -> return@onKeyEvent false
+                                        }
+                                        scope.launch { listState.scroll { scrollBy(delta.toFloat()) } }
+                                        true
+                                    },
                             ) {
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 6.dp),
+                                ) {
                                 items(episodes.size) { index ->
                                     val ep = episodes[index]
                                     val released = ep.isReleased()
@@ -1544,6 +1589,11 @@ fun PlayerScreen(
                                         }
                                     }
                                 }
+                            }
+                                AppScrollbar(
+                                    adapter = remember(listState) { ListScrollbarAdapter(listState) },
+                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                )
                             }
                         }
                     }

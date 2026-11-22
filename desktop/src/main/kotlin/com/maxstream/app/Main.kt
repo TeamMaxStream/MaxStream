@@ -1,5 +1,6 @@
 package com.maxstream.app
 
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -43,6 +44,7 @@ fun main() {
             },
             state = windowState,
             title = "MaxStream",
+            icon = painterResource("drawable/app_icon"),
         ) {
             Shell(windowState = windowState)
         }
