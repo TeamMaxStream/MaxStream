@@ -257,7 +257,7 @@ class ScrollStateAdapter(private val state: ScrollState) : ScrollbarAdapter {
     override val viewportSize: Double get() = state.viewportSize.toDouble()
 
     override suspend fun scrollTo(scrollOffset: Double) {
-        state.dispatchRawDelta((scrollOffset - state.value).toFloat())
+        state.scrollTo(scrollOffset.toInt().coerceIn(0, state.maxValue))
     }
 }
 
@@ -307,8 +307,9 @@ private class GridScrollbarAdapter(private val state: LazyGridState) : Scrollbar
 
     override suspend fun scrollTo(scrollOffset: Double) {
         if (state.layoutInfo.totalItemsCount == 0) return
-        val row = (scrollOffset / avgItemHeight).toInt()
-        state.scrollToItem((row * cols).coerceAtLeast(0))
+        val current = this.scrollOffset
+        val delta = (scrollOffset - current).toFloat()
+        if (delta != 0f) state.scroll { scrollBy(delta) }
     }
 }
 
@@ -336,7 +337,8 @@ private class ListScrollbarAdapter(private val state: LazyListState) : Scrollbar
 
     override suspend fun scrollTo(scrollOffset: Double) {
         if (state.layoutInfo.totalItemsCount == 0) return
-        val index = (scrollOffset / avgItemHeight).toInt().coerceAtLeast(0)
-        state.scrollToItem(index)
+        val current = this.scrollOffset
+        val delta = (scrollOffset - current).toFloat()
+        if (delta != 0f) state.scroll { scrollBy(delta) }
     }
 }
