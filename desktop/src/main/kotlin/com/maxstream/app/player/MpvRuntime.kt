@@ -25,6 +25,27 @@ object MpvRuntime {
     private val isWindows: Boolean
         get() = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 
+    private interface User32 : Library {
+        fun SetThreadExecutionState(flags: Int, unused: Int): Int
+    }
+
+    private var user32: User32? = null
+    private var screenOnActive = false
+
+    /**
+     * Windows-only keep-awake for playback: ES_DISPLAY_REQUIRED blocks the
+     * display sleep while the player is active, ES_CONTINUOUS releases it.
+     */
+    fun setScreenOn(enabled: Boolean) {
+        if (!isWindows) return
+        if (screenOnActive == enabled) return
+        val lib = user32 ?: com.sun.jna.Native.load("user32", User32::class.java)
+        user32 = lib
+        val flags = if (enabled) 0x00000004 else 0x00000000
+        runCatching { lib.SetThreadExecutionState(flags, 0) }
+        screenOnActive = enabled
+    }
+
     private val libraryFileNames: List<String>
         get() = when {
             isWindows -> listOf("libmpv-2.dll", "mpv-2.dll", "libmpv.dll")

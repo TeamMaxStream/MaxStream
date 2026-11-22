@@ -92,6 +92,7 @@ import com.maxstream.app.data.WatchStateStore
 import com.maxstream.app.data.model.MediaItem
 import com.maxstream.app.data.model.PlayRequest
 import com.maxstream.app.data.repository.MediaRepository
+import com.maxstream.app.player.MpvRuntime
 import com.maxstream.app.player.PlaybackSession
 import com.maxstream.app.stream.FailedServer
 import com.maxstream.app.stream.ResolvedAudioTrack
@@ -326,6 +327,7 @@ fun PlayerScreen(
     val selectQuality: (com.maxstream.app.stream.ResolvedQuality) -> Unit = { q ->
         streams.getOrNull(selectedIndex)?.let { stream ->
             playUrl(if (stream.separateAudio) stream.url else q.url, stream)
+            applySubtitlesFor(stream)
         }
     }
 
@@ -756,17 +758,20 @@ fun PlayerScreen(
     // Auto-hide only while playing and no menu/seek is open (~1s).
     LaunchedEffect(controlsVisible, playing, loading, menuOpen, seeking) {
         if (!controlsVisible || loading || menuOpen || seeking) return@LaunchedEffect
-        while (controlsVisible && !loading && !menuOpen && !seeking) {
-            delay(150)
-            if (!playing) {
-                // Paused → keep controls up (browser/mpv pattern).
-                lastActivityAt = System.currentTimeMillis()
-                continue
-            }
+        while (true) {
+            if (!playing) return@LaunchedEffect
+            delay(1000)
+            if (!controlsVisible) return@LaunchedEffect
             if (System.currentTimeMillis() - lastActivityAt >= 1000L) {
                 controlsVisible = false
+                return@LaunchedEffect
             }
         }
+    }
+
+    // Windows: keep the display awake while a movie/series is actually playing.
+    LaunchedEffect(playing, loading, menuOpen, seeking) {
+        MpvRuntime.setScreenOn(playing && !loading && !menuOpen && !seeking)
     }
 
     DisposableEffect(Unit) {
