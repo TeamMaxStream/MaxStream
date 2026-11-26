@@ -42,11 +42,15 @@ class _ContinueWatchingSectionState extends State<ContinueWatchingSection> {
           ),
         ),
         SizedBox(
-          height: 280,
-          child: ListView.builder(
+          // Poster + progress + a two-line title + the action row. The old
+          // 280px rail clipped the buttons on the last row and made the cards
+          // look uneven.
+          height: 334,
+          child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: widget.continueWatching.length,
+            separatorBuilder: (context, index) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
               final item = widget.continueWatching[index];
               return _buildContinueWatchingCard(context, item);
@@ -61,17 +65,28 @@ class _ContinueWatchingSectionState extends State<ContinueWatchingSection> {
     BuildContext context,
     Map<String, dynamic> item,
   ) {
-    final progress = (item['position'] ?? 0) / (item['duration'] ?? 1);
+    num number(dynamic value) =>
+        value is num ? value : num.tryParse(value?.toString() ?? '') ?? 0;
+    final position = number(item['position']).toDouble();
+    final duration = number(item['duration']).toDouble();
+    final progress = duration > 0 ? (position / duration).clamp(0.0, 1.0) : 0.0;
     final progressPercent = (progress * 100).round();
     final isMovie = item['isMovie'] == true;
     final typeLabel = isMovie ? 'MOVIE' : 'TV';
     final title = item['title'] ?? 'Unknown Title';
+    final seasonValue = number(item['season']).toInt();
+    final episodeValue = number(item['episode']).toInt();
+    final season = seasonValue > 0 ? seasonValue : 1;
+    final episode = episodeValue > 0 ? episodeValue : 1;
+    final meta = isMovie ? 'Movie' : 'S$season · E$episode';
 
     return SizedBox(
       width: 150,
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () => _playContent(context, item),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
@@ -101,56 +116,6 @@ class _ContinueWatchingSectionState extends State<ContinueWatchingSection> {
                       left: 8,
                       child: _continueWatchingTypeBadge(typeLabel),
                     ),
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.info_outline,
-                              size: 18,
-                              color: Colors.white,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(
-                              minWidth: 32,
-                              minHeight: 32,
-                            ),
-                            onPressed: () => _openDetails(context, item),
-                          ),
-                          PopupMenuButton<String>(
-                            icon: const Icon(
-                              Icons.more_vert,
-                              size: 18,
-                              color: Colors.white,
-                            ),
-                            iconSize: 18,
-                            tooltip: 'More options',
-                            onSelected: (value) {
-                              unawaited(
-                                _runContinueWatchingAction(
-                                  context,
-                                  value,
-                                  item,
-                                ),
-                              );
-                            },
-                            itemBuilder: (context) => <PopupMenuEntry<String>>[
-                              const PopupMenuItem(
-                                value: 'mark',
-                                child: Text('Mark as Watched'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'remove',
-                                child: Text('Remove from Continue Watching'),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
                     Positioned.fill(
                       child: Center(
                         child: Material(
@@ -176,41 +141,108 @@ class _ContinueWatchingSectionState extends State<ContinueWatchingSection> {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
             const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        backgroundColor: Colors.grey[800],
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.red,
+                        ),
+                        minHeight: 3,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$progressPercent%',
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 32,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    height: 1.2,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
             Row(
               children: [
                 Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      backgroundColor: Colors.grey[800],
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                        Colors.red,
-                      ),
-                      minHeight: 3,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Text(
+                      meta,
+                      style: TextStyle(color: Colors.grey[400], fontSize: 10),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  '$progressPercent%',
-                  style: const TextStyle(
-                    color: Colors.red,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w500,
+                IconButton(
+                  icon: const Icon(
+                    Icons.info_outline,
+                    size: 18,
+                    color: Colors.white,
                   ),
+                  tooltip: 'Details',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  onPressed: () => _openDetails(context, item),
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(
+                    Icons.more_vert,
+                    size: 18,
+                    color: Colors.white,
+                  ),
+                  iconSize: 18,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  tooltip: 'More options',
+                  onSelected: (value) {
+                    unawaited(_runContinueWatchingAction(context, value, item));
+                  },
+                  itemBuilder: (context) => <PopupMenuEntry<String>>[
+                    const PopupMenuItem(
+                      value: 'mark',
+                      child: Text('Mark as Watched'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'remove',
+                      child: Text('Remove from Continue Watching'),
+                    ),
+                  ],
                 ),
               ],
             ),
